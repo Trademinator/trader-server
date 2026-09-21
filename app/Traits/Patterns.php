@@ -1,0 +1,144 @@
+<?php
+namespace App\Traits;
+if (!defined('EXCHANGE_ROUND_DECIMALS'))
+	define('EXCHANGE_ROUND_DECIMALS', 8);
+
+trait Patterns{
+	use Trademinator\Indicators\Technical;
+
+if (!function_exists('candle_anatomy')) {
+	function candle_anatomy(&$tickers){
+		global $debug;
+
+		if ($debug){
+			echo "candle_anatomy(tickers)".PHP_EOL;
+		}
+
+		$key_is_black = 'is_black()';
+		$key_is_long_black = 'is_long_black()';
+		$key_is_short_black = 'is_short_black()';
+		$key_is_black_marubozu = 'is_black_marubozu()';
+		$key_is_white = 'is_white()';
+		$key_is_long_white = 'is_long_white()';
+		$key_is_short_white = 'is_short_white()';
+		$key_is_white_marubozu = 'is_white_marubozu()';
+		$key_is_doji = 'is_doji()';
+		$key_is_super_doji = 'is_super_doji()';
+		$t = end($tickers);
+		if (
+			!array_key_exists($key_is_black, $t) or !array_key_exists($key_is_long_black, $t) or !array_key_exists($key_is_short_black, $t) or !array_key_exists($key_is_black_marubozu, $t) or
+			!array_key_exists($key_is_white, $t) or !array_key_exists($key_is_long_white, $t) or !array_key_exists($key_is_short_white, $t) or !array_key_exists($key_is_white_marubozu, $t) or
+			!array_key_exists($key_is_doji, $t) or !array_key_exists($key_is_super_doji, $t)
+		){
+			reset($tickers);
+			foreach ($tickers as &$h){      // Last element is the most rescent
+				// TODO: check if bcmath is needed
+				$h[$key_is_black] = (int)($h['open'] > $h['close']);
+				$h[$key_is_long_black] = (int)(($h['open'] > $h['close']) && ((($h['open'] - $h['close'])/(0.001 + $h['high'] - $h['low'])) > 0.6));
+				$h[$key_is_short_black] = (int)(($h['open'] > $h['close']) && (($h['high'] - $h['low']) > (3 * ($h['open'] - $h['close']))));
+				$h[$key_is_black_marubozu] = (int)(($h['open'] > $h['close']) & ($h['high'] == $h['open']) & ($h['close'] == $h['low']));
+				$h[$key_is_white] = (int)($h['close'] > $h['open']);
+				$h[$key_is_long_white] = (int)(($h['close'] > $h['open']) && ((($h['close'] - $h['open'])/(0.001 + $h['high'] - $h['low'])) > 0.6));
+				$h[$key_is_short_white] = (int)(($h['close'] > $h['open']) && (($h['high'] - $h['low']) > (3 * ($h['close'] - $h['open']))));
+				$h[$key_is_white_marubozu] = (int)(($h['close'] > $h['open']) & ($h['high'] == $h['close']) & ($h['open'] == $h['low']));
+				$h[$key_is_doji] = (int)($h['open'] == $h['close']);
+				$h[$key_is_super_doji] = (int)(($h['open'] == $h['close']) && (($h['high'] == $h['low'])));
+				if ($debug){
+					echo "is_black() = ".$h[$key_is_black].PHP_EOL;
+					echo "is_long_black() = ".$h[$key_is_long_black].PHP_EOL;
+					echo "is_short_black() = ".$h[$key_is_short_black].PHP_EOL;
+					echo "is_black_marubozu() = ".$h[$key_is_black_marubozu].PHP_EOL;
+					echo "is_white() = ".$h[$key_is_black].PHP_EOL;
+					echo "is_long_white() = ".$h[$key_is_long_black].PHP_EOL;
+					echo "is_short_white() = ".$h[$key_is_short_black].PHP_EOL;
+					echo "is_white_marubozu() = ".$h[$key_is_black_marubozu].PHP_EOL;
+					echo "is_doji() = ".$h[$key_is_doji].PHP_EOL;
+					echo "is_super_doji() = ".$h[$key_is_super_doji].PHP_EOL;
+				}
+			}
+		}
+
+		return array($key_is_black, $key_is_long_black, $key_is_short_black, $key_is_black_marubozu, $key_is_white, $key_is_long_white, $key_is_short_white, $key_is_white_marubozu, $key_is_doji, $key_is_super_doji);
+        }
+}
+
+// TODO: finish
+if (!function_exists('is_dragonfly')) {
+	function is_dragonfly(&$tickers){
+		global $debug;
+
+		if ($debug){
+			echo "is_dragonfly(tickers)".PHP_EOL;
+		}
+
+		$key_is_bullish_dragonfly = 'is_bullish_dragonfly()';
+		$key_is_bearish_dragonfly = 'is_bearish_dragonfly()';
+		$t = end($tickers);
+		if (!array_key_exists($key_is_bullish_dragonfly, $t) or !array_key_exists($key_is_bearish_dragonfly, $t)){
+			$key_sma_10_high = sma($tickers, 10, 'high');
+			$key_sma_10_low = sma($tickers, 10, 'low');
+			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = \okayinc\trademinator\indicators\min_max($ohlcv, 10, 'high', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = \okayinc\trademinator\indicators\min_max($ohlcv, 10, 'low', EXCHANGE_ROUND_DECIMALS);
+			reset($tickers);
+			foreach ($tickers as &$h){      // Last element is the most rescent
+
+//				$h[$key_is_bullish_dragonfly] =
+//					(	(int)((abs() <= 0.02*()) && (() <= 0.3*()) && (() >= ()) && ( > ) && ( == )) ) ||
+//					(	((() > 3*abs()) && (() > 0.8*())) && (() > 0.8*()));
+				if ($debug){
+				}
+			}
+		}
+	}
+}
+
+if (!function_exists('is_grave_stone')){
+	function is_grave_stone(&$tickers){
+		global $debug;
+
+		if ($debug){
+			echo "is_grave_stone(tickers)".PHP_EOL;
+		}
+
+		$key_is_bullish_grave_stone = 'is_bullish_grave_stone()';
+		$key_is_bearish_grave_stone = 'is_bearish_grave_stone()';
+		$t = end($tickers);
+		if (!array_key_exists($key_is_bullish_grave_stone, $t) or !array_key_exists($key_is_bearish_grave_stone, $t)){
+			$key_sma_10_high = sma($tickers, 10, 'high');
+			$key_sma_10_low = sma($tickers, 10, 'low');
+			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = \okayinc\trademinator\indicators\min_max($ohlcv, 10, 'high', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = \okayinc\trademinator\indicators\min_max($ohlcv, 10, 'low', EXCHANGE_ROUND_DECIMALS);
+			reset($tickers);
+
+		}
+	}
+}
+
+
+if (!function_exists('is_inverted_hammer_or_shooting_star')) {
+	function is_inverted_hammer_or_shooting_star(&$tickers){
+		global $debug;
+
+		if ($debug){
+			echo "is_inverted_hammer(tickers)".PHP_EOL;
+		}
+
+		$key_is_inverted_hammer = 'is_inverted_hammer()';
+		$key_is_shooting_star = 'is_shooting_star()';
+		$t = end($tickers);
+		if (!array_key_exists($key_is_inverted_hammer, $t) or !array_key_exists($key_is_shooting_star, $t)){
+			reset($tickers);
+			foreach ($tickers as &$h){      // Last element is the most rescent
+				$h[$key_is_inverted_hammer] = (int)((($h['high'] - $h['low']) > 3*($h['open'] - $h['close'])) && ((($h['high'] - $h['close'])/(0.001 + $h['high'] - $h['low'])) > 0.6) && ((($h['high'] - $h['open'])/(0.001 + $h['high'] - $h['low'])) > 0.6));
+				$h[$key_is_shooting_star] = (int)((($h['high'] - $h['low']) > 4*($h['open'] - $h['close'])) && ((($h['high'] - $h['close'])/(0.001 + $h['high'] - $h['low'])) >= 0.75) && ((($h['high'] - $h['open'])/(0.001 + $h['high'] - $h['low'])) >= 0.75));
+				if ($debug){
+					echo "is_inverted_hammer() = ".$h[$key_is_inverted_hammer].PHP_EOL;
+					echo "is_shooting_star() = ".$h[$key_is_shooting_star].PHP_EOL;
+				}
+			}
+		}
+
+		return array($key_is_inverted_hammer, $key_is_shooting_star);
+	}
+}
+}
