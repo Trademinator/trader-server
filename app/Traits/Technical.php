@@ -289,9 +289,9 @@ trait Technical
 						bcdiv(
 							bcsub(
 								$h[$index1],
-								$h[$index2], EXCHANGE_ROUND_DECIMALS * 2),
-							$h[$index1], EXCHANGE_ROUND_DECIMALS * 2),
-						100, 2);
+								$h[$index2], EXCHANGE_ROUND_DECIMALS * 8),
+							$h[$index1], EXCHANGE_ROUND_DECIMALS * 8),
+						100, 8);
 			}
 		}
 
