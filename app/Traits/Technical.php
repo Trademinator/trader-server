@@ -23,11 +23,11 @@ trait Technical
 		return $tickers;
 	}
 
-	function normalize(&$tikcers, $key = 'close', $index = 'close'){
+	function normalize(&$tickers, $key = 'close', $index = 'close'){
 		global $debug;
 
 		if ($debug){
-			echo "normalize(tikcers, $key = 'close', $index = 'close')".PHP_EOL;
+			echo "normalize(tickers, $key = 'close', $index = 'close')".PHP_EOL;
 		}
 
 		$key = 'normalized('.$key.','.$index.')';
@@ -796,7 +796,7 @@ trait Technical
 		}
 
 		$mkey = '-dm()'; $pkey = '+dm()';
-		$t = end($tickersl);
+		$t = end($tickers);
 
                 if (!array_key_exists($mkey, $t) or !array_key_exists($pkey, $t)){
 			$i = 1;
@@ -1339,7 +1339,7 @@ trait Technical
 		$key_lower  = 'super_trend_lower('.$period.','.$factor.')';
 		if (!array_key_exists($key_super, $t) or !array_key_exists($key_upper, $t) or !array_key_exists($key_lower, $t)){
 			$key_hl2 = midkey($tickers, 'high', 'low');
-			$key_atr = atr($tickers, 14);
+			$key_atr = atr($tickers, $period);
 			$i = 1;
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
@@ -1373,8 +1373,9 @@ trait Technical
 					}
 				}
 
-				$p = $h; $i++;
+				$i++;
 				$h[$key_super] = ($note == 1)? $h[$key_lower]:$h[$key_upper];
+                $p = $h;
 			}
 		}
 		$keys = array($key_super, $key_upper, $key_lower);
