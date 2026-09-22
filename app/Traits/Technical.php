@@ -691,7 +691,7 @@ trait Technical
 		}
 
 		$t = end($tickers);
-		$key = null;
+		$key = 'inflexion('.$keyA.','.$keyB.')';
 
 		if (array_key_exists($keyA, $t) && array_key_exists($keyB, $t)){
 			$key = 'inflexion('.$keyA.','.$keyB.')';
