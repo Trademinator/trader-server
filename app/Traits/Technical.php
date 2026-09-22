@@ -5,6 +5,7 @@ if (!defined('EXCHANGE_ROUND_DECIMALS'))
 
 trait Technical
 {
+    use Bc;
 
 	function delete_key(&$tickers, ...$keys){	// TODO: fix performance
 		foreach ($tickers as &$h){
@@ -891,8 +892,8 @@ trait Technical
 
 		if (!array_key_exists($key, $t)){
 			gain($tickers, $period);
-			$gain_key = ema($tickers, $period, 'gain');
-			$loss_key = ema($tickers, $period, 'loss');
+			$gain_key = smma($tickers, $period, 'gain');
+			$loss_key = smma($tickers, $period, 'loss');
 
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is most rescent
@@ -901,6 +902,9 @@ trait Technical
 					//RSI = (100 – (100 / (1 + RS)))
 					$h[$key] = bcsub(100, bcdiv(bcconv(100), bcadd(bcconv(1), bcconv($rs), EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2), 2);
 				}
+                elseif (bccomp($h[$gain_key], 0, EXCHANGE_ROUND_DECIMALS * 2) == 0){
+                    $h[$key] = 50;
+                }
 				else{
 					$h[$key] = 100;
 				}
