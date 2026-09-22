@@ -179,9 +179,8 @@ trait Technical
 					$h[$absstepsminkey] = 0;
 				}
 				else{
-					bcscale($decimals);
-					$h[$absmaxkey] = bcmax($p[$absmaxkey], $h[$index]);
-					$h[$absminkey] = bcmin($p[$absminkey], $h[$index]);
+					$h[$absmaxkey] = bcmax($p[$absmaxkey], $h[$index], $decimals);
+					$h[$absminkey] = bcmin($p[$absminkey], $h[$index], $decimals);
 
 					if (count($buffer) > $period){
 						array_pop($buffer);
