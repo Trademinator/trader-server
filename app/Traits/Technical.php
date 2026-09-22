@@ -930,7 +930,7 @@ trait Technical
             $i = 0;
             foreach ($tickers as &$h){      // Last element is most rescent
                 if ($i == 0){
-                    $h[key] = "100.00";
+                    $h[$key] = "100.00";
                     $i = 1;
                 }
                 else{
