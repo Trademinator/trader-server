@@ -780,7 +780,7 @@ trait Technical
 				if (count($buffer) > $period){
 					array_shift($buffer);
 				}
-                $key_md = md(&$tickers, $period, $tp, $tp_sma)
+                $key_md = md(&$tickers, $period, $tp, $tp_sma);
 				$h[$key] = bcdiv(bcsub($h[$tp], $h[$tp_sma], EXCHANGE_ROUND_DECIMALS * 2),
 						bcmul(bcconv($h[$key_md]), bcconv(0.015), EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2);
 			}
