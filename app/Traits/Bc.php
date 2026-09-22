@@ -18,11 +18,11 @@ trait Bc
 		if($pos===false){
 			$dec_frac='.'.substr($n,0,15);$pos=strlen($n);
 		}
-                else{
+        else{
 			 $dec_frac='.'.substr(substr($n,0,$pos).substr($n,$pos+1),0,15);
 		}
 		return log10((float)$dec_frac)+(float)$pos;
-        }
+    }
     
 	function bcabs($number){
 		return preg_replace('/^\-+/', '', $number);
@@ -104,5 +104,21 @@ trait Bc
 		$div = bcdiv($carry, $n, EXCHANGE_ROUND_DECIMALS * 2);
 		return bcsqrt($div, EXCHANGE_ROUND_DECIMALS * 2);
 	}
-}
+
+    function bcpow10(int $n, int $scale = 10): string {
+        if ($n === 0) {
+            return '1';
+        }
+    
+        if ($n > 0) {
+            // For positive integers, use standard bcpow
+            return bcpow('10', (string)$n, $scale);
+        }
+    
+        // For negative integers, 10^N is equal to 1 / (10^|N|)
+        $positiveExponent = (string)abs($n);
+        $denominator = bcpow('10', $positiveExponent, 0); // No decimals needed for denominator
+        
+        return bcdiv('1', $denominator, $scale);
+    }
 }
