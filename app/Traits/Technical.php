@@ -848,7 +848,7 @@ trait Technical
 				}
 
 				if ($i == 1){                   // First element needs default values
-					$h[$alkey] = $h['close'];
+					$h[$alkey] = 0;
 					$h[$agkey] = 0;
 					$h['loss'] = 0;
 					$h['gain'] = 0;
