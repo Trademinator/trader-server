@@ -725,7 +725,7 @@ trait Technical
 
 				foreach ($tickers as &$h){
 					if ($h[$key_kijunsen_slope_sign] == 0)
-						$tickers[$k][$key] = 0;
+						$h[$key] = 0;
 				}
 			}
 		}
