@@ -91,7 +91,7 @@ trait Technical
 		return $key;
 	}
 
-	// Tipical Price
+	//Typical Price
 	function tp(&$tickers){
 		global $debug;
 		if ($debug){
@@ -1031,11 +1031,12 @@ trait Technical
 				}
 
 				switch ($average_function){
-					case 'sma':
-						$okey = sma($tickers, $period, $tr_key);
-						break;
 					case 'ema':
 						$okey = ema($tickers, $period, $tr_key);
+                    case 'sma':
+                    default:
+						$okey = sma($tickers, $period, $tr_key);
+						break;
 				}
 
 			}
