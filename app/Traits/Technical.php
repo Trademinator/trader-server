@@ -1113,7 +1113,7 @@ trait Technical
 	function adx(&$tickers, $period = 14){
 		global $debug;
 		if ($debug){
-			echo "adx(&$tickers, $period = 14)".PHP_EOL;
+			echo "adx(tickers, $period = 14)".PHP_EOL;
 		}
 
 		$adx_key = 'adx('.$period.')';
@@ -1222,7 +1222,7 @@ trait Technical
 	function ac(&$tickers, $period = 5){
 		global $debug;
 		if ($debug){
-			echo "ac(&$tickers, $period = 5)";
+			echo "ac(tickers, $period = 5)";
 		}
 
 		$key = 'ac('.$period.')';
