@@ -522,7 +522,7 @@ trait Technical
 		return $key;
 	}
 
-	// Stochastic
+	// Stochastic Price
     function sto(&$tickers, $period1 = 14, $period2 = 3, $period3 = 3){
 		global $debug;
 
@@ -530,9 +530,9 @@ trait Technical
 			echo "sto(tickers, $period1 = 14, $period2 = 3, $period3 = 3)".PHP_EOL;
 		}
 
-		$key_fastk = '%k('.$period1.')';
-		$key_dk = '%dk('.$period1.','.$period2.')';
-		$key_slowd = '%d('.$period1.','.$period2.','.$period3.')';
+		$key_fastk = '%k_price('.$period1.')';
+		$key_dk = '%dk_price('.$period1.','.$period2.')';
+		$key_slowd = '%d_price('.$period1.','.$period2.','.$period3.')';
 		$t = end($tickers);
 		if (!array_key_exists($key_fastk, $t) or !array_key_exists($key_dk, $t) or !array_key_exists($key_slowd, $t)){
 			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = min_max($tickers, 14, 'high', EXCHANGE_ROUND_DECIMALS);
@@ -574,6 +574,65 @@ trait Technical
 		return $keys;
 	}
 
+// Stochastic RSI
+    function sto_rsi(&$tickers, $period1 = 14, $period2 = 3, $period3 = 3){
+		global $debug;
+
+		if ($debug){
+			echo "sto(tickers, $period1 = 14, $period2 = 3, $period3 = 3)".PHP_EOL;
+		}
+
+		$key_fastk = '%k('.$period1.')';
+		$key_dk = '%dk('.$period1.','.$period2.')';
+		$key_slowd = '%d('.$period1.','.$period2.','.$period3.')';
+		$t = end($tickers);
+
+        $key_rsi = 'rsi('.$period1.')';
+        if (!array_key_exists($key_rsi, $t)){
+            $key_rsi = rsi($tickers, $period1);
+        }
+        
+		if (!array_key_exists($key_fastk, $t) or !array_key_exists($key_dk, $t) or !array_key_exists($key_slowd, $t)){
+            list($key_min_max_rsi_min, $key_min_max_rsi_max, $key_min_max_rsi_steps_min, $key_min_max_rsi_steps_max, $key_abs_min_max_rsi_min, $key_abs_min_max_rsi_max, 
+                 $key_abs_min_max_rsi_steps_min, $key_abs_min_max_rsi_steps_max) = min_max($tickers, 14, $key_rsi, EXCHANGE_ROUND_DECIMALS);
+
+            reset($tickers);
+			foreach ($tickers as &$h){      // Last element is the most rescent
+				if ($h[$key_rsi] == $h[$key_min_max_rsi_max]){
+					$h[$key_fastk] = 100;
+				}
+				else{
+				$h[$key_fastk] = bcmul(
+							100,
+							bcdiv(
+								bcsub(
+									$h['close'],
+									$h[$key_min_max_rsi_min],
+									EXCHANGE_ROUND_DECIMALS),
+								bcsub(
+									$h[$key_min_max_rsi_max],
+									$h[$key_min_max_rsi_min],
+									EXCHANGE_ROUND_DECIMALS),
+								EXCHANGE_ROUND_DECIMALS),
+							2);
+				}
+			}
+			$t = sma($tickers, $period2, $key_fastk);
+			rename_key($tickers, $t, $key_dk);
+			$s = sma($tickers, $period3, $key_dk);
+			rename_key($tickers, $s, $key_slowd);
+			reset($tickers);
+			foreach ($tickers as &$h){      // Last element is the most rescent
+				$h[$key_dk] = number_format($h[$key_dk], 2, '.', '');
+				$h[$key_slowd] = number_format($h[$key_slowd], 2, '.', '');
+			}
+		}
+
+		$keys = array($key_fastk, $key_dk, $key_slowd);
+		return $keys;
+	}
+
+    
 	function compare(&$tickers, $index = 'close', $compare = 'open', $digits = (EXCHANGE_ROUND_DECIMALS * 2)){
 		global $debug;
 
