@@ -6,7 +6,6 @@ if (!defined('EXCHANGE_ROUND_DECIMALS'))
 trait Patterns{
 	use Trademinator\Indicators\Technical;
 
-if (!function_exists('candle_anatomy')) {
 	function candle_anatomy(&$tickers){
 		global $debug;
 
@@ -48,10 +47,10 @@ if (!function_exists('candle_anatomy')) {
 					echo "is_long_black() = ".$h[$key_is_long_black].PHP_EOL;
 					echo "is_short_black() = ".$h[$key_is_short_black].PHP_EOL;
 					echo "is_black_marubozu() = ".$h[$key_is_black_marubozu].PHP_EOL;
-					echo "is_white() = ".$h[$key_is_black].PHP_EOL;
-					echo "is_long_white() = ".$h[$key_is_long_black].PHP_EOL;
-					echo "is_short_white() = ".$h[$key_is_short_black].PHP_EOL;
-					echo "is_white_marubozu() = ".$h[$key_is_black_marubozu].PHP_EOL;
+					echo "is_white() = ".$h[$key_is_white].PHP_EOL;
+					echo "is_long_white() = ".$h[$key_is_long_white].PHP_EOL;
+					echo "is_short_white() = ".$h[$key_is_short_white].PHP_EOL;
+					echo "is_white_marubozu() = ".$h[$key_is_white_marubozu].PHP_EOL;
 					echo "is_doji() = ".$h[$key_is_doji].PHP_EOL;
 					echo "is_super_doji() = ".$h[$key_is_super_doji].PHP_EOL;
 				}
@@ -60,10 +59,8 @@ if (!function_exists('candle_anatomy')) {
 
 		return array($key_is_black, $key_is_long_black, $key_is_short_black, $key_is_black_marubozu, $key_is_white, $key_is_long_white, $key_is_short_white, $key_is_white_marubozu, $key_is_doji, $key_is_super_doji);
         }
-}
 
 // TODO: finish
-if (!function_exists('is_dragonfly')) {
 	function is_dragonfly(&$tickers){
 		global $debug;
 
@@ -90,9 +87,8 @@ if (!function_exists('is_dragonfly')) {
 			}
 		}
 	}
-}
 
-if (!function_exists('is_grave_stone')){
+
 	function is_grave_stone(&$tickers){
 		global $debug;
 
@@ -112,10 +108,9 @@ if (!function_exists('is_grave_stone')){
 
 		}
 	}
-}
 
 
-if (!function_exists('is_inverted_hammer_or_shooting_star')) {
+
 	function is_inverted_hammer_or_shooting_star(&$tickers){
 		global $debug;
 
@@ -140,5 +135,5 @@ if (!function_exists('is_inverted_hammer_or_shooting_star')) {
 
 		return array($key_is_inverted_hammer, $key_is_shooting_star);
 	}
-}
+
 }
