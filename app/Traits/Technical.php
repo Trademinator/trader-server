@@ -733,6 +733,33 @@ trait Technical
 		return $key;
     }
 
+    // Mean Deviation
+    function md(&$tickers, $period = 20, $key1, $key2){
+        global $debug;
+		if ($debug){
+			echo "md(tickers, $period = 20, $key1, $key2)".PHP_EOL;
+		}
+
+		$key = "md($period, $key1, $key2)";
+        $t = end($tickers);
+        if (array_key_exists($key1, $t) and array_key_exists($key2, $t)){
+            $buffer = array(); $i = 0;
+			reset($tickers);
+			foreach ($tickers as &$h){      // Last element is the most rescent
+				array_push($buffer, bcsub($h[key1], $h[key2], EXCHANGE_ROUND_DECIMALS * 2));
+				if (count($buffer) > $period){
+					array_shift($buffer);
+				}
+				if (count($buffer) > 1){
+                    $aa = 0.0;
+                    foreach ($buffer as $val){
+                            $aa = bcadd($val, $aa, EXCHANGE_ROUND_DECIMALS * 2);
+                    }
+                    $h[$key] = bcdiv($aa, $period, EXCHANGE_ROUND_DECIMALS * 2);
+				}
+			}
+        }
+    }
 	// Commodity Channel Index
 	function cci(&$tickers, $period = 20){
 		global $debug;
@@ -753,10 +780,9 @@ trait Technical
 				if (count($buffer) > $period){
 					array_shift($buffer);
 				}
-				$std = stats_standard_deviation($buffer, false);
-				if ($std == 0) $std = 1;
+                $key_md = md(&$tickers, $period, $tp, $tp_sma)
 				$h[$key] = bcdiv(bcsub($h[$tp], $h[$tp_sma], EXCHANGE_ROUND_DECIMALS * 2),
-						bcmul(bcconv($std), bcconv(0.015), EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2);
+						bcmul(bcconv($h[$key_md]), bcconv(0.015), EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2);
 			}
 		}
 		return $key;
