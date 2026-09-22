@@ -4,8 +4,8 @@ if (!defined('EXCHANGE_ROUND_DECIMALS'))
 	define('EXCHANGE_ROUND_DECIMALS', 8);
 
 trait Patterns{
-	use Trademinator\Indicators\Technical;
-
+	use Technical;
+    
 	function candle_anatomy(&$tickers){
 		global $debug;
 
