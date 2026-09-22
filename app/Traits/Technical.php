@@ -1287,7 +1287,7 @@ trait Technical
 		$key_tp = tp($tickers);
 		$sma_key = sma($tickers, $period, $key_tp);
 		if (!array_key_exists($keyhk, $t) or !array_key_exists($keylk, $t)){
-			$key_atr = atr($tickers, 14);
+			$key_atr = atr($tickers, 10);
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
 				$h[$keyhk] = bcadd($h[$sma_key], bcmul($bandwidth, $h[$key_atr], EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2);
