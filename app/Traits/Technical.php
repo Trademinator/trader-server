@@ -1312,14 +1312,18 @@ trait Technical
 			list($key_lbb_20_2, $key_hbb_20_2, $key_bb_qz_20_2, $key_std_20_2, $key_sma_20_2) = bb($tickers, 20, 2);
 			list($key_lk, $key_hk, $key_sma_close) = keltner($tickers, 20, 1.5);
 			reset($tickers);
+            $i = 0;
 			foreach ($tickers as &$h){      // Last element is the most rescent
-				$h[$key] = bcsub($h[$key_hbb_20_2], $h[$key_hk], EXCHANGE_ROUND_DECIMALS * 2);
-				if (bccomp(bcconv($h[$key]), bcconv('0.0'), EXCHANGE_ROUND_DECIMALS) > 0){
-					$h[$key_choppy] = 0;
-				}
-				else{
-					$h[$key_choppy] = 1;
-				}
+                if ($i > 1){
+    				$h[$key] = bcsub($h[$key_hbb_20_2], $h[$key_hk], EXCHANGE_ROUND_DECIMALS * 2);
+    				if (bccomp(bcconv($h[$key]), bcconv('0.0'), EXCHANGE_ROUND_DECIMALS) > 0){
+    					$h[$key_choppy] = 0;
+    				}
+    				else{
+    					$h[$key_choppy] = 1;
+    				}
+                }
+                $i++;
 			}
 		}
 
