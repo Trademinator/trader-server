@@ -1065,7 +1065,7 @@ trait Technical
 			reset($tickers);
 			foreach ($tickers as &$h){
 				if (floatval($h['close']) == 0.0){
-					$c = 1/EXCHANGE_ROUND_DECIMALS;
+					$c = bcpow10(EXCHANGE_ROUND_DECIMALS * -1, EXCHANGE_ROUND_DECIMALS);
 				}
 				else {
 					$c = $h['close'];
