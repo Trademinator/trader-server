@@ -1474,7 +1474,7 @@ trait Technical
 					echo "is_long_black() = ".$h[$key_is_long_black].PHP_EOL;
 					echo "is_short_black() = ".$h[$key_is_short_black].PHP_EOL;
 					echo "is_black_marubozu() = ".$h[$key_is_black_marubozu].PHP_EOL;
-					echo "is_white() = ".$h[$key_is_black].PHP_EOL;
+					echo "is_white() = ".$h[$key_is_white].PHP_EOL;
 					echo "is_long_white() = ".$h[$key_is_long_black].PHP_EOL;
 					echo "is_short_white() = ".$h[$key_is_short_black].PHP_EOL;
 					echo "is_white_marubozu() = ".$h[$key_is_black_marubozu].PHP_EOL;
