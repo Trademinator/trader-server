@@ -1,5 +1,10 @@
 <?php
-if (!function_exists('bcdec')) {
+namespace App\Traits;
+if (!defined('EXCHANGE_ROUND_DECIMALS'))
+	define('EXCHANGE_ROUND_DECIMALS', 8);
+
+trait Bc
+{
 	function bcdec(...$numbers){
 		$dec = 2;	// At least 2 decimal places
 		foreach ($numbers as $number){
@@ -7,10 +12,7 @@ if (!function_exists('bcdec')) {
 		}
 		return $dec;
 	}
-}
 
-
-if (!function_exists('bclog10')) {
 	function bclog10($n){
 		$pos=strpos($n,'.');
 		if($pos===false){
@@ -21,15 +23,11 @@ if (!function_exists('bclog10')) {
 		}
 		return log10((float)$dec_frac)+(float)$pos;
         }
-}
-
-if (!function_exists('bcabs')) {
+    
 	function bcabs($number){
 		return preg_replace('/^\-+/', '', $number);
 	}
-}
 
-if (!function_exists('bcconv')) {
 	function bcconv($fNumber){
 		$sAppend = '';
 		$iDecimals = ini_get('precision') - floor(log10(abs($fNumber)));
@@ -40,9 +38,7 @@ if (!function_exists('bcconv')) {
 		}
 		return number_format($fNumber, intval($iDecimals), '.', '').$sAppend;
 	}
-}
 
-if (!function_exists('bcmax')) {
 	function bcmax() {
 		$args = func_get_args();
 		if (count($args) == 0) return false;
@@ -54,9 +50,7 @@ if (!function_exists('bcmax')) {
 		}
 		return $max;
 	}
-}
 
-if (!function_exists('bcmin')) {
 	function bcmin() {
 		$args = func_get_args();
 		if (count($args) == 0) return false;
@@ -68,9 +62,7 @@ if (!function_exists('bcmin')) {
 		}
 		return $min;
 	}
-}
 
-if (!function_exists('stats_standard_deviation')) {
         /**
                 * This user-land implementation follows the implementation quite strictly;
                 * it does not attempt to improve the code or algorithm in any way. It will
@@ -112,4 +104,5 @@ if (!function_exists('stats_standard_deviation')) {
 		$div = bcdiv($carry, $n, EXCHANGE_ROUND_DECIMALS * 2);
 		return bcsqrt($div, EXCHANGE_ROUND_DECIMALS * 2);
 	}
+}
 }
