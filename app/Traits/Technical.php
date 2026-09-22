@@ -460,11 +460,11 @@ trait Technical
 			list($key_min_max_high_min3, $key_min_max_high_max3, $key_min_max_high_steps_min3, $key_min_max_high_steps_max3, $key_abs_min_max_high_min3, $key_abs_min_max_high_max3, $key_abs_min_max_high_steps_min3, $key_abs_min_max_high_steps_max3) = min_max($tickers, $senkou_b, 'high', EXCHANGE_ROUND_DECIMALS);
 			list($key_min_max_low_min3, $key_min_max_low_max3, $key_min_max_low_steps_min3, $key_min_max_low_steps_max3, $key_abs_min_max_low_min3, $key_abs_min_max_low_max3, $key_abs_min_max_low_steps_min3, $key_abs_min_max_low_steps_max3) = min_max($tickers, $senkou_b, 'low', EXCHANGE_ROUND_DECIMALS);
 
-			$key_delayed = delayed($tickers, 26, 'close');
+			$key_delayed = delayed($tickers, $kijunsen, 'close');
                         rename_key($tickers, $key_delayed, $key_chikou);
 			/*
-				chikou implementation is different, instead of looking in the future, it looks in the past.
-				this helps the last index to look for the value that was in the past.
+				Chikou implementation is different; instead of looking into the future, it looks into the past.
+				This helps the last index look for the value from the past.
 			*/
 
 			reset($tickers); $i = 0;
