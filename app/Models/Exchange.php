@@ -14,6 +14,7 @@ class Exchange extends Model
 
     protected $fillable = [
         'name',
+        'class',
         'config',
     ];
 }
