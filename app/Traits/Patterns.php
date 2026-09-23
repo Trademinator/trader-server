@@ -72,10 +72,10 @@ trait Patterns{
 		$key_is_bearish_dragonfly = 'is_bearish_dragonfly()';
 		$t = end($tickers);
 		if (!array_key_exists($key_is_bullish_dragonfly, $t) or !array_key_exists($key_is_bearish_dragonfly, $t)){
-			$key_sma_10_high = sma($tickers, 10, 'high');
-			$key_sma_10_low = sma($tickers, 10, 'low');
-			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = \okayinc\trademinator\indicators\min_max($ohlcv, 10, 'high', EXCHANGE_ROUND_DECIMALS);
-			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = \okayinc\trademinator\indicators\min_max($ohlcv, 10, 'low', EXCHANGE_ROUND_DECIMALS);
+			$key_sma_10_high = $this->sma($tickers, 10, 'high');
+			$key_sma_10_low = $this->sma($tickers, 10, 'low');
+			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = $this->min_max($tickers, 10, 'high', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = $this->min_max($tickers, 10, 'low', EXCHANGE_ROUND_DECIMALS);
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
 
@@ -100,10 +100,10 @@ trait Patterns{
 		$key_is_bearish_grave_stone = 'is_bearish_grave_stone()';
 		$t = end($tickers);
 		if (!array_key_exists($key_is_bullish_grave_stone, $t) or !array_key_exists($key_is_bearish_grave_stone, $t)){
-			$key_sma_10_high = sma($tickers, 10, 'high');
-			$key_sma_10_low = sma($tickers, 10, 'low');
-			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = \okayinc\trademinator\indicators\min_max($ohlcv, 10, 'high', EXCHANGE_ROUND_DECIMALS);
-			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = \okayinc\trademinator\indicators\min_max($ohlcv, 10, 'low', EXCHANGE_ROUND_DECIMALS);
+			$key_sma_10_high = $this->sma($tickers, 10, 'high');
+			$key_sma_10_low = $this->sma($tickers, 10, 'low');
+			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = $this->min_max($tickers, 10, 'high', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = $this->min_max($$tickers, 10, 'low', EXCHANGE_ROUND_DECIMALS);
 			reset($tickers);
 
 		}
