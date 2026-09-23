@@ -30,20 +30,20 @@ trait Technical
 			echo "normalize(tickers, $key = 'close', $index = 'close')".PHP_EOL;
 		}
 
-		$key = 'normalized('.$key.','.$index.')';
+		$normalized_key = 'normalized('.$key.','.$index.')';
 		$t = end($tickers);
-		if (!array_key_exists($key, $t)){
+		if (!array_key_exists($normalized_key, $t)){
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most recent
 				if (bccomp($h[$index], 0, EXCHANGE_ROUND_DECIMALS * 2) > 0){
-					$h[$key] = bcdiv($h[$key], $h[$index], EXCHANGE_ROUND_DECIMALS * 2);
+					$h[$normalized_key] = bcdiv($h[$key], $h[$index], EXCHANGE_ROUND_DECIMALS * 2);
 				}
 				else{
-					$h[$key] = 0;
+					$h[$normalized_key] = 0;
 				}
 			}
 		}
-        return $key;
+        return $normalized_key;
 	}
 
 	// Exponential Moving Average
@@ -605,7 +605,7 @@ trait Technical
 							100,
 							bcdiv(
 								bcsub(
-									$h['close'],
+									$h[$key_rsi],
 									$h[$key_min_max_rsi_min],
 									EXCHANGE_ROUND_DECIMALS),
 								bcsub(
@@ -745,7 +745,7 @@ trait Technical
             $buffer = array(); $i = 0;
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
-				array_push($buffer, bcsub($h[key1], $h[key2], EXCHANGE_ROUND_DECIMALS * 2));
+				array_push($buffer, bcsub($h[$key1], $h[$key2], EXCHANGE_ROUND_DECIMALS * 2));
 				if (count($buffer) > $period){
 					array_shift($buffer);
 				}
@@ -758,6 +758,7 @@ trait Technical
 				}
 			}
         }
+        return $key;
     }
 	// Commodity Channel Index
 	function cci(&$tickers, $period = 20){
