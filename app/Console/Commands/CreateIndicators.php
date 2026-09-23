@@ -49,7 +49,7 @@ class CreateIndicators extends Command
             $debugExchange = $this->option('debug'); $extraSettings = [];
             $extraSettings['verbose'] = $debugExchange;
             $exchanges = $this->exchangeRepository->findByClass($className);
-            $startTime =  to_unixtime($this->argument('from') ?? 'yester4day');
+            $startTime =  to_unixtime($this->argument('from') ?? 'yesterday');
             // if {to} is not specified, then is today
             $endtTime = to_unixtime($this->argument('to') ?? 'now');
 
