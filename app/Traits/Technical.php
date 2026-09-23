@@ -917,7 +917,7 @@ trait Technical
         global $debug;
 
         if ($debug){
-            echo "rsi(tickers, $period = 14)".PHP_EOL;
+            echo "roc(tickers, $delay = 1, $index = 'close')".PHP_EOL;
         }
 
         $key = 'roc('.$delay.','.$index.')';
@@ -934,7 +934,7 @@ trait Technical
                     $i = 1;
                 }
                 else{
-                    $h[key] = bcmul(bcdiv(bcsub($h[$index], $h[$delayed_index], EXCHANGE_ROUND_DECIMALS * 2), $h[$delayed_index], EXCHANGE_ROUND_DECIMALS * 2), 100, 2);
+                    $h[$key] = bcmul(bcdiv(bcsub($h[$index], $h[$delayed_index], EXCHANGE_ROUND_DECIMALS * 2), $h[$delayed_index], EXCHANGE_ROUND_DECIMALS * 2), 100, 2);
                 }
             }
         }
