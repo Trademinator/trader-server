@@ -81,7 +81,7 @@ class TickerRepository extends BaseRepository
      */
     public function model()
     {
-        return Market::class;
+        return Ticker::class;
     }
 
     public function update(array $data, array $unique, array $update)
