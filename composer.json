@@ -19,6 +19,7 @@
         "rubix/ml": "^2.5",
         "symfony/http-client": "^7.3",
         "symfony/mailgun-mailer": "^7.3"
+        "ext-bcmath": "*"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
