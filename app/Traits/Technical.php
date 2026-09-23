@@ -18,7 +18,7 @@ trait Technical
 	function clone_key(&$tickers, $oldkey, $newkey){
 		reset($tickers);
 		foreach ($tickers as &$h){
-                        $h[$newkey] = $h[$oldkey];
+                    $h[$newkey] = $h[$oldkey];
                 }
 		return $tickers;
 	}
@@ -43,8 +43,7 @@ trait Technical
 				}
 			}
 		}
-
-                return $key;
+        return $key;
 	}
 
 	// Exponential Moving Average
@@ -251,8 +250,8 @@ trait Technical
 			$buffer = array();
 			$key_tr = tr($tickers);
 			$bclog10_period = bclog10($period);
-			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = min_max($tickers, $period, 'high', EXCHANGE_ROUND_DECIMALS * 2);
-			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = min_max($tickers, $period, 'low', EXCHANGE_ROUND_DECIMALS * 2);
+			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = $this->min_max($tickers, $period, 'high', EXCHANGE_ROUND_DECIMALS * 2);
+			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = $this->min_max($tickers, $period, 'low', EXCHANGE_ROUND_DECIMALS * 2);
 
 			reset($tickers);
 			foreach ($tickers as &$h){
@@ -451,17 +450,17 @@ trait Technical
 		$t = end($tickers);
 
 		if (!array_key_exists($key_tenkansen, $t) || !array_key_exists($key_kijunsen, $t) || !array_key_exists($key_chikou, $t) || !array_key_exists($key_senkou_a, $t) || !array_key_exists($key_senkou_b, $t)){
-			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = min_max($tickers, $tenkansen, 'high', EXCHANGE_ROUND_DECIMALS);
-			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = min_max($tickers, $tenkansen, 'low', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = $this->min_max($tickers, $tenkansen, 'high', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = $this->min_max($tickers, $tenkansen, 'low', EXCHANGE_ROUND_DECIMALS);
 
-			list($key_min_max_high_min2, $key_min_max_high_max2, $key_min_max_high_steps_min2, $key_min_max_high_steps_max2, $key_abs_min_max_high_min2, $key_abs_min_max_high_max2, $key_abs_min_max_high_steps_min2, $key_abs_min_max_high_steps_max2) = min_max($tickers, $kijunsen, 'high', EXCHANGE_ROUND_DECIMALS);
-			list($key_min_max_low_min2, $key_min_max_low_max2, $key_min_max_low_steps_min2, $key_min_max_low_steps_max2, $key_abs_min_max_low_min2, $key_abs_min_max_low_max2, $key_abs_min_max_low_steps_min2, $key_abs_min_max_low_steps_max2) = min_max($tickers, $kijunsen, 'low', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_high_min2, $key_min_max_high_max2, $key_min_max_high_steps_min2, $key_min_max_high_steps_max2, $key_abs_min_max_high_min2, $key_abs_min_max_high_max2, $key_abs_min_max_high_steps_min2, $key_abs_min_max_high_steps_max2) = $this->min_max($tickers, $kijunsen, 'high', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_low_min2, $key_min_max_low_max2, $key_min_max_low_steps_min2, $key_min_max_low_steps_max2, $key_abs_min_max_low_min2, $key_abs_min_max_low_max2, $key_abs_min_max_low_steps_min2, $key_abs_min_max_low_steps_max2) = $this->min_max($tickers, $kijunsen, 'low', EXCHANGE_ROUND_DECIMALS);
 
-			list($key_min_max_high_min3, $key_min_max_high_max3, $key_min_max_high_steps_min3, $key_min_max_high_steps_max3, $key_abs_min_max_high_min3, $key_abs_min_max_high_max3, $key_abs_min_max_high_steps_min3, $key_abs_min_max_high_steps_max3) = min_max($tickers, $senkou_b, 'high', EXCHANGE_ROUND_DECIMALS);
-			list($key_min_max_low_min3, $key_min_max_low_max3, $key_min_max_low_steps_min3, $key_min_max_low_steps_max3, $key_abs_min_max_low_min3, $key_abs_min_max_low_max3, $key_abs_min_max_low_steps_min3, $key_abs_min_max_low_steps_max3) = min_max($tickers, $senkou_b, 'low', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_high_min3, $key_min_max_high_max3, $key_min_max_high_steps_min3, $key_min_max_high_steps_max3, $key_abs_min_max_high_min3, $key_abs_min_max_high_max3, $key_abs_min_max_high_steps_min3, $key_abs_min_max_high_steps_max3) = $this->min_max($tickers, $senkou_b, 'high', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_low_min3, $key_min_max_low_max3, $key_min_max_low_steps_min3, $key_min_max_low_steps_max3, $key_abs_min_max_low_min3, $key_abs_min_max_low_max3, $key_abs_min_max_low_steps_min3, $key_abs_min_max_low_steps_max3) = $this->min_max($tickers, $senkou_b, 'low', EXCHANGE_ROUND_DECIMALS);
 
 			$key_delayed = delayed($tickers, $kijunsen, 'close');
-                        rename_key($tickers, $key_delayed, $key_chikou);
+                        $this->rename_key($tickers, $key_delayed, $key_chikou);
 			/*
 				Chikou implementation is different; instead of looking into the future, it looks into the past.
 				This helps the last index look for the value from the past.
@@ -535,8 +534,8 @@ trait Technical
 		$key_slowd = '%d_price('.$period1.','.$period2.','.$period3.')';
 		$t = end($tickers);
 		if (!array_key_exists($key_fastk, $t) or !array_key_exists($key_dk, $t) or !array_key_exists($key_slowd, $t)){
-			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = min_max($tickers, 14, 'high', EXCHANGE_ROUND_DECIMALS);
-			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = min_max($tickers, 14, 'low', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_high_min, $key_min_max_high_max, $key_min_max_high_steps_min, $key_min_max_high_steps_max, $key_abs_min_max_high_min, $key_abs_min_max_high_max, $key_abs_min_max_high_steps_min, $key_abs_min_max_high_steps_max) = $this->min_max($tickers, 14, 'high', EXCHANGE_ROUND_DECIMALS);
+			list($key_min_max_low_min, $key_min_max_low_max, $key_min_max_low_steps_min, $key_min_max_low_steps_max, $key_abs_min_max_low_min, $key_abs_min_max_low_max, $key_abs_min_max_low_steps_min, $key_abs_min_max_low_steps_max) = $this->min_max($tickers, 14, 'low', EXCHANGE_ROUND_DECIMALS);
 
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
@@ -559,10 +558,10 @@ trait Technical
 							2);
 				}
 			}
-			$t = sma($tickers, $period2, $key_fastk);
-			rename_key($tickers, $t, $key_dk);
-			$s = sma($tickers, $period3, $key_dk);
-			rename_key($tickers, $s, $key_slowd);
+			$t = $this->sma($tickers, $period2, $key_fastk);
+			$this->rename_key($tickers, $t, $key_dk);
+			$s = $this->sma($tickers, $period3, $key_dk);
+			$this->rename_key($tickers, $s, $key_slowd);
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
 				$h[$key_dk] = number_format($h[$key_dk], 2, '.', '');
@@ -589,12 +588,12 @@ trait Technical
 
         $key_rsi = 'rsi('.$period1.')';
         if (!array_key_exists($key_rsi, $t)){
-            $key_rsi = rsi($tickers, $period1);
+            $key_rsi = $this->rsi($tickers, $period1);
         }
         
 		if (!array_key_exists($key_fastk, $t) or !array_key_exists($key_dk, $t) or !array_key_exists($key_slowd, $t)){
             list($key_min_max_rsi_min, $key_min_max_rsi_max, $key_min_max_rsi_steps_min, $key_min_max_rsi_steps_max, $key_abs_min_max_rsi_min, $key_abs_min_max_rsi_max, 
-                 $key_abs_min_max_rsi_steps_min, $key_abs_min_max_rsi_steps_max) = min_max($tickers, 14, $key_rsi, EXCHANGE_ROUND_DECIMALS);
+                 $key_abs_min_max_rsi_steps_min, $key_abs_min_max_rsi_steps_max) = $this->min_max($tickers, 14, $key_rsi, EXCHANGE_ROUND_DECIMALS);
 
             reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
@@ -617,10 +616,10 @@ trait Technical
 							2);
 				}
 			}
-			$t = sma($tickers, $period2, $key_fastk);
-			rename_key($tickers, $t, $key_dk);
-			$s = sma($tickers, $period3, $key_dk);
-			rename_key($tickers, $s, $key_slowd);
+			$t = $this->sma($tickers, $period2, $key_fastk);
+			$this->rename_key($tickers, $t, $key_dk);
+			$s = $this->sma($tickers, $period3, $key_dk);
+			$this->rename_key($tickers, $s, $key_slowd);
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
 				$h[$key_dk] = number_format($h[$key_dk], 2, '.', '');
@@ -697,12 +696,12 @@ trait Technical
 			$key = 'inflexion('.$keyA.','.$keyB.')';
 
 			if (!array_key_exists($key, $t)){
-				list($key_fastk, $key_dk, $key_slowd) = sto($tickers, 14, 3, 3);
+				list($key_fastk, $key_dk, $key_slowd) = $this->sto($tickers, 14, 3, 3);
 				$i = 0;
-				$key_compare = compare($tickers, $keyA, $keyB, EXCHANGE_ROUND_DECIMALS);
-				$key_consecutive_compare = consecutive($tickers, $key_compare);
-				list($key_tenkansen, $key_kijunsen, $key_chikou, $key_senkou_a, $key_senkou_b) = ichimoku($tickers);
-				list($key_kijunsen_slope, $key_kijunsen_slope_sign) = slope($tickers, $key_kijunsen, 1);
+				$key_compare = $this->compare($tickers, $keyA, $keyB, EXCHANGE_ROUND_DECIMALS);
+				$key_consecutive_compare = $this->consecutive($tickers, $key_compare);
+				list($key_tenkansen, $key_kijunsen, $key_chikou, $key_senkou_a, $key_senkou_b) = $this->ichimoku($tickers);
+				list($key_kijunsen_slope, $key_kijunsen_slope_sign) = $this->slope($tickers, $key_kijunsen, 1);
 				reset($tickers);
 				foreach ($tickers as &$h){
 					$h[$key] = 0;
@@ -712,7 +711,7 @@ trait Technical
 							$fast_test = ($tickers[$k][$key_fastk] + $tickers[$k][$key_dk])/2;
 							$slow_test = ($tickers[$k][$key_dk] + $tickers[$k][$key_slowd])/2;
 							$k_compare = $tickers[$k][$key_compare];
-							if (    (($fast_test >= 80) && ($k_compare == 1)) ||
+							if ((($fast_test >= 80) && ($k_compare == 1)) ||
 								(($fast_test <= 20) && ($k_compare == -1)) ||
 								(($slow_test >= 70) && ($k_compare == 1)) ||
 								(($slow_test <= 30) && ($k_compare == -1))
@@ -772,15 +771,15 @@ trait Technical
 
 		if (!array_key_exists($key, $t)){
 			$buffer = array();
-			$tp = tp($tickers);
-			$tp_sma = sma($tickers, $period, $tp);
+			$tp = $this->tp($tickers);
+			$tp_sma = $this->sma($tickers, $period, $tp);
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
 				array_push($buffer, $h[$tp_sma]);
 				if (count($buffer) > $period){
 					array_shift($buffer);
 				}
-                $key_md = md($tickers, $period, $tp, $tp_sma);
+                $key_md = $this->md($tickers, $period, $tp, $tp_sma);
 				$h[$key] = bcdiv(bcsub($h[$tp], $h[$tp_sma], EXCHANGE_ROUND_DECIMALS * 2),
 						bcmul(bcconv($h[$key_md]), bcconv(0.015), EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2);
 			}
@@ -798,7 +797,7 @@ trait Technical
 		$mkey = '-dm()'; $pkey = '+dm()';
 		$t = end($tickers);
 
-                if (!array_key_exists($mkey, $t) or !array_key_exists($pkey, $t)){
+        if (!array_key_exists($mkey, $t) or !array_key_exists($pkey, $t)){
 			$i = 1;
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
@@ -890,9 +889,9 @@ trait Technical
 		$t = end($tickers);
 
 		if (!array_key_exists($key, $t)){
-			gain($tickers, $period);
-			$gain_key = smma($tickers, $period, 'gain');
-			$loss_key = smma($tickers, $period, 'loss');
+			$this->gain($tickers, $period);
+			$gain_key = $this->smma($tickers, $period, 'gain');
+			$loss_key = $this->smma($tickers, $period, 'loss');
 
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is most rescent
@@ -924,7 +923,7 @@ trait Technical
         $t = end($tickers);
 
         if (!array_key_exists($key, $t)){
-            $delayed_index = delayed($tickers, $delay, $index);
+            $delayed_index = $this->delayed($tickers, $delay, $index);
 
             reset($tickers);
             $i = 0;
@@ -953,8 +952,8 @@ trait Technical
 		$macdkey = 'macd('.$short_period.','.$long_period.','.$signal_period.')';
 		$sigkey = 'macd_signal('.$macdkey.')';
 		if (!array_key_exists($macdkey, $t)){
-			$skey = ema($tickers, $short_period, 'close');
-			$lkey = ema($tickers, $long_period, 'close');
+			$skey = $this->ema($tickers, $short_period, 'close');
+			$lkey = $this->ema($tickers, $long_period, 'close');
 
 			reset($tickers);
 			foreach ($tickers as &$h){
@@ -962,7 +961,7 @@ trait Technical
 			}
 		}
 
-		$emasigkey = ema($tickers, $signal_period, $macdkey);
+		$emasigkey = $this->ema($tickers, $signal_period, $macdkey);
 		rename_key($tickers, $emasigkey, $sigkey);
 
 		$dkey = 'delta_macd('.$macdkey.','.$sigkey.')';
@@ -989,8 +988,8 @@ trait Technical
         $ppokey = 'ppo('.$short_period.','.$long_period.','.$signal_period.')';
         $sigkey = 'ppo_signal('.$ppokey.')';
         if (!array_key_exists($ppokey, $t)){
-            $skey = ema($tickers, $short_period, 'close');
-            $lkey = ema($tickers, $long_period, 'close');
+            $skey = $this->ema($tickers, $short_period, 'close');
+            $lkey = $this->ema($tickers, $long_period, 'close');
 
             reset($tickers);
             foreach ($tickers as &$h){
@@ -998,8 +997,8 @@ trait Technical
             }
         }
 
-        $emasigkey = ema($tickers, $signal_period, $ppokey);
-        rename_key($tickers, $emasigkey, $sigkey);
+        $emasigkey = $this->ema($tickers, $signal_period, $ppokey);
+        $this->rename_key($tickers, $emasigkey, $sigkey);
 
         $dkey = 'delta_ppo('.$ppokey.','.$sigkey.')';
         if (!array_key_exists($dkey, $t)){
@@ -1023,7 +1022,7 @@ trait Technical
 		$key = 'atr('.$period.')';
 
 		if (!array_key_exists($key, $t)){
-			$tr_key = tr($tickers);
+			$tr_key = $this->tr($tickers);
 			if (function_exists('\\okayinc\\trademinator\\indicators\\'.$average_function)){
 
 				if ($debug){
@@ -1032,10 +1031,10 @@ trait Technical
 
 				switch ($average_function){
 					case 'ema':
-						$okey = ema($tickers, $period, $tr_key);
+						$okey = $this->ema($tickers, $period, $tr_key);
                     case 'sma':
                     default:
-						$okey = sma($tickers, $period, $tr_key);
+						$okey = $this->sma($tickers, $period, $tr_key);
 						break;
 				}
 
@@ -1044,10 +1043,10 @@ trait Technical
 				if ($debug){
 					echo $average_function.' not found, using default SMA'.PHP_EOL;
 				}
-				$okey = sma($tickers, $period, $tr_key);	// Investopedia sugest a SMA, others a EMA
+				$okey = $this->sma($tickers, $period, $tr_key);	// Investopedia sugest a SMA, others a EMA
 			}
 			// Rename ema/sma(period,tr) new key into atr one
-			rename_key($tickers, $okey, $key);
+			$this->rename_key($tickers, $okey, $key);
 		}
 
 		return $key;
@@ -1062,7 +1061,7 @@ trait Technical
 		$t = end($tickers);
 		$key = 'atrp('.$period.')';
 		if (!array_key_exists($key, $t)){
-			$atr_key = atr($tickers, $period, $average_function);
+			$atr_key = $this->atr($tickers, $period, $average_function);
 			reset($tickers);
 			foreach ($tickers as &$h){
 				if (floatval($h['close']) == 0.0){
@@ -1091,7 +1090,7 @@ trait Technical
 		$key = 'smma('.$period.','.$index.')';
 		$t = end($tickers);
 		if (!array_key_exists($key, $t)){
-			$sma_key = sma($tickers, $period, $index);
+			$sma_key = $this->sma($tickers, $period, $index);
 			$i = 0;
 			$k = $period - 1;
 			reset($tickers);
@@ -1122,11 +1121,11 @@ trait Technical
 		$mkey = '-di('.$period.')';
 		$t = end($tickers);
 		if (!array_key_exists($mkey, $t) or !array_key_exists($pkey, $t) or !array_key_exists($adx_key, $t) or !array_key_exists($dx_key, $t)){
-			$tr_key = tr($tickers);
-			list($minus_dm_key, $plus_dm_key) = dm($tickers);
-			$sma_dmp_key = sma($tickers, $period, $plus_dm_key);
-			$sma_dmm_key = sma($tickers, $period, $minus_dm_key);
-			$sma_tr_key = sma($tickers, $period, $tr_key);
+			$tr_key = $this->tr($tickers);
+			list($minus_dm_key, $plus_dm_key) = $this->dm($tickers);
+			$sma_dmp_key = $this->sma($tickers, $period, $plus_dm_key);
+			$sma_dmm_key = $this->sma($tickers, $period, $minus_dm_key);
+			$sma_tr_key = $this->sma($tickers, $period, $tr_key);
 			$tpkey = "t$pkey"; $tmkey = "t$mkey";
 
 			reset($tickers);
@@ -1146,7 +1145,7 @@ trait Technical
 				}
 			}
 			$ttkey = smma($tickers, $period, $dx_key); // $ttkey = 'ema('.$period.','.$tkey.')';
-                        rename_key($tickers, $ttkey, $adx_key);
+                        $this->rename_key($tickers, $ttkey, $adx_key);
 
                         reset($tickers);
                         foreach ($tickers as &$h){
@@ -1192,8 +1191,8 @@ trait Technical
 		$key_color = 'ao_color('.$short.','.$long.')';
 		$midkey = midkey($tickers);
 		if (!array_key_exists($key, $t) or !array_key_exists($midkey, $t) or !array_key_exists($key_color, $t)){
-			$sma_short_key = sma($tickers, $short, $midkey);
-			$sma_long_key = sma($tickers, $long, $midkey);
+			$sma_short_key = $this->sma($tickers, $short, $midkey);
+			$sma_long_key = $this->sma($tickers, $long, $midkey);
 
 			$i = 1;
 			reset($tickers);
@@ -1230,7 +1229,7 @@ trait Technical
 
 		if (!array_key_exists($key, $t)){
 			list($key_ao, $key_ao_color, $midkey) = ao($tickers, $period, 34);
-			$smakey = sma($tickers, $period, $key_ao);
+			$smakey = $this->sma($tickers, $period, $key_ao);
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
 				$h[$key] = bcsub($h[$key_ao], $h[$smakey], EXCHANGE_ROUND_DECIMALS * 2);
@@ -1252,7 +1251,7 @@ trait Technical
 		$keylbb = 'bb_low('.$period.','.$stddev.')';
 		$bb_qz = 'bb_bw('.$period.','.$stddev.')';
 		$keystd = 'stddev('.$period.')';
-		$sma_key = sma($tickers,$period, 'close');
+		$sma_key = $this->sma($tickers,$period, 'close');
 		if (!array_key_exists($keyhbb, $t) or !array_key_exists($keylbb, $t) or !array_key_exists($bb_qz, $t) or !array_key_exists($keystd, $t)){
 			$buffer = array(); $i = 0;
 			reset($tickers);
@@ -1262,7 +1261,7 @@ trait Technical
 					array_shift($buffer);
 				}
 				if (count($buffer) > 1){
-					$std = stats_standard_deviation($buffer, false);
+					$std = $this->stats_standard_deviation($buffer, false);
 					$h[$keystd] = $std;
 					$h[$keyhbb] = bcadd($h[$sma_key], bcmul($stddev, $std, EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2);
 					$h[$keylbb] = bcsub($h[$sma_key], bcmul($stddev, $std, EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2);
@@ -1285,10 +1284,10 @@ trait Technical
 		$t = end($tickers);
 		$keyhk = 'keltner_high('.$period.','.$bandwidth.')';
 		$keylk = 'keltner_low('.$period.','.$bandwidth.')';
-		$key_tp = tp($tickers);
-		$sma_key = sma($tickers, $period, $key_tp);
 		if (!array_key_exists($keyhk, $t) or !array_key_exists($keylk, $t)){
-			$key_atr = atr($tickers, 10);
+    		$key_tp = $this->tp($tickers);
+    		$sma_key = $this->sma($tickers, $period, $key_tp);
+			$key_atr = $this->atr($tickers, 10);
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
 				$h[$keyhk] = bcadd($h[$sma_key], bcmul($bandwidth, $h[$key_atr], EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2);
@@ -1310,8 +1309,8 @@ trait Technical
 		$key = 'squeeze()';
 		$key_choppy = 'choppy()';
 		if (!array_key_exists($key, $t) or !array_key_exists($key_choppy, $t)){
-			list($key_lbb_20_2, $key_hbb_20_2, $key_bb_qz_20_2, $key_std_20_2, $key_sma_20_2) = bb($tickers, 20, 2);
-			list($key_lk, $key_hk, $key_sma_close) = keltner($tickers, 20, 1.5);
+			list($key_lbb_20_2, $key_hbb_20_2, $key_bb_qz_20_2, $key_std_20_2, $key_sma_20_2) = $this->bb($tickers, 20, 2);
+			list($key_lk, $key_hk, $key_sma_close) = $this->keltner($tickers, 20, 1.5);
 			reset($tickers);
             $i = 0;
 			foreach ($tickers as &$h){      // Last element is the most rescent
@@ -1343,8 +1342,8 @@ trait Technical
 		$key_upper = 'super_trend_upper('.$period.','.$factor.')';
 		$key_lower  = 'super_trend_lower('.$period.','.$factor.')';
 		if (!array_key_exists($key_super, $t) or !array_key_exists($key_upper, $t) or !array_key_exists($key_lower, $t)){
-			$key_hl2 = midkey($tickers, 'high', 'low');
-			$key_atr = atr($tickers, $period);
+			$key_hl2 = $this->midkey($tickers, 'high', 'low');
+			$key_atr = $this->atr($tickers, $period);
 			$i = 1;
 			reset($tickers);
 			foreach ($tickers as &$h){      // Last element is the most rescent
@@ -1394,7 +1393,7 @@ trait Technical
 		}
 
 		if ((count($tickers) < 2) && (is_null($bar_time_in_seconds))){
-			// Cant know the time
+			//Can't know the time
 			return null;
 		}
 		else{
@@ -1413,7 +1412,7 @@ trait Technical
 		$t = end($tickers);
 		$key  = 'speed('.$period.','.$bar_time_in_seconds.')';
 		if (!array_key_exists($key, $t)){
-			$last_close = delayed($tickers, $period, 'close');
+			$last_close = $this->delayed($tickers, $period, 'close');
 			reset($tickers);
 			$c = 0;
 			foreach ($tickers as &$h){      // Last element is the most rescent
