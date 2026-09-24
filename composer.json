@@ -1,24 +1,8 @@
 {
-    "$schema": "https://www.schemastore.org/package.json",
-    "private": true,
-    "engines": {
-        "node": "^20.19.0 || >=22.12.0"
-    },
-    "dependencies": {
-        "@imacrayon/alpine-ajax": "^0.12.0",
-        "alpinejs": "^3.14.8",
-        "instant.page": "^5.2.0"
-    },
-    "devDependencies": {
-        "@tailwindcss/vite": "^4.0.7",
-        "concurrently": "^10.0.3",
-        "laravel-vite-plugin": "^3.1",
-        "tailwindcss": "^4.0.7",
-        "vite": "^8.0.0"
-    },
+    "$schema": "https://getcomposer.org/schema.json",
     "name": "trademinator/server",
     "type": "project",
-    "description": "The Tradminator AI Server.",
+    "description": "The Trademinator AI Server.",
     "keywords": [
         "laravel",
         "framework",
@@ -27,23 +11,19 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
-<<<<<<< HEAD
         "ccxt/ccxt": "^4.5",
-=======
-        "ccxt/ccxt": "*",
->>>>>>> 5c8a6ef (one step more to Laravel 13)
-        "codeat3/blade-phosphor-icons": "^2.3",
+        "codeat3/blade-phosphor-icons": "^2.4",
+        "ext-bcmath": "*",
+        "jason-guru/laravel-make-repository": "^1.0",
         "laravel/framework": "^13.0",
         "laravel/tinker": "^3.0",
         "pear/console_color2": "^0.1.2",
         "rubix/ml": "^2.5",
         "symfony/http-client": "^7.3",
         "symfony/mailgun-mailer": "^7.3"
-        "ext-bcmath": "*"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
-        "jason-guru/laravel-make-repository": "^0.0.3",
         "laravel/boost": "^2.0",
         "laravel/pail": "^1.2.5",
         "laravel/pint": "^1.27",
@@ -51,7 +31,8 @@
         "mockery/mockery": "^1.6",
         "nunomaduro/collision": "^8.6",
         "pestphp/pest": "^4.0",
-        "pestphp/pest-plugin-laravel": "^4.0"
+        "pestphp/pest-plugin-laravel": "^4.0",
+        "phpunit/phpunit": "^12.0"
     },
     "autoload": {
         "files": [
@@ -69,8 +50,6 @@
         }
     },
     "scripts": {
-        "build": "vite build",
-        "dev": "vite",
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"
@@ -90,6 +69,10 @@
         "dev": [
             "Composer\\Config::disableProcessTimeout",
             "npx concurrently -c \"#93c5fd,#c4b5fd,#fb7185,#fdba74\" \"php artisan serve\" \"php artisan queue:listen --tries=1\" \"php artisan pail --timeout=0\" \"npm run dev\" --names=server,queue,logs,vite"
+        ],
+        "test": [
+            "@php artisan config:clear --ansi",
+            "@php artisan test"
         ]
     },
     "extra": {

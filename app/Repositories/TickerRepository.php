@@ -21,6 +21,7 @@ class TickerRepository extends BaseRepository
 
     public function __construct(?Ticker $ticker = null)
     {
+	parent::__construct();
         $this->ticker = $ticker;
     }
 
@@ -79,7 +80,7 @@ class TickerRepository extends BaseRepository
      * @return string
      *  Return the model
      */
-    public function model()
+    public function model(): string
     {
         return Ticker::class;
     }

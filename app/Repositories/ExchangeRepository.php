@@ -24,6 +24,7 @@ class ExchangeRepository extends BaseRepository
 
     public function __construct(?Exchange $exchange = null)
     {
+	parent::__construct();
         $this->exchange = $exchange;
         if (!is_null($exchange))
         {
@@ -148,7 +149,7 @@ class ExchangeRepository extends BaseRepository
      * @return string
      *  Return the model
      */
-    public function model()
+    public function model():string
     {
         return Exchange::class;
     }
