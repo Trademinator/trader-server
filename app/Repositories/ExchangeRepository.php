@@ -67,12 +67,18 @@ class ExchangeRepository extends BaseRepository
             Log::debug("startFetching $startFetching; records $records; offset $offset; params ".print_r($params,true));
         }
 
-        while(count($ohlcv = $this->tickerRepository->fetch($symbol, $period, $startFetching, $records, $params)) > 1)
+        while ($startFetching <= $endFetching && count($ohlcv = $this->tickerRepository->fetch($symbol, $period, $startFetching, $records, $params)) > 0)
         {
-            $t1 = reset($ohlcv)['microtimestamp'];
             $t2 = end($ohlcv)['microtimestamp'];
-            $answer = array_merge($answer, $ohlcv);
-            $startFetching = $t2 + 1000;
+            foreach ($ohlcv as $candle) {
+                if ($candle['microtimestamp'] >= $from * 1000 && $candle['microtimestamp'] <= $endFetching) {
+                    $answer[$candle['microtimestamp']] = $candle;
+                }
+            }
+            if ($t2 < $startFetching) {
+                break; // The exchange returned no new candles.
+            }
+            $startFetching = $t2 + periods_to_seconds($period) * 1000;
 
             if ($startFetching >= $endFetching)
             {
@@ -92,7 +98,8 @@ class ExchangeRepository extends BaseRepository
             }
         }
 
-        $ohlcv = $this->tickerRepository->fixTickerIndex($answer);
+        ksort($answer, SORT_NUMERIC);
+        $ohlcv = array_values($answer);
         unset($answer);
         $this->tickerRepository->saveTickers($this->exchange->class, $symbol, $period, $ohlcv);
 
@@ -156,7 +163,8 @@ class ExchangeRepository extends BaseRepository
         $this->exchange = $exchange;
         $ccxtExchangeName = '\\ccxt\\' . $exchange->class;
         // DB saves the confing in JSON format, but CCXT expects it in an associative array
-        $settings = json_decode($this->exchange->config, true);
+        $settings = json_decode($this->exchange->config ?: '{}', true) ?: [];
+        $settings['enableRateLimit'] = true;
         if (count($extraSettings))
         {
             $settings = array_merge($settings, $extraSettings);

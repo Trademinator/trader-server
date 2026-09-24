@@ -56,7 +56,7 @@ class TickerRepository extends BaseRepository
         $tickers = [];
         foreach ($rawTickers as $raw)
         {
-            $tickers[$raw['microtimestamp']] = json_decode($raw['payload'], true);
+            $tickers[] = json_decode($raw['payload'], true);
         }
 
         return $tickers;
@@ -134,7 +134,7 @@ class TickerRepository extends BaseRepository
                 $data[] = $data1;
             }
 
-            Ticker::insertOrIgnore($data);
+            $this->update($data, $unique, $update);
         }
 
     }

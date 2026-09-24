@@ -59,6 +59,7 @@ if (!function_exists('periods_to_seconds'))
                 case 'M':                   // A month is 4 weeks
                     $multiplier = 2419200;
                     break;
+                case 'y':
                 case 'Y':                   // A year is 365 days
                     $multiplier = 31536000;
                     break;
