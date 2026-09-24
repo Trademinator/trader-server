@@ -12,27 +12,33 @@ final class CandleQuality
         if ($tickSize <= 0 || ! is_finite($tickSize)) {
             throw new InvalidArgumentException('Tick size must be positive and finite.');
         }
+
         $count = count($candles);
         if ($count === 0) {
             throw new InvalidArgumentException('At least one candle is required.');
         }
+
         $flats = $zeros = $run = $longestRun = 0;
         $closes = $ranges = [];
+
         foreach ($candles as $candle) {
             foreach (['open', 'high', 'low', 'close', 'volume'] as $field) {
                 if (! isset($candle[$field]) || ! is_numeric($candle[$field])) {
                     throw new InvalidArgumentException("Invalid candle field: {$field}");
                 }
             }
+
             $open = (float) $candle['open'];
             $high = (float) $candle['high'];
             $low = (float) $candle['low'];
             $close = (float) $candle['close'];
             $volume = (float) $candle['volume'];
+
             if (! is_finite($open) || ! is_finite($high) || ! is_finite($low) || ! is_finite($close) || ! is_finite($volume)
                 || $high < max($open, $close) || $low > min($open, $close) || $low > $high || $volume < 0) {
                 throw new InvalidArgumentException('Invalid OHLCV values.');
             }
+
             $flat = $open === $high && $high === $low && $low === $close;
             $flats += (int) $flat;
             $run = $flat ? $run + 1 : 0;
@@ -41,17 +47,29 @@ final class CandleQuality
             $closes[(string) $candle['close']] = true;
             $ranges[] = ($high - $low) / $tickSize;
         }
+
         sort($ranges, SORT_NUMERIC);
         $middle = intdiv($count, 2);
-        $median = $count % 2 ? $ranges[$middle] : ($ranges[$middle - 1] + $ranges[$middle]) / 2;
-        $flatRatio = $flats / $count;
-        $runRatio = $longestRun / $count;
-        $zeroRatio = $zeros / $count;
-        $uniqueRatio = count($closes) / $count;
-        $rangeScore = min(1.0, $median / 5.0);
+
+        $median = $count % 2
+            ? (float) $ranges[$middle]
+            : (float) (($ranges[$middle - 1] + $ranges[$middle]) / 2);
+
+        $flatRatio = (float) ($flats / $count);
+        $runRatio = (float) ($longestRun / $count);
+        $zeroRatio = (float) ($zeros / $count);
+        $uniqueRatio = (float) (count($closes) / $count);
+        $rangeScore = (float) min(1.0, $median / 5.0);
+        $score = (float) max(
+            0.0,
+            min(
+                1.0,
+                ((1 - $flatRatio) + (1 - $runRatio) + (1 - $zeroRatio) + $uniqueRatio + $rangeScore) / 5
+            )
+        );
 
         return [
-            'score' => max(0.0, min(1.0, ((1 - $flatRatio) + (1 - $runRatio) + (1 - $zeroRatio) + $uniqueRatio + $rangeScore) / 5)),
+            'score' => $score,
             'true_flat_ratio' => $flatRatio,
             'longest_flat_run_ratio' => $runRatio,
             'zero_volume_ratio' => $zeroRatio,
@@ -67,10 +85,12 @@ final class CandleQuality
         if ($threshold < 0 || $threshold > 1 || $minimumCandles < 1) {
             throw new InvalidArgumentException('Invalid selection threshold or minimum sample size.');
         }
+
         foreach ($samplesByPeriod as $period => $candles) {
             if (count($candles) < $minimumCandles) {
                 continue;
             }
+
             $quality = $this->evaluate($candles, $tickSize);
             if ($quality['score'] >= $threshold) {
                 return ['period' => $period, 'quality' => $quality];
