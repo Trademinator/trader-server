@@ -1,8 +1,24 @@
 {
-    "$schema": "https://getcomposer.org/schema.json",
-    "name": "imacrayon/blade-starter-kit",
+    "$schema": "https://www.schemastore.org/package.json",
+    "private": true,
+    "engines": {
+        "node": "^20.19.0 || >=22.12.0"
+    },
+    "dependencies": {
+        "@imacrayon/alpine-ajax": "^0.12.0",
+        "alpinejs": "^3.14.8",
+        "instant.page": "^5.2.0"
+    },
+    "devDependencies": {
+        "@tailwindcss/vite": "^4.0.7",
+        "concurrently": "^10.0.3",
+        "laravel-vite-plugin": "^3.1",
+        "tailwindcss": "^4.0.7",
+        "vite": "^8.0.0"
+    },
+    "name": "trademinator/server",
     "type": "project",
-    "description": "The unofficial Laravel starter kit for Blade.",
+    "description": "The Tradminator AI Server.",
     "keywords": [
         "laravel",
         "framework",
@@ -11,7 +27,11 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
+<<<<<<< HEAD
         "ccxt/ccxt": "^4.5",
+=======
+        "ccxt/ccxt": "*",
+>>>>>>> 5c8a6ef (one step more to Laravel 13)
         "codeat3/blade-phosphor-icons": "^2.3",
         "laravel/framework": "^13.0",
         "laravel/tinker": "^3.0",
@@ -49,6 +69,8 @@
         }
     },
     "scripts": {
+        "build": "vite build",
+        "dev": "vite",
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"
