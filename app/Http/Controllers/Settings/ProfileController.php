@@ -31,7 +31,7 @@ class ProfileController extends Controller
                 'lowercase',
                 'email',
                 'max:255',
-                Rule::unique(User::class)->ignore($user->id),
+                Rule::unique(User::class)->ignore($user),
             ],
         ]);
 
