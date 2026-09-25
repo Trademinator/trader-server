@@ -42,10 +42,13 @@ class ExchangeRepository extends BaseRepository
         return $this->ccxtExchange->describe();
     }
 
-    public function fetch(string $symbol, string $period, int $from, int $to): array
+    public function fetch(string $symbol, string $period, int $from, int $to, int $limit = 100): array
     {
         if ($from > $to) {
             throw new \InvalidArgumentException('The fetch start time must be before or equal to the end time.');
+        }
+        if ($limit < 1 || $limit > 100) {
+            throw new \InvalidArgumentException('OHLCV request limit must be between 1 and 100 candles.');
         }
 
         if (! in_array($period, CandleTimeframe::SUPPORTED, true)) {
@@ -62,15 +65,10 @@ class ExchangeRepository extends BaseRepository
         $startFetching = $from * 1000;
         $endFetching = $to * 1000;
 
-        switch ($this->exchange->class) {
-            case 'coinbase':
-                $records = 250;
-                $batchWindowMilliseconds = $periodMilliseconds * $records;
-                $params['end'] = min($endFetching, $startFetching + $batchWindowMilliseconds);
-                break;
-            default:
-                $records = 1000;
-                $batchWindowMilliseconds = $periodMilliseconds * $records;
+        $records = $limit;
+        $batchWindowMilliseconds = $periodMilliseconds * $records;
+        if ($this->exchange->class === 'coinbase') {
+            $params['end'] = min($endFetching, $startFetching + $batchWindowMilliseconds);
         }
 
         if (App::hasDebugModeEnabled()) {

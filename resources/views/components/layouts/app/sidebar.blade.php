@@ -18,6 +18,9 @@
                     <x-navlist.item before="phosphor-house-line" :href="route('dashboard')" :current="request()->routeIs('dashboard')">
                         {{ __('Dashboard') }}
                     </x-navlist.item>
+                    <x-navlist.item before="phosphor-chart-line" :href="route('markets.index')" :current="request()->routeIs('markets.*')">
+                        {{ __('Markets') }}
+                    </x-navlist.item>
                 </x-navlist.group>
             </x-navlist>
 

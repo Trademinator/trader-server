@@ -32,11 +32,11 @@ it('fetches a candle exactly on the requested end boundary', function () {
     $tickerRepository = Mockery::mock(TickerRepository::class);
     $tickerRepository->shouldReceive('fetch')
         ->once()
-        ->with('BTC/USD', '1m', $fromMs, 1000, [])
+        ->with('BTC/USD', '1m', $fromMs, 100, [])
         ->andReturn($first);
     $tickerRepository->shouldReceive('fetch')
         ->once()
-        ->with('BTC/USD', '1m', $toMs, 1000, [])
+        ->with('BTC/USD', '1m', $toMs, 100, [])
         ->andReturn($second);
     $tickerRepository->shouldReceive('saveTickers')
         ->once()
@@ -63,15 +63,31 @@ it('rejects an inverted fetch range', function () {
         ->toThrow(InvalidArgumentException::class);
 });
 
+it('passes the requested candle limit to CCXT for one bounded page', function () {
+    $from = 1_700_000_000;
+    $tickerRepository = Mockery::mock(TickerRepository::class);
+    $tickerRepository->shouldReceive('fetch')->once()
+        ->with('BTC/USD', '1m', $from * 1000, 10, [])
+        ->andReturn([['microtimestamp' => $from * 1000, 'open' => '1', 'high' => '2', 'low' => '1', 'close' => '2', 'volume' => '1']]);
+    $tickerRepository->shouldReceive('saveTickers')->once()->andReturn(1);
+
+    $repository = new ExchangeRepository;
+    $reflection = new ReflectionClass($repository);
+    $reflection->getProperty('exchange')->setValue($repository, new Exchange(['name' => 'Test', 'class' => 'kraken']));
+    $reflection->getProperty('tickerRepository')->setValue($repository, $tickerRepository);
+
+    expect($repository->fetch('BTC/USD', '1m', $from, $from, 10))->toHaveCount(1);
+});
+
 it('continues past an empty Coinbase batch and finds later candles', function () {
     $from = 1_700_000_000;
     $start = $from * 1000;
-    $next = $start + 250 * 60_000;
+    $next = $start + 100 * 60_000;
     $tickerRepository = Mockery::mock(TickerRepository::class);
     $tickerRepository->shouldReceive('fetch')->once()
-        ->with('BTC/USD', '1m', $start, 250, ['end' => $next])->andReturn([]);
+        ->with('BTC/USD', '1m', $start, 100, ['end' => $next])->andReturn([]);
     $tickerRepository->shouldReceive('fetch')->once()
-        ->with('BTC/USD', '1m', $next, 250, ['end' => $next])
+        ->with('BTC/USD', '1m', $next, 100, ['end' => $next])
         ->andReturn([['microtimestamp' => $next, 'open' => '1', 'high' => '2', 'low' => '1', 'close' => '2', 'volume' => '1']]);
     $tickerRepository->shouldReceive('saveTickers')->once()->andReturn(1);
 
@@ -80,7 +96,7 @@ it('continues past an empty Coinbase batch and finds later candles', function ()
     $reflection->getProperty('exchange')->setValue($repository, new Exchange(['name' => 'Test', 'class' => 'coinbase']));
     $reflection->getProperty('tickerRepository')->setValue($repository, $tickerRepository);
 
-    $result = $repository->fetch('BTC/USD', '1m', $from, $from + 250 * 60);
+    $result = $repository->fetch('BTC/USD', '1m', $from, $from + 100 * 60);
 
     expect($result)->toHaveCount(1)->and($result[0]['microtimestamp'])->toBe($next);
 });

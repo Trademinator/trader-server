@@ -15,10 +15,10 @@ final class MarketDataSynchronizer
     ) {}
 
     /** @return array{fetched: int, repaired: int, missing_ranges: int} */
-    public function sync(string $exchange, string $symbol, string $period, int $from, int $to, bool $incremental = false, bool $repairGaps = false): array
+    public function sync(string $exchange, string $symbol, string $period, int $from, int $to, bool $incremental = false, bool $repairGaps = false, int $requestLimit = 100): array
     {
-        if ($from >= $to) {
-            throw new InvalidArgumentException('The start must precede the end.');
+        if ($from > $to) {
+            throw new InvalidArgumentException('The start must not follow the end.');
         }
 
         $model = $this->exchanges->findByClass($exchange)?->first();
@@ -41,16 +41,17 @@ final class MarketDataSynchronizer
             }
         }
 
-        $fetched = $start <= $to ? count($this->exchanges->fetch($symbol, $period, $start, $to)) : 0;
+        $fetched = $start <= $to ? count($this->exchanges->fetch($symbol, $period, $start, $to, $requestLimit)) : 0;
         $timestamps = $this->tickers->timestamps($exchange, $symbol, $period, $from * 1000, $to * 1000);
         $missing = $this->gaps->between($timestamps, $period);
         $repaired = 0;
 
         if ($repairGaps) {
-            // One repair attempt per range; exchanges can omit no-trade candles.
-            foreach (array_slice($missing, 0, 100) as $gap) {
+            // Limit repair calls within a page as well as the candle request.
+            // Exchanges may omit no-trade candles altogether.
+            foreach (array_slice($missing, 0, 5) as $gap) {
                 $repaired += count($this->exchanges->fetch(
-                    $symbol, $period, intdiv($gap['from'], 1000), intdiv($gap['to'], 1000)
+                    $symbol, $period, intdiv($gap['from'], 1000), intdiv($gap['to'], 1000), $requestLimit
                 ));
             }
             $timestamps = $this->tickers->timestamps($exchange, $symbol, $period, $from * 1000, $to * 1000);

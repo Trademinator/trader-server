@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Settings;
+use App\Http\Controllers\Markets\SubscriptionController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -12,6 +13,9 @@ Route::view('dashboard', 'dashboard')
     ->name('dashboard');
 
 Route::middleware(['auth'])->group(function () {
+    Route::get('markets', [SubscriptionController::class, 'index'])->name('markets.index');
+    Route::post('markets', [SubscriptionController::class, 'store'])->name('markets.store');
+    Route::delete('markets/{subscription}', [SubscriptionController::class, 'destroy'])->name('markets.destroy');
     Route::redirect('settings', 'settings/profile');
 
     Route::get('settings/profile', [Settings\ProfileController::class, 'edit'])->name('settings.profile.edit');
