@@ -1,4 +1,4 @@
-<div class="flex aspect-square size-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-black">
+<div class="flex aspect-square size-8 shrink-0 items-center justify-center overflow-hidden rounded-md">
     <x-app-logo-icon class="size-8" />
 </div>
 <div class="ml-1 grid flex-1 text-left text-sm">

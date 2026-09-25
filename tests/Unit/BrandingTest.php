@@ -17,7 +17,7 @@ it('uses the bundled cyborg icon for an unset or blank override', function ($ove
     config(['app.logo_url' => $override]);
 
     $this->blade('<x-app-logo-icon class="size-8" />')
-        ->assertSee('src="'.asset('images/branding/trademinator-icon.webp').'"', false)
+        ->assertSee('src="'.asset('images/branding/trademinator-icon.webp').'?v=trademinator-silver-transparent-2"', false)
         ->assertSee('aria-hidden="true"', false)
         ->assertSee('size-8', false)
         ->assertDontSee('<svg', false);
@@ -29,7 +29,7 @@ it('uses the bundled cyborg icon for an unset or blank override', function ($ove
 
 it('uses the full approved artwork where requested', function () {
     $this->blade('<x-app-logo-icon variant="full" alt="Trademinator logo" />')
-        ->assertSee('src="'.asset('images/branding/trademinator-logo.webp').'"', false)
+        ->assertSee('src="'.asset('images/branding/trademinator-logo.webp').'?v=trademinator-silver-transparent-2"', false)
         ->assertSee('alt="Trademinator logo"', false)
         ->assertDontSee('aria-hidden="true"', false);
 });
@@ -71,9 +71,9 @@ it('escapes application names in the page title', function () {
 it('uses the application name when no page title is supplied', function () {
     $this->view('partials.head')
         ->assertSee('<title>Trademinator</title>', false)
-        ->assertSee('favicon.ico?v=trademinator-silver-1', false)
-        ->assertSee('favicon-32x32.png?v=trademinator-silver-1', false)
-        ->assertSee('apple-touch-icon.png?v=trademinator-silver-1', false);
+        ->assertSee('favicon.ico?v=trademinator-silver-transparent-2', false)
+        ->assertSee('favicon-32x32.png?v=trademinator-silver-transparent-2', false)
+        ->assertSee('apple-touch-icon.png?v=trademinator-silver-transparent-2', false);
 });
 
 it('uses the full artwork in the authentication layouts', function ($layout) {
@@ -125,3 +125,92 @@ it('ships a nonempty ICO favicon', function () {
     expect(strlen($contents))->toBeGreaterThan(6)
         ->and(substr($contents, 0, 4))->toBe("\x00\x00\x01\x00");
 });
+
+
+it('does not place an opaque black tile behind the sidebar logo', function () {
+    $this->blade('<x-app-logo />')
+        ->assertDontSee('bg-black', false);
+});
+
+it('does not place an opaque black tile behind the welcome or split-layout logos', function () {
+    $this->view('welcome')->assertDontSee('bg-black', false);
+
+    $this->blade('<x-layouts.auth.split><p>Transparency test</p></x-layouts.auth.split>')
+        ->assertDontSee('bg-black', false);
+});
+
+it('leaves signed custom logo URLs and fragments untouched', function () {
+    config(['app.logo_url' => 'https://branding.example.test/custom.png?signature=abc123#logo']);
+
+    $this->blade('<x-app-logo-icon />')
+        ->assertSee('src="https://branding.example.test/custom.png?signature=abc123#logo"', false)
+        ->assertDontSee('trademinator-silver-transparent-2', false);
+});
+
+it('ships RGBA PNG assets rather than opaque RGB replacements', function ($path) {
+    $contents = file_get_contents(public_path($path));
+
+    expect(substr($contents, 0, 8))->toBe("\x89PNG\r\n\x1a\n")
+        ->and(substr($contents, 12, 4))->toBe('IHDR')
+        ->and(ord($contents[24]))->toBe(8)
+        ->and(ord($contents[25]))->toBe(6);
+})->with([
+    'images/branding/trademinator-logo.png',
+    'images/branding/trademinator-icon.png',
+    'favicon-16x16.png',
+    'favicon-32x32.png',
+    'apple-touch-icon.png',
+]);
+
+it('ships WebP logo variants with their alpha channel enabled', function ($path) {
+    $contents = file_get_contents(public_path($path));
+
+    expect(substr($contents, 0, 4))->toBe('RIFF')
+        ->and(substr($contents, 8, 4))->toBe('WEBP')
+        ->and(substr($contents, 12, 4))->toBe('VP8X')
+        ->and(ord($contents[20]) & 0x10)->toBe(0x10);
+})->with([
+    'images/branding/trademinator-logo.webp',
+    'images/branding/trademinator-icon.webp',
+]);
+
+it('keeps the actual top left pixel transparent in each PNG without requiring GD', function ($path) {
+    $contents = file_get_contents(public_path($path));
+    $compressed = '';
+    $offset = 8;
+
+    expect(ord($contents[24]))->toBe(8)
+        ->and(ord($contents[25]))->toBe(6)
+        ->and(ord($contents[28]))->toBe(0);
+
+    while ($offset + 12 <= strlen($contents)) {
+        $length = unpack('Nlength', substr($contents, $offset, 4))['length'];
+        $type = substr($contents, $offset + 4, 4);
+
+        if ($type === 'IDAT') {
+            $compressed .= substr($contents, $offset + 8, $length);
+        }
+
+        $offset += 12 + $length;
+
+        if ($type === 'IEND') {
+            break;
+        }
+    }
+
+    $pixels = gzuncompress($compressed);
+
+    expect($pixels)->not->toBeFalse()
+        ->and(strlen($pixels))->toBeGreaterThan(4);
+
+    // In a non-interlaced RGBA PNG, the first byte is the scanline filter.
+    // All predictors for the first pixel are zero, so its alpha is byte 4.
+    expect(ord($pixels[0]))->toBeLessThanOrEqual(4)
+        ->and(ord($pixels[4]))->toBe(0);
+})->with([
+    'images/branding/trademinator-logo.png',
+    'images/branding/trademinator-icon.png',
+    'favicon-16x16.png',
+    'favicon-32x32.png',
+    'apple-touch-icon.png',
+]);

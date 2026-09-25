@@ -6,10 +6,11 @@
     $logoPath = $customLogo !== ''
         ? $customLogo
         : 'images/branding/'.($fullLogo ? 'trademinator-logo.webp' : 'trademinator-icon.webp');
+    $logoUrl = asset($logoPath).($customLogo === '' ? '?v=trademinator-silver-transparent-2' : '');
 @endphp
 
 <img
-    src="{{ asset($logoPath) }}"
+    src="{{ $logoUrl }}"
     alt="{{ $alt }}"
     @if ($alt === '') aria-hidden="true" @endif
     decoding="async"

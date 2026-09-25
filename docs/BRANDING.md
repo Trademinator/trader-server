@@ -2,17 +2,19 @@
 
 ## Default artwork
 
-The default identity is the user-selected silver cyborg logo: an older human face with worn mechanical parts, silver market graphics, and restrained red accents. The full approved raster is preserved byte-for-byte in `public/images/branding/trademinator-logo.png`.
+The default identity is the user-selected silver cyborg logo: an older human face with worn mechanical parts, silver market graphics, and restrained red accents. The newest approved transparent raster is preserved byte-for-byte in `public/images/branding/trademinator-logo.png`.
 
-The head has not been regenerated, redrawn, or retouched. Compact icons are crops and resizes of that same source. Its existing black background is preserved; the artwork is not transparent.
+This update uses the latest approved transparent image; it does not generate another face. The full PNG retains the supplied image's original pixels and alpha channel. The full WebP retains transparency when resized. Compact icons use a head-focused crop with an antialiased circular matte and transparent margins, rather than a black square.
+
+Transparency applies outside the emblem. The dark chart disc and black backing inside the wordmark are intentional parts of the illustration and are retained. No white or checkerboard background is baked into any application asset.
 
 | Asset | Size | Use |
 | --- | --- | --- |
-| `public/images/branding/trademinator-logo.png` | 1254 × 1254 | Original approved source |
+| `public/images/branding/trademinator-logo.png` | 1254 × 1254 | Approved transparent source |
 | `public/images/branding/trademinator-logo.webp` | 960 × 960 | Welcome and authentication pages |
 | `public/images/branding/trademinator-icon.webp` | 256 × 256 | Sidebar / compact branding |
 | `public/images/branding/trademinator-icon.png` | 256 × 256 | PNG compact icon |
-| `public/favicon.ico` | 16, 32, 48, 64 | Browser fallback |
+| `public/favicon.ico` | 16, 32, 48, 64 | Transparent browser fallback |
 | `public/favicon-16x16.png` | 16 × 16 | Small browser tabs |
 | `public/favicon-32x32.png` | 32 × 32 | Higher-density browser tabs |
 | `public/apple-touch-icon.png` | 180 × 180 | Apple home-screen shortcut |
@@ -53,19 +55,22 @@ Environment access remains in `config/app.php`; views read the configuration, no
 
 Empty `alt` values are decorative and receive `aria-hidden="true"`. The sidebar and authentication home links already contain the application name as visible or screen-reader text. Standalone use should supply an appropriate `alt` value.
 
-The `simple`, `card`, and `split` authentication layouts are covered. The default Laravel welcome page is replaced by a Trademinator welcome page while retaining login, registration, dashboard, and market navigation. Shared titles use `APP_NAME`, and `partials/branding-icons.blade.php` defines the browser icons. Favicon URLs carry a version suffix to help avoid old cached icons.
+The `simple`, `card`, and `split` authentication layouts are covered. The default Laravel welcome page is replaced by a Trademinator welcome page while retaining login, registration, dashboard, and market navigation. Shared titles use `APP_NAME`, and `partials/branding-icons.blade.php` defines the browser icons. Default logo URLs and all favicon link URLs now use `?v=trademinator-silver-transparent-2`. This replaces the previous favicon revision and gives the full and compact logos new browser cache keys. Custom `APP_LOGO_URL` overrides are not given a suffix, so signed URLs and fragments remain intact.
+
+The black background utility is removed from the logo wrappers in the sidebar, welcome hero, and split authentication layout. The page backgrounds themselves are not changed.
 
 ## Deployment
 
-After applying the code and assets, check the two `.env` values above and run:
+Apply this follow-up over the previously installed `trademinator-silver-branding-update.tar.gz`. Do not reinstall or roll back the first package. The patch touches only the listed branding assets, five Blade files, this document, and the branding regression test; it does not change `.env`, configuration, authentication behavior, market collection, subscriptions, or database records.
+
+After applying the patch, run:
 
 ```bash
-npm run build
-php artisan optimize:clear
+php artisan view:clear
 php artisan test --filter=BrandingTest
 ```
 
-Run `npm ci` before the build only if the existing Node dependencies have not been installed. No database migration or new Composer/Node dependency is required for the branding update.
+No Node build is needed for this follow-up: it replaces public image files, changes image URLs, and removes existing CSS classes without introducing new classes. No migration or new dependency is required. If you change `APP_LOGO_URL` separately, refresh the configuration cache using your normal deployment procedure.
 
 On production installations that cache configuration and views, rebuild those caches after checking the result:
 
@@ -78,6 +83,6 @@ Use a hard browser refresh after deployment. If PHP OPcache is configured not to
 
 ## Regression checks
 
-`tests/Unit/BrandingTest.php` boots the application's test case but does not use `RefreshDatabase`. It covers blank and custom URL behavior, both logo variants, accessible alternatives, custom app names, shared titles and favicons, all authentication layouts, guest/authenticated welcome navigation, and the image dimensions. The tests are under `Unit` to avoid this project's automatic database-refresh trait for `Feature` tests; they still exercise the Blade/application layer.
+`tests/Unit/BrandingTest.php` boots the application's test case but does not use `RefreshDatabase`. It covers blank and custom URL behavior, both logo variants, accessible alternatives, custom app names, shared titles and favicons, all authentication layouts, guest/authenticated welcome navigation, and image dimensions. This follow-up adds checks for the absence of opaque logo wrappers, preservation of signed custom URLs, PNG RGBA encoding and genuinely transparent corner pixels, and WebP alpha flags. PNG corner checks use zlib and do not need the GD extension. The tests are under `Unit` to avoid this project's automatic database-refresh trait for `Feature` tests; they still exercise the Blade/application layer.
 
 For a visual check, inspect the sidebar at desktop/mobile widths, the welcome page, login/register/password-reset screens, and browser icons in both appearance modes. The complete illustration is reserved for larger placements so the tiny wordmark is not relied on at favicon size.

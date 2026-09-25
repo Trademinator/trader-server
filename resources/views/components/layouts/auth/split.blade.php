@@ -8,7 +8,7 @@
             <div class="relative hidden h-full flex-col p-10 text-white lg:flex dark:border-r dark:border-gray-800">
                 <div class="absolute inset-0 bg-gray-900"></div>
                 <a href="{{ route('home') }}" class="relative z-20 flex items-center text-lg font-medium">
-                    <span class="mr-2 flex size-10 items-center justify-center overflow-hidden rounded-md bg-black">
+                    <span class="mr-2 flex size-10 items-center justify-center overflow-hidden rounded-md">
                         <x-app-logo-icon class="size-10" />
                     </span>
                     {{ config('app.name', 'Trademinator') }}

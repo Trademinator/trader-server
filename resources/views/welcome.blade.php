@@ -25,7 +25,7 @@
             </header>
 
             <main class="grid flex-1 items-center gap-10 py-12 lg:grid-cols-2">
-                <div class="mx-auto w-full max-w-sm overflow-hidden rounded-2xl bg-black">
+                <div class="mx-auto w-full max-w-sm overflow-hidden rounded-2xl">
                     <x-app-logo-icon variant="full" :alt="config('app.name').' logo'" class="h-auto w-full" fetchpriority="high" />
                 </div>
                 <div class="max-w-lg space-y-6">
