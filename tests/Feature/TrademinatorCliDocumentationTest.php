@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Artisan;
 
 it('keeps the CLI reference complete and all trademinator commands lowercase', function () {
-    $documentation = file_get_contents(base_path('CLI.md'));
+    $documentation = file_get_contents(base_path('docs/CLI.md'));
     $commands = [];
     foreach (Artisan::all() as $command) {
         $name = $command->getName();
