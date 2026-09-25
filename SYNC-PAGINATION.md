@@ -1,5 +1,7 @@
 # Paginated OHLCV synchronization
 
+Complete command reference: [CLI.md](CLI.md).
+
 `trademinator:sync-ohlcv` now divides the requested time range into bounded pages. The default `--page-size=90` both limits the number of candle periods in a page and caps the CCXT `fetch_ohlcv` request limit. Use a smaller value (minimum 10) for exchanges with stricter OHLCV limits.
 
 ```bash

@@ -11,7 +11,7 @@ use function Trademinator\Time\to_unixtime;
 /** Compatibility entry point: M2 replaces the old EMA-only debug command. */
 class CreateIndicators extends Command
 {
-    protected $signature = 'trademinator:CreateIndicators {exchange} {symbol} {period} {from?} {to?} {--debug}';
+    protected $signature = 'trademinator:create-indicators {exchange} {symbol} {period} {from?} {to?} {--debug}';
 
     protected $description = 'Build M2 indicators and feature vectors from stored completed candles';
 

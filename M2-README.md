@@ -1,5 +1,7 @@
 # M2 — Feature engine and market context
 
+Complete command reference: [CLI.md](CLI.md).
+
 M2 converts M1's stored, completed exchange candles into versioned feature vectors for M3 datasets and M4 KNN. It does not trade, train a model, or change billing. Exchange/CCXT OHLCV remains authoritative. CoinGecko supplies optional, separately timestamped context.
 
 ## Install
@@ -24,7 +26,7 @@ php artisan trademinator:build-features kraken BTC/USD 1m
 php artisan trademinator:dispatch-market-features
 ```
 
-The legacy `trademinator:CreateIndicators` command now delegates to M2. Its optional `from` limits output writes; earlier stored candles still seed indicators. Its optional `to` is a completed-candle cutoff, capped at now. It no longer prints candle dumps or writes indicators into the raw ticker payload.
+The legacy `trademinator:create-indicators` command now delegates to M2. Its optional `from` limits output writes; earlier stored candles still seed indicators. Its optional `to` is a completed-candle cutoff, capped at now. It no longer prints candle dumps or writes indicators into the raw ticker payload.
 
 ## CoinGecko setup
 

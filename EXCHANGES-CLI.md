@@ -1,5 +1,7 @@
 # Manage CCXT exchanges
 
+Complete command reference: [CLI.md](CLI.md).
+
 The `exchanges` table contains the exchange records that Trademinator can use. The CCXT exchange ID (`class`) is the identifier passed to the market-data commands. `trademinator:exchange` manages those records after the exchange seeder has run.
 
 ```bash

@@ -21,7 +21,7 @@ class FetchOHLCV extends Command implements Isolatable, PromptsForMissingInput
      *
      * @var string
      */
-    protected $signature = 'trademinator:FetchOHLCV {exchange} {symbol} {period} {from?} {to?} {--debug}';
+    protected $signature = 'trademinator:fetch-ohlcv {exchange} {symbol} {period} {from?} {to?} {--debug}';
 
     /**
      * The console command description.

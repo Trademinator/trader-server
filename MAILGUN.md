@@ -1,5 +1,7 @@
 # Mailgun transactional email
 
+Complete command reference: [CLI.md](CLI.md).
+
 Trademinator uses Laravel's Mailgun HTTP API transport for outgoing mail, including registration verification and password reset messages. The Symfony Mailgun Mailer and HTTP client packages, the `mailgun` mailer, and the `services.mailgun` config are included in this repository. No extra Composer package is required.
 
 ## Configure
