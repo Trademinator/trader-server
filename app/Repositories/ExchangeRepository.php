@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\Exchange;
+use App\Domain\MarketData\CandleTimeframe;
 use ccxt;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\App;
@@ -47,10 +48,10 @@ class ExchangeRepository extends BaseRepository
             throw new \InvalidArgumentException('The fetch start time must be before or equal to the end time.');
         }
 
-        $periodMilliseconds = periods_to_seconds($period) * 1000;
-        if ($periodMilliseconds <= 0) {
+        if (! in_array($period, CandleTimeframe::SUPPORTED, true)) {
             throw new \InvalidArgumentException("Unsupported candle period: {$period}");
         }
+        $periodMilliseconds = periods_to_seconds($period) * 1000;
 
         $answer = [];
         if (App::hasDebugModeEnabled()) {
@@ -69,21 +70,28 @@ class ExchangeRepository extends BaseRepository
                 break;
             default:
                 $records = 1000;
-                $batchWindowMilliseconds = null;
+                $batchWindowMilliseconds = $periodMilliseconds * $records;
         }
 
         if (App::hasDebugModeEnabled()) {
             Log::debug("startFetching $startFetching; records $records; params ".print_r($params, true));
         }
 
+        $timeframe = new CandleTimeframe;
         while ($startFetching <= $endFetching) {
             $ohlcv = $this->tickerRepository->fetch($symbol, $period, $startFetching, $records, $params);
             if (count($ohlcv) === 0) {
-                break;
+                // A quiet interval can be empty even when a later interval
+                // contains trades. Advance by one bounded request window.
+                $startFetching += $batchWindowMilliseconds;
+                if ($this->exchange->class === 'coinbase') {
+                    $params['end'] = min($endFetching, $startFetching + $batchWindowMilliseconds);
+                }
+
+                continue;
             }
 
-            $lastCandle = end($ohlcv);
-            $lastTimestamp = (int) $lastCandle['microtimestamp'];
+            $lastTimestamp = max(array_map(fn (array $candle): int => (int) $candle['microtimestamp'], $ohlcv));
 
             foreach ($ohlcv as $candle) {
                 $timestamp = (int) $candle['microtimestamp'];
@@ -93,10 +101,15 @@ class ExchangeRepository extends BaseRepository
             }
 
             if ($lastTimestamp < $startFetching) {
-                break;
+                $startFetching += $batchWindowMilliseconds;
+                if ($this->exchange->class === 'coinbase') {
+                    $params['end'] = min($endFetching, $startFetching + $batchWindowMilliseconds);
+                }
+
+                continue;
             }
 
-            $nextStart = $lastTimestamp + $periodMilliseconds;
+            $nextStart = $timeframe->next($lastTimestamp, $period);
             if ($nextStart <= $startFetching) {
                 break;
             }
@@ -186,10 +199,10 @@ class ExchangeRepository extends BaseRepository
         $ccxtExchangeName = '\\ccxt\\'.$exchange->class;
         // DB saves the confing in JSON format, but CCXT expects it in an associative array
         $settings = json_decode($this->exchange->config ?: '{}', true) ?: [];
-        $settings['enableRateLimit'] = true;
         if (count($extraSettings)) {
             $settings = array_merge($settings, $extraSettings);
         }
+        $settings['enableRateLimit'] = true;
         $this->ccxtExchange = new $ccxtExchangeName($settings);
         $this->tickerRepository->setExchange($this->ccxtExchange);
     }

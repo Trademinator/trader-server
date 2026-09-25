@@ -12,9 +12,9 @@ it('normalizes raw CCXT candles into one canonical associative shape', function 
 
     expect($candles)->toHaveCount(2)
         ->and($candles[0]['microtimestamp'])->toBe(1_700_000_000_000)
-        ->and($candles[0]['open'])->toBe('100.00000000')
-        ->and($candles[0]['close'])->toBe('102.12500000')
-        ->and($candles[1]['volume'])->toBe('0.00000000')
+        ->and($candles[0]['open'])->toBe('100')
+        ->and($candles[0]['close'])->toBe('102.125')
+        ->and($candles[1]['volume'])->toBe('0')
         ->and(array_key_exists(0, $candles[0]))->toBeFalse()
         ->and(array_key_exists(5, $candles[0]))->toBeFalse();
 });
@@ -28,7 +28,7 @@ it('reindexes canonical candles by microtimestamp without changing the candle sh
     $candles = (new OhlcvNormalizer)->normalize($raw, true);
 
     expect(array_keys($candles))->toBe([1_700_000_000_000, 1_700_000_060_000])
-        ->and($candles[1_700_000_060_000]['close'])->toBe('101.50000000');
+        ->and($candles[1_700_000_060_000]['close'])->toBe('101.5');
 });
 
 it('preserves computed associative indicator keys when renormalizing', function () {
@@ -49,5 +49,14 @@ it('preserves computed associative indicator keys when renormalizing', function 
 
 it('rejects malformed candles early', function () {
     expect(fn () => (new OhlcvNormalizer)->normalize([[1_700_000_000_000, 'bad', 2, 1, 2, 1]]))
+        ->toThrow(InvalidArgumentException::class);
+});
+
+it('preserves sub-eight-decimal precision and rejects inverted candles', function () {
+    $candles = (new OhlcvNormalizer)->normalize([[1_700_000_000_000, '0.000000001234', '0.000000001235', '0.000000001233', '0.0000000012345', '12.345678901234']]);
+
+    expect($candles[0]['close'])->toBe('0.0000000012345')
+        ->and($candles[0]['volume'])->toBe('12.345678901234');
+    expect(fn () => (new OhlcvNormalizer)->normalize([[1_700_000_000_000, 2, 1, 1, 2, 1]]))
         ->toThrow(InvalidArgumentException::class);
 });

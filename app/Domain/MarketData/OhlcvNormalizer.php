@@ -28,8 +28,9 @@ final class OhlcvNormalizer
             $close = $candle['close'] ?? $candle[4] ?? null;
             $volume = $candle['volume'] ?? $candle[5] ?? 0;
 
-            if (! is_numeric($timestamp)) {
-                throw new InvalidArgumentException('OHLCV timestamp must be numeric.');
+            if ((! is_int($timestamp) && ! is_string($timestamp)) || ! ctype_digit((string) $timestamp)
+                || filter_var($timestamp, FILTER_VALIDATE_INT) === false) {
+                throw new InvalidArgumentException('OHLCV timestamp must be a non-negative integer in milliseconds.');
             }
 
             foreach (['open' => $open, 'high' => $high, 'low' => $low, 'close' => $close] as $field => $value) {
@@ -40,6 +41,16 @@ final class OhlcvNormalizer
 
             if ($volume !== null && ! is_numeric($volume)) {
                 throw new InvalidArgumentException('OHLCV volume must be numeric or null.');
+            }
+
+            if (! is_finite((float) $high - (float) $low)
+                || (float) $high < max((float) $open, (float) $close)
+                || (float) $low > min((float) $open, (float) $close)
+                || (float) $volume < 0
+                || ! is_finite((float) $high) || ! is_finite((float) $low)
+                || ! is_finite((float) $open) || ! is_finite((float) $close)
+                || ! is_finite((float) $volume)) {
+                throw new InvalidArgumentException('Invalid OHLCV values.');
             }
 
             $microtimestamp = (int) $timestamp;
@@ -73,6 +84,8 @@ final class OhlcvNormalizer
 
     private function decimal(int|float|string $value): string
     {
-        return number_format((float) $value, 8, '.', '');
+        // Casting through float and number_format silently changes prices on
+        // markets with more than eight decimal places.
+        return (string) $value;
     }
 }

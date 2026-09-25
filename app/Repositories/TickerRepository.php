@@ -63,6 +63,22 @@ class TickerRepository extends BaseRepository
         return $tickers;
     }
 
+    public function latestTimestamp(string $exchange, string $symbol, string $period): ?int
+    {
+        $timestamp = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)
+            ->where('period', $period)->max('microtimestamp');
+
+        return $timestamp === null ? null : (int) $timestamp;
+    }
+
+    /** @return list<int> */
+    public function timestamps(string $exchange, string $symbol, string $period, int $fromMs, int $toMs): array
+    {
+        return Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)
+            ->where('period', $period)->whereBetween('microtimestamp', [$fromMs, $toMs])
+            ->orderBy('microtimestamp')->pluck('microtimestamp')->map(fn ($value): int => (int) $value)->all();
+    }
+
     // array_merge breaks timestamp keys, so normalize and reindex canonically.
     public function fixTickerIndex(array $tickers): array
     {
