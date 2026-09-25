@@ -1,5 +1,8 @@
 <?php
 
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Validator;
+
 test('registration screen can be rendered', function () {
     $response = $this->get('/register');
 
@@ -7,6 +10,11 @@ test('registration screen can be rendered', function () {
 });
 
 test('new users can register', function () {
+    Validator::fakeDnsLookups();
+    Notification::fake();
+
+    $this->withoutExceptionHandling();
+
     $response = $this->post('/register', [
         'name' => 'Test User',
         'email' => 'test@example.com',
@@ -14,6 +22,8 @@ test('new users can register', function () {
         'password_confirmation' => 'Trademinator#2026A',
     ]);
 
-    $this->assertAuthenticated();
+    $response->assertSessionHasNoErrors();
     $response->assertRedirect(route('dashboard', absolute: false));
+
+    $this->assertAuthenticated();
 });
