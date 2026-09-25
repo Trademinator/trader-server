@@ -14,6 +14,8 @@ Route::view('dashboard', 'dashboard')
 
 Route::middleware(['auth'])->group(function () {
     Route::get('markets', [SubscriptionController::class, 'index'])->name('markets.index');
+    Route::get('markets/options/{exchange}', [SubscriptionController::class, 'options'])
+        ->middleware('throttle:30,1')->name('markets.options');
     Route::post('markets', [SubscriptionController::class, 'store'])->name('markets.store');
     Route::delete('markets/{subscription}', [SubscriptionController::class, 'destroy'])->name('markets.destroy');
     Route::redirect('settings', 'settings/profile');

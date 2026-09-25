@@ -188,7 +188,7 @@ class ExchangeRepository extends BaseRepository
 
     public function periods(): array
     {
-        return $this->describe()['timeframes'];
+        return $this->describe()['timeframes'] ?? [];
     }
 
     public function setExchange(Exchange $exchange, array $extraSettings = [])

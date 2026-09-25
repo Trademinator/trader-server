@@ -17,6 +17,7 @@ it('uses one feed for two users watching the same exchange and symbol, then idle
     $bob = User::factory()->create();
     $repository = Mockery::mock(ExchangeRepository::class);
     $repository->shouldReceive('setExchange')->times(3)->with($exchange);
+    $repository->shouldReceive('periods')->times(3)->andReturn(['1m' => '1m']);
     $repository->shouldReceive('markets')->times(3)->andReturn(['BTC/USD' => []]);
     app()->instance(ExchangeRepository::class, $repository);
     $service = app(MarketSubscriptions::class);

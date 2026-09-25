@@ -25,6 +25,9 @@ final class MarketSubscriptions
             throw new InvalidArgumentException('The account cannot subscribe to this market.');
         }
         $this->exchanges->setExchange($exchange);
+        if (! array_intersect(array_keys($this->exchanges->periods()), CandleTimeframe::SUPPORTED)) {
+            throw new InvalidArgumentException('This exchange does not offer a supported OHLCV candle period.');
+        }
         if (! array_key_exists($symbol, $this->exchanges->markets())) {
             throw new InvalidArgumentException('This exchange does not list the requested symbol.');
         }

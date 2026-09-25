@@ -54,6 +54,10 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    'repository_url' => env('APP_REPOSITORY_URL', 'https://github.com/Trademinator/trader-server'),
+
+    'logo_url' => env('APP_LOGO_URL'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

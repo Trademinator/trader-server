@@ -30,16 +30,9 @@
                     <x-navbar.item
                         class="h-10 max-lg:hidden [&>div>svg]:size-5"
                         before="phosphor-git-branch"
-                        href="https://github.com/imacrayon/blade-starter-kit"
+                        :href="config('app.repository_url')"
                         target="_blank"
                         label="Repository"
-                    />
-                    <x-navbar.item
-                        class="h-10 max-lg:hidden [&>div>svg]:size-5"
-                        before="phosphor-book-open-text"
-                        href="https://laravel.com/docs/starter-kits"
-                        target="_blank"
-                        label="Documentation"
                     />
                 </x-navbar>
 
@@ -102,12 +95,8 @@
             <x-spacer />
 
             <x-navlist>
-                <x-navlist.item before="phosphor-git-pull-request" href="https://github.com/imacrayon/blade-starter-kit" target="_blank">
+                <x-navlist.item before="phosphor-git-pull-request" :href="config('app.repository_url')" target="_blank">
                 {{ __('Repository') }}
-                </x-navlist.item>
-
-                <x-navlist.item before="phosphor-book-open-text" href="https://github.com/imacrayon/blade-starter-kit" target="_blank">
-                {{ __('Documentation') }}
                 </x-navlist.item>
             </x-navlist>
         </x-sidebar>

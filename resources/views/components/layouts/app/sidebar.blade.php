@@ -27,12 +27,8 @@
             <x-spacer />
 
             <x-navlist>
-                <x-navlist.item before="phosphor-git-pull-request" href="https://github.com/imacrayon/blade-starter-kit" target="_blank">
+                <x-navlist.item before="phosphor-git-pull-request" :href="config('app.repository_url')" target="_blank">
                 {{ __('Repository') }}
-                </x-navlist.item>
-
-                <x-navlist.item before="phosphor-book-open-text" href="https://laravel.com/docs/starter-kits" target="_blank">
-                {{ __('Documentation') }}
                 </x-navlist.item>
             </x-navlist>
 
