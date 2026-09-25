@@ -4,7 +4,6 @@ namespace Database\Seeders;
 
 use App\Models\Exchange;
 use ccxt;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
 class ExchangeSeeder extends Seeder
@@ -14,11 +13,9 @@ class ExchangeSeeder extends Seeder
      */
     public function run(): void
     {
-        if (Exchange::count() == 0)
-        {
-            $colour = new \Console_Color2();
-            foreach (\ccxt\Exchange::$exchanges as $exchange)
-            {
+        if (Exchange::count() == 0) {
+            $colour = new \Console_Color2;
+            foreach (ccxt\Exchange::$exchanges as $exchange) {
                 $payload = [
                     'name' => $exchange,
                     'class' => $exchange,

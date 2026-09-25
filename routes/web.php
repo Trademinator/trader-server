@@ -19,8 +19,8 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('settings/profile', [Settings\ProfileController::class, 'destroy'])->name('settings.profile.destroy');
     Route::get('settings/password', [Settings\PasswordController::class, 'edit'])->name('settings.password.edit');
     Route::put('settings/password', [Settings\PasswordController::class, 'update'])->name('settings.password.update');
-    Route::get('settings/apikey', [Settings\ApiKeyController::class, 'edit'])->name('settings.apikey.edit');
-    Route::put('settings/apikey', [Settings\ApiKeyController::class, 'update'])->name('settings.apikey.update');
+    Route::get('settings/api-key', [Settings\ApiKeyController::class, 'edit'])->name('settings.api-key.edit');
+    Route::put('settings/api-key', [Settings\ApiKeyController::class, 'update'])->name('settings.api-key.update');
     Route::get('settings/appearance', [Settings\AppearanceController::class, 'edit'])->name('settings.appearance.edit');
 });
 

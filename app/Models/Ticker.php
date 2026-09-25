@@ -8,9 +8,12 @@ use Illuminate\Database\Eloquent\Model;
 class Ticker extends Model
 {
     use HasUniqueIdentifier;
+
     protected $primaryKey = 'ticker_id';
+
     public $incrementing = false;
-    protected $keyType = 'uuid';	// TODO, check if UUID is valid
+
+    protected $keyType = 'string';
 
     protected $fillable = [
         'microtimestamp',

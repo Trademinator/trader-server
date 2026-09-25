@@ -1,18 +1,27 @@
 <?php
+
 namespace App\Traits;
 
 use Illuminate\Database\Eloquent\Model;
-//use Ramsey\Uuid\Uuid;
 use Illuminate\Support\Str;
 
 trait HasUniqueIdentifier
 {
-    public static function bootHasUniqueIdentifier()
+    public function initializeHasUniqueIdentifier(): void
     {
-        static::creating(function (Model $model) {
-            $model->setKeyType('uuid'); // Original 'string'
-            $model->setIncrementing(false);
-            $model->setAttribute($model->getKeyName(), (string)Str::uuid7()); // Uuid::uuid4() for Ramsey
+        $this->setKeyType('string');
+        $this->setIncrementing(false);
+    }
+
+    public static function bootHasUniqueIdentifier(): void
+    {
+        static::creating(function (Model $model): void {
+            $keyName = $model->getKeyName();
+            $current = $model->getAttribute($keyName);
+
+            if ($current === null || $current === '') {
+                $model->setAttribute($keyName, (string) Str::uuid7());
+            }
         });
     }
 }

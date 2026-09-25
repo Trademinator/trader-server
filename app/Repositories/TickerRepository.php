@@ -2,150 +2,131 @@
 
 namespace App\Repositories;
 
+use App\Domain\MarketData\OhlcvNormalizer;
 use App\Models\Ticker;
-use App\Traits\Indexing;
-use ccxt;
+use ccxt\Exchange;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use JasonGuru\LaravelMakeRepository\Repository\BaseRepository;
 
 /**
- * Class MarketRepository.
+ * Class TickerRepository.
  */
 class TickerRepository extends BaseRepository
 {
-    use Indexing;
     protected ?Ticker $ticker;
-    protected ?\ccxt\Exchange $ccxtExchange;
+
+    protected ?Exchange $ccxtExchange = null;
 
     public function __construct(?Ticker $ticker = null)
     {
-	parent::__construct();
+        parent::__construct();
         $this->ticker = $ticker;
     }
 
     public function fetch(string $symbol, string $period, int $startFetching, int $records, array $params): array
     {
-        // TODO: Check if DB has some tickers or not
         $myTickers = $this->ccxtExchange->fetch_ohlcv($symbol, $period, $startFetching, $records, $params);
-        if(App::hasDebugModeEnabled()){
-            Log::debug("myTickers: ".print_r($myTickers,true));
+
+        if (App::hasDebugModeEnabled()) {
+            Log::debug('myTickers: '.print_r($myTickers, true));
         }
-        $myTickers = $this->normalize($myTickers);
-        return $myTickers;
+
+        return (new OhlcvNormalizer)->normalize($myTickers);
     }
 
-    public function fetchFromDB(string $exchange, string $symbol, string $period, ?int $startFetching = null, ?int $endFetching = null):array
+    public function fetchFromDB(string $exchange, string $symbol, string $period, ?int $startFetching = null, ?int $endFetching = null): array
     {
         $tickers_q = Ticker::where('exchange', $exchange)
-                    ->where('symbol', $symbol)
-                    ->where('period', $period)
-                    ->when(!is_null($startFetching),
-                           function($query) use($startFetching){
-                               return $query->where('microtimestamp', '>=', $startFetching);
-                        })
-                    ->when(!is_null($endFetching),
-                           function($query) use($endFetching){
-                               return $query->where('microtimestamp', '<=', $endFetching);
-                        })
-                    ->orderBy('microtimestamp');
-        if(App::hasDebugModeEnabled()){
-            Log::debug("SQL Query: ".$tickers_q->toRawSql());
+            ->where('symbol', $symbol)
+            ->where('period', $period)
+            ->when(! is_null($startFetching), function ($query) use ($startFetching) {
+                return $query->where('microtimestamp', '>=', $startFetching);
+            })
+            ->when(! is_null($endFetching), function ($query) use ($endFetching) {
+                return $query->where('microtimestamp', '<=', $endFetching);
+            })
+            ->orderBy('microtimestamp');
+
+        if (App::hasDebugModeEnabled()) {
+            Log::debug('SQL Query: '.$tickers_q->toRawSql());
         }
+
         $rawTickers = $tickers_q->get()->toArray();
         $tickers = [];
-        foreach ($rawTickers as $raw)
-        {
-            $tickers[] = json_decode($raw['payload'], true);
+
+        foreach ($rawTickers as $raw) {
+            $tickers[] = json_decode($raw['payload'], true, flags: JSON_THROW_ON_ERROR);
         }
 
         return $tickers;
     }
 
-    // array_merge breaks the keys
+    // array_merge breaks timestamp keys, so normalize and reindex canonically.
     public function fixTickerIndex(array $tickers): array
     {
-        $nt = array();
-        // Use $ticker[microtimestamp] as index
-        foreach ($tickers as &$ticker){
-            $nt[$ticker['microtimestamp']] = &$ticker;
-            unset($nt[$ticker['microtimestamp']][0]);
-        }
-        $tickers = $nt;
-        return $tickers;
+        return (new OhlcvNormalizer)->normalize($tickers, true);
     }
 
     /**
-     * @return string
-     *  Return the model
+     * @return string Return the model
      */
     public function model(): string
     {
         return Ticker::class;
     }
 
-    public function update(array $data, array $unique, array $update)
+    public function update(array $data, array $unique, array $update): int
     {
-        //NOTE: workaround, it seems that upsert doesn't use the Trait
-        foreach ($data as &$d)
-        {
-            $d['ticker_id'] = (string)Str::uuid7();
-        }
-        $newTickers = Ticker::upsert($data, $unique, $update);
-        return $newTickers;
-    }
-    public function updateTickers(string $exchange, string $symbol, string $period, array $tickers)
-    {
-        $unique = ['exchange','symbol','period','microtimestamp'];
-        $update = ['payload'];
-
-        foreach (array_chunk($tickers, 100) as $chunk)
-        {
-            $data = [];
-            foreach ($chunk as $ticker)
-            {
-                $data1['exchange'] = $exchange;
-                $data1['symbol'] = $symbol;
-                $data1['period'] = $period;
-                $data1['microtimestamp'] = $ticker['microtimestamp'];
-                $data1['payload'] = json_encode($ticker);
-                $data[] = $data1;
+        // Eloquent's bulk upsert bypasses model creating events. Generate UUIDs
+        // before the insert path, while preserving explicitly supplied IDs.
+        foreach ($data as &$row) {
+            if (empty($row['ticker_id'])) {
+                $row['ticker_id'] = (string) Str::uuid7();
             }
-            $this->update($data, $unique, $update);
         }
+        unset($row);
 
+        return Ticker::query()->upsert($data, $unique, $update);
     }
 
-    public function saveTickers(string $exchange, string $symbol, string $period, array $tickers)
+    public function updateTickers(string $exchange, string $symbol, string $period, array $tickers): int
     {
-        $unique = ['exchange','symbol','period','microtimestamp'];
+        $unique = ['exchange', 'symbol', 'period', 'microtimestamp'];
         $update = ['payload'];
+        $affected = 0;
 
-        foreach (array_chunk($tickers, 100) as $chunk)
-        {
+        foreach (array_chunk($tickers, 100) as $chunk) {
             $data = [];
-            foreach ($chunk as $ticker)
-            {
-                $data1['exchange'] = $exchange;
-                $data1['symbol'] = $symbol;
-                $data1['period'] = $period;
-                $data1['microtimestamp'] = $ticker['microtimestamp'];
-                $data1['payload'] = json_encode($ticker);
-                $data[] = $data1;
+
+            foreach ($chunk as $ticker) {
+                $data[] = [
+                    'exchange' => $exchange,
+                    'symbol' => $symbol,
+                    'period' => $period,
+                    'microtimestamp' => $ticker['microtimestamp'],
+                    'payload' => json_encode($ticker, JSON_THROW_ON_ERROR),
+                ];
             }
 
-            $this->update($data, $unique, $update);
+            $affected += $this->update($data, $unique, $update);
         }
 
+        return $affected;
     }
 
-    public function setExchange(?\ccxt\Exchange $exchange)
+    public function saveTickers(string $exchange, string $symbol, string $period, array $tickers): int
+    {
+        return $this->updateTickers($exchange, $symbol, $period, $tickers);
+    }
+
+    public function setExchange(?Exchange $exchange): void
     {
         $this->ccxtExchange = $exchange;
     }
 
-    public function setTicker(Ticker $ticker)
+    public function setTicker(Ticker $ticker): void
     {
         $this->ticker = $ticker;
     }

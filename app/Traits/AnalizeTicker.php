@@ -1,8 +1,8 @@
 <?php
+
 namespace App\Traits;
 
-use App\Traits\Technical;
-use ccxt;
+use ccxt\Exchange;
 
 /**
 // Trend
@@ -48,21 +48,17 @@ use ccxt;
                 $keys[] = $key_percentage_delayed_3_open_close;
                 $keys[] = $key_percentage_delayed_14_open_close;
 
-**/
-
+ **/
 trait AnalizeTicker
 {
     public function analizeTicker(string $exchange, string $symbol, string $period): bool
     {
         $answer = false;
-        if (in_array($exchange, \ccxt\Exchange::$exchanges))
-        {
-            $ccxtExchangeName = '\\ccxt\\' . $exchange;
+        if (in_array($exchange, Exchange::$exchanges)) {
+            $ccxtExchangeName = '\\ccxt\\'.$exchange;
             $ccxtExchange = new $ccxtExchangeName([]);
-            if (in_array($symbol, array_keys($ccxtExchange->load_markets())))
-            {
-                if (in_array($period, array_keys($ccxtExchange->describe()['timeframes'])))
-                {
+            if (in_array($symbol, array_keys($ccxtExchange->load_markets()))) {
+                if (in_array($period, array_keys($ccxtExchange->describe()['timeframes']))) {
                     $answer = true;
                 }
             }

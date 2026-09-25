@@ -14,15 +14,18 @@ return new class extends Migration
     {
         Schema::create('knowledge', function (Blueprint $table) {
             $table->uuid('knowledge_id')->primary();
-            $table->unsignedBigInteger('microtimestamp')->nullable(false);
-            $table->string('exchange', length: 32)->nullable(false);
-            $table->string('symbol', length: 32)->nullable(false);
-            $table->string('period', length: 8)->nullable(false);
-            $table->enum('action', TradeAction::cases())->nullable(false);
-            $table->decimal('value', total: 16, places: 8)->nullable(false);
+            $table->unsignedBigInteger('microtimestamp');
+            $table->string('exchange', 32);
+            $table->string('symbol', 32);
+            $table->string('period', 8);
+            $table->enum(
+                'action',
+                array_map(static fn (TradeAction $action): string => $action->value, TradeAction::cases())
+            );
+            $table->decimal('value', 16, 8);
             $table->boolean('learned')->default(false);
             $table->timestamps();
-            $table->unique(['exchange','symbol','period','microtimestamp']);
+            $table->unique(['exchange', 'symbol', 'period', 'microtimestamp']);
         });
     }
 

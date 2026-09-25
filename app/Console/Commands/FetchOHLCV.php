@@ -2,19 +2,20 @@
 
 namespace App\Console\Commands;
 
-use App\Models\Exchange;
 use App\Repositories\ExchangeRepository;
 use App\Traits\IsSupportedByCCXT;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Console\Isolatable;
 use Illuminate\Contracts\Console\PromptsForMissingInput;
+
 use function Trademinator\Time\to_unixtime;
-use function Trademinator\Time\yesterday_unixtime;
 
 class FetchOHLCV extends Command implements Isolatable, PromptsForMissingInput
 {
     use IsSupportedByCCXT;
+
     protected ExchangeRepository $exchangeRepository;
+
     /**
      * The name and signature of the console command.
      *
@@ -43,34 +44,31 @@ class FetchOHLCV extends Command implements Isolatable, PromptsForMissingInput
         $className = $this->argument('exchange');
         $symbol = $this->argument('symbol');
         $period = $this->argument('period');
-        if ($this->isSupportedByCCXT($className, $symbol, $period))
-        {
+        if ($this->isSupportedByCCXT($className, $symbol, $period)) {
 
-            $debugExchange = $this->option('debug'); $extraSettings = [];
+            $debugExchange = $this->option('debug');
+            $extraSettings = [];
             $extraSettings['verbose'] = $debugExchange;
             $exchanges = $this->exchangeRepository->findByClass($className);
-            $startTime =  to_unixtime($this->argument('from') ?? 'yesterday');
+            $startTime = to_unixtime($this->argument('from') ?? 'yesterday');
             // if {to} is not specified, then is today
             $endtTime = to_unixtime($this->argument('to') ?? 'now');
 
-            foreach ($exchanges as $exchange)
-            {
+            foreach ($exchanges as $exchange) {
                 $this->exchangeRepository->setExchange($exchange, $extraSettings);
                 $tickers = $this->exchangeRepository->fetch($symbol, $period, $startTime, $endtTime);
 
-                $colour = new \Console_Color2();
-                foreach ($tickers as $ticker)
-                {
-                    $line = $ticker['human_date'] . ': ' . '; open: ' . $ticker['open'] . '; high: ' . $ticker['high'] . '; low: ' . $ticker['low'] . '; close: ' . $ticker['close'] . '; volume: ' . $ticker['volume'];
+                $colour = new \Console_Color2;
+                foreach ($tickers as $ticker) {
+                    $line = $ticker['human_date'].': '.'; open: '.$ticker['open'].'; high: '.$ticker['high'].'; low: '.$ticker['low'].'; close: '.$ticker['close'].'; volume: '.$ticker['volume'];
                     echo $colour->convert('%B'.$line.'%n').PHP_EOL;
                 }
-                //print_r($tickers);
+                // print_r($tickers);
                 $this->info('The command was successful!');
             }
-        }
-        else
-        {
-            $this->error($className . '-' . $symbol . '-' . $period . ' tuple is not supported.');
+        } else {
+            $this->error($className.'-'.$symbol.'-'.$period.' tuple is not supported.');
+
             return 1;
         }
     }

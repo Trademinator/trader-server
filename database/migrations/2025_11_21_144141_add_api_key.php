@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            if (!Schema::hasColumn('users', 'api_key')) {
+            if (! Schema::hasColumn('users', 'api_key')) {
                 $table->uuid('api_key')->nullable();
             }
         });

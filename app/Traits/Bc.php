@@ -1,124 +1,150 @@
 <?php
+
 namespace App\Traits;
-if (!defined('EXCHANGE_ROUND_DECIMALS'))
-	define('EXCHANGE_ROUND_DECIMALS', 8);
+
+use InvalidArgumentException;
+
+if (! defined('EXCHANGE_ROUND_DECIMALS')) {
+    define('EXCHANGE_ROUND_DECIMALS', 8);
+}
 
 trait Bc
 {
-	function bcdec(...$numbers){
-		$dec = 2;	// At least 2 decimal places
-		foreach ($numbers as $number){
-			$dec = max(strlen(substr(strrchr(strval($number), "."), 1)), $dec);
-		}
-		return $dec;
-	}
+    public function bcdec(...$numbers): int
+    {
+        $dec = 2;
 
-	function bclog10($n){
-		$pos=strpos($n,'.');
-		if($pos===false){
-			$dec_frac='.'.substr($n,0,15);$pos=strlen($n);
-		}
-        else{
-			 $dec_frac='.'.substr(substr($n,0,$pos).substr($n,$pos+1),0,15);
-		}
-		return log10((float)$dec_frac)+(float)$pos;
+        foreach ($numbers as $number) {
+            $value = (string) $number;
+            $dot = strrchr($value, '.');
+            $dec = max($dot === false ? 0 : strlen(substr($dot, 1)), $dec);
+        }
+
+        return $dec;
     }
-    
-	function bcabs($number){
-		return preg_replace('/^\-+/', '', $number);
-	}
 
-	function bcconv($fNumber){
-		$sAppend = '';
-		$iDecimals = ini_get('precision') - floor(log10(abs($fNumber)));
-		if (0 > $iDecimals){
-			$fNumber *= pow(10, $iDecimals);
-			$sAppend = str_repeat('0', -$iDecimals);
-			$iDecimals = 0;
-		}
-		return number_format($fNumber, intval($iDecimals), '.', '').$sAppend;
-	}
+    public function bclog10($n): float
+    {
+        if (! is_numeric($n) || (float) $n <= 0) {
+            throw new InvalidArgumentException('bclog10 expects a positive numeric value.');
+        }
 
-	function bcmax() {
-		$args = func_get_args();
-		if (count($args) == 0) return false;
-		$max = $args[0];
-		foreach($args as $value) {
-			if (bccomp($value, $max, EXCHANGE_ROUND_DECIMALS * 2) == 1) {
-				$max = $value;
-			}
-		}
-		return $max;
-	}
+        return log10((float) $n);
+    }
 
-	function bcmin() {
-		$args = func_get_args();
-		if (count($args) == 0) return false;
-		$min = $args[0];
-		foreach($args as $value) {
-			if (bccomp($min, $value, EXCHANGE_ROUND_DECIMALS * 2) == 1) {
-				$min = $value;
-			}
-		}
-		return $min;
-	}
+    public function bcabs($number): string
+    {
+        return ltrim((string) $number, '-');
+    }
 
-        /**
-                * This user-land implementation follows the implementation quite strictly;
-                * it does not attempt to improve the code or algorithm in any way. It will
-                * raise a warning if you have fewer than 2 values in your array, just like
-                * the extension does (although as an E_USER_WARNING, not E_WARNING).
-                *
-                * @param array $a
-                * @param bool $sample [optional] Defaults to false
-                * @return float|bool The standard deviation or false on error.
-                */
-	function stats_standard_deviation(array $a, $sample = false) {
-		$n = count($a);
-		if ($n === 0) {
-                        trigger_error("The array has zero elements", E_USER_WARNING);
-			return false;
-		}
-		if ($sample && $n === 1) {
-			trigger_error("The array has only 1 element", E_USER_WARNING);
-			return false;
-		}
-		// $mean = array_sum($a) / $n;
-                $aa = 0.0;
-		foreach ($a as $val){
-			$aa = bcadd($val, $aa, EXCHANGE_ROUND_DECIMALS * 2);
-		}
-		$mean = bcdiv($aa, $n, EXCHANGE_ROUND_DECIMALS * 2);
-		$carry = 0.0;
-		foreach ($a as $val) {
-			// $d = ((double) $val) - $mean;
-			$d = bcsub($val, $mean, EXCHANGE_ROUND_DECIMALS * 2);
-			// $carry += $d * $d;
-			$d2 = bcmul($d, $d, EXCHANGE_ROUND_DECIMALS * 2);
-			$carry = bcadd($carry, $d2, EXCHANGE_ROUND_DECIMALS * 2);
-		};
-		if ($sample) {
-			--$n;
-		}
-		// sqrt($carry / $n);
-		$div = bcdiv($carry, $n, EXCHANGE_ROUND_DECIMALS * 2);
-		return bcsqrt($div, EXCHANGE_ROUND_DECIMALS * 2);
-	}
+    public function bcconv($number): string
+    {
+        if (! is_numeric($number)) {
+            throw new InvalidArgumentException('bcconv expects a numeric value.');
+        }
 
-    function bcpow10(int $n, int $scale = 10): string {
+        $value = (float) $number;
+        if (! is_finite($value)) {
+            throw new InvalidArgumentException('bcconv expects a finite numeric value.');
+        }
+
+        if ($value == 0.0) {
+            return '0';
+        }
+
+        $precision = max(1, (int) ini_get('precision'));
+        $decimals = max(0, $precision - (int) floor(log10(abs($value))) - 1);
+        $formatted = number_format($value, $decimals, '.', '');
+
+        if (str_contains($formatted, '.')) {
+            $formatted = rtrim(rtrim($formatted, '0'), '.');
+        }
+
+        return $formatted === '-0' ? '0' : $formatted;
+    }
+
+    public function bcmax(...$values): string|false
+    {
+        if ($values === []) {
+            return false;
+        }
+
+        $max = (string) $values[0];
+        foreach ($values as $value) {
+            if (bccomp((string) $value, $max, EXCHANGE_ROUND_DECIMALS * 2) === 1) {
+                $max = (string) $value;
+            }
+        }
+
+        return $max;
+    }
+
+    public function bcmin(...$values): string|false
+    {
+        if ($values === []) {
+            return false;
+        }
+
+        $min = (string) $values[0];
+        foreach ($values as $value) {
+            if (bccomp($min, (string) $value, EXCHANGE_ROUND_DECIMALS * 2) === 1) {
+                $min = (string) $value;
+            }
+        }
+
+        return $min;
+    }
+
+    public function stats_standard_deviation(array $a, bool $sample = false): float|string|false
+    {
+        $n = count($a);
+        if ($n === 0) {
+            trigger_error('The array has zero elements', E_USER_WARNING);
+
+            return false;
+        }
+
+        if ($sample && $n === 1) {
+            trigger_error('The array has only 1 element', E_USER_WARNING);
+
+            return false;
+        }
+
+        $sum = '0';
+        foreach ($a as $value) {
+            $sum = bcadd((string) $value, $sum, EXCHANGE_ROUND_DECIMALS * 2);
+        }
+        $mean = bcdiv($sum, (string) $n, EXCHANGE_ROUND_DECIMALS * 2);
+
+        $carry = '0';
+        foreach ($a as $value) {
+            $delta = bcsub((string) $value, $mean, EXCHANGE_ROUND_DECIMALS * 2);
+            $carry = bcadd(
+                $carry,
+                bcmul($delta, $delta, EXCHANGE_ROUND_DECIMALS * 2),
+                EXCHANGE_ROUND_DECIMALS * 2
+            );
+        }
+
+        if ($sample) {
+            $n--;
+        }
+
+        return bcsqrt(bcdiv($carry, (string) $n, EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2);
+    }
+
+    public function bcpow10(int $n, int $scale = 10): string
+    {
         if ($n === 0) {
             return '1';
         }
-    
+
         if ($n > 0) {
-            // For positive integers, use standard bcpow
-            return bcpow('10', (string)$n, $scale);
+            return bcpow('10', (string) $n, $scale);
         }
-    
-        // For negative integers, 10^N is equal to 1 / (10^|N|)
-        $positiveExponent = (string)abs($n);
-        $denominator = bcpow('10', $positiveExponent, 0); // No decimals needed for denominator
-        
+
+        $denominator = bcpow('10', (string) abs($n), 0);
+
         return bcdiv('1', $denominator, $scale);
     }
 }

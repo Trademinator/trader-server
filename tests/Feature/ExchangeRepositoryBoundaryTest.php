@@ -1,0 +1,64 @@
+<?php
+
+use App\Models\Exchange;
+use App\Repositories\ExchangeRepository;
+use App\Repositories\TickerRepository;
+use Mockery\MockInterface;
+
+it('fetches a candle exactly on the requested end boundary', function () {
+    $from = 1_700_000_000;
+    $to = $from + 60;
+    $fromMs = $from * 1000;
+    $toMs = $to * 1000;
+
+    $first = [[
+        'microtimestamp' => $fromMs,
+        'open' => '100.00000000',
+        'high' => '101.00000000',
+        'low' => '99.00000000',
+        'close' => '100.50000000',
+        'volume' => '1.00000000',
+    ]];
+    $second = [[
+        'microtimestamp' => $toMs,
+        'open' => '100.50000000',
+        'high' => '102.00000000',
+        'low' => '100.00000000',
+        'close' => '101.50000000',
+        'volume' => '2.00000000',
+    ]];
+
+    /** @var TickerRepository&MockInterface $tickerRepository */
+    $tickerRepository = Mockery::mock(TickerRepository::class);
+    $tickerRepository->shouldReceive('fetch')
+        ->once()
+        ->with('BTC/USD', '1m', $fromMs, 1000, [])
+        ->andReturn($first);
+    $tickerRepository->shouldReceive('fetch')
+        ->once()
+        ->with('BTC/USD', '1m', $toMs, 1000, [])
+        ->andReturn($second);
+    $tickerRepository->shouldReceive('saveTickers')
+        ->once()
+        ->andReturn(2);
+
+    $repository = new ExchangeRepository;
+    $exchange = new Exchange(['name' => 'Test', 'class' => 'kraken']);
+
+    $reflection = new ReflectionClass($repository);
+    $reflection->getProperty('exchange')->setValue($repository, $exchange);
+    $reflection->getProperty('tickerRepository')->setValue($repository, $tickerRepository);
+
+    $candles = $repository->fetch('BTC/USD', '1m', $from, $to);
+
+    expect($candles)->toHaveCount(2)
+        ->and($candles[0]['microtimestamp'])->toBe($fromMs)
+        ->and($candles[1]['microtimestamp'])->toBe($toMs);
+});
+
+it('rejects an inverted fetch range', function () {
+    $repository = new ExchangeRepository;
+
+    expect(fn () => $repository->fetch('BTC/USD', '1m', 200, 100))
+        ->toThrow(InvalidArgumentException::class);
+});

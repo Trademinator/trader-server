@@ -3,35 +3,33 @@
 namespace App\Repositories;
 
 use App\Models\Exchange;
-use App\Models\Ticker;
-use App\Repositories\TickerRepository;
 use ccxt;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
 use JasonGuru\LaravelMakeRepository\Repository\BaseRepository;
-//use function Trademinator\Ticker\normalize;
+
+// use function Trademinator\Ticker\normalize;
 use function Trademinator\Time\periods_to_seconds;
-use function Trademinator\Time\to_unixtime;
+
 /**
  * Class ExchangeRepository.
  */
 class ExchangeRepository extends BaseRepository
 {
     protected ?Exchange $exchange;
-    protected ?\ccxt\Exchange $ccxtExchange;
+
+    protected ?ccxt\Exchange $ccxtExchange;
+
     protected TickerRepository $tickerRepository;
 
     public function __construct(?Exchange $exchange = null)
     {
-	parent::__construct();
+        parent::__construct();
         $this->exchange = $exchange;
-        if (!is_null($exchange))
-        {
+        if (! is_null($exchange)) {
             $this->setExchange($exchange);
-        }
-        else
-        {
+        } else {
             $this->ccxtExchange = null;
         }
 
@@ -43,59 +41,79 @@ class ExchangeRepository extends BaseRepository
         return $this->ccxtExchange->describe();
     }
 
-    public function fetch(string $symbol, string $period, int $from, int $to):array
+    public function fetch(string $symbol, string $period, int $from, int $to): array
     {
+        if ($from > $to) {
+            throw new \InvalidArgumentException('The fetch start time must be before or equal to the end time.');
+        }
+
+        $periodMilliseconds = periods_to_seconds($period) * 1000;
+        if ($periodMilliseconds <= 0) {
+            throw new \InvalidArgumentException("Unsupported candle period: {$period}");
+        }
+
         $answer = [];
-        if(App::hasDebugModeEnabled()){
+        if (App::hasDebugModeEnabled()) {
             Log::debug("public function fetch(string $symbol, string $period, int $from, int $to):array");
         }
+
         $params = [];
-        $startFetching = $from * 1000;   // Must be miliseconds
+        $startFetching = $from * 1000;
         $endFetching = $to * 1000;
-        switch ($this->exchange->class)
-        {
+
+        switch ($this->exchange->class) {
             case 'coinbase':
                 $records = 250;
-                $offset = periods_to_seconds($period) * $records;
-                $params['end'] = $startFetching + $offset * 1000;
+                $batchWindowMilliseconds = $periodMilliseconds * $records;
+                $params['end'] = min($endFetching, $startFetching + $batchWindowMilliseconds);
                 break;
             default:
                 $records = 1000;
-                $offset = periods_to_seconds($period);
+                $batchWindowMilliseconds = null;
         }
 
-        if(App::hasDebugModeEnabled()){
-            Log::debug("startFetching $startFetching; records $records; offset $offset; params ".print_r($params,true));
+        if (App::hasDebugModeEnabled()) {
+            Log::debug("startFetching $startFetching; records $records; params ".print_r($params, true));
         }
 
-        while ($startFetching <= $endFetching && count($ohlcv = $this->tickerRepository->fetch($symbol, $period, $startFetching, $records, $params)) > 0)
-        {
-            $t2 = end($ohlcv)['microtimestamp'];
+        while ($startFetching <= $endFetching) {
+            $ohlcv = $this->tickerRepository->fetch($symbol, $period, $startFetching, $records, $params);
+            if (count($ohlcv) === 0) {
+                break;
+            }
+
+            $lastCandle = end($ohlcv);
+            $lastTimestamp = (int) $lastCandle['microtimestamp'];
+
             foreach ($ohlcv as $candle) {
-                if ($candle['microtimestamp'] >= $from * 1000 && $candle['microtimestamp'] <= $endFetching) {
-                    $answer[$candle['microtimestamp']] = $candle;
+                $timestamp = (int) $candle['microtimestamp'];
+                if ($timestamp >= $from * 1000 && $timestamp <= $endFetching) {
+                    $answer[$timestamp] = $candle;
                 }
             }
-            if ($t2 < $startFetching) {
-                break; // The exchange returned no new candles.
-            }
-            $startFetching = $t2 + periods_to_seconds($period) * 1000;
 
-            if ($startFetching >= $endFetching)
-            {
-                if(App::hasDebugModeEnabled()){
-                    Log::debug("startFetching $startFetching >= endFetching $endFetching");
+            if ($lastTimestamp < $startFetching) {
+                break;
+            }
+
+            $nextStart = $lastTimestamp + $periodMilliseconds;
+            if ($nextStart <= $startFetching) {
+                break;
+            }
+
+            $startFetching = $nextStart;
+
+            // Important: equality is still a valid request. The old >= check
+            // skipped a candle that landed exactly on the requested end time.
+            if ($startFetching > $endFetching) {
+                if (App::hasDebugModeEnabled()) {
+                    Log::debug("startFetching $startFetching > endFetching $endFetching");
                 }
                 break;
             }
 
-            switch ($this->exchange->class)
-            {
-                case 'coinbase':
-                    $params['end'] = $startFetching + $offset * 1000;
-                    break;
-                default:
-                    break;
+            if ($this->exchange->class === 'coinbase') {
+                $params['end'] = min($endFetching, $startFetching + $batchWindowMilliseconds);
             }
         }
 
@@ -110,24 +128,27 @@ class ExchangeRepository extends BaseRepository
     public function findById(string $exchange_id): ?Collection
     {
         $exchange_q = Exchange::where('exchange_id', $exchange_id);
+
         return $exchange = $exchange_q->get();
     }
 
     public function findByName(string $name): ?Collection
     {
         $exchange_q = Exchange::where('name', $name);
+
         return $exchange = $exchange_q->get();
     }
 
     public function findByClass(string $class): ?Collection
     {
         $exchange_q = Exchange::where('class', $class);
+
         return $exchange = $exchange_q->get();
     }
 
     public function hasExchange(string $className): bool
     {
-        return in_array($className, \ccxt\Exchange::$exchanges);
+        return in_array($className, ccxt\Exchange::$exchanges);
     }
 
     public function hasMarket(string $market): bool
@@ -147,9 +168,9 @@ class ExchangeRepository extends BaseRepository
 
     /**
      * @return string
-     *  Return the model
+     *                Return the model
      */
-    public function model():string
+    public function model(): string
     {
         return Exchange::class;
     }
@@ -162,12 +183,11 @@ class ExchangeRepository extends BaseRepository
     public function setExchange(Exchange $exchange, array $extraSettings = [])
     {
         $this->exchange = $exchange;
-        $ccxtExchangeName = '\\ccxt\\' . $exchange->class;
+        $ccxtExchangeName = '\\ccxt\\'.$exchange->class;
         // DB saves the confing in JSON format, but CCXT expects it in an associative array
         $settings = json_decode($this->exchange->config ?: '{}', true) ?: [];
         $settings['enableRateLimit'] = true;
-        if (count($extraSettings))
-        {
+        if (count($extraSettings)) {
             $settings = array_merge($settings, $extraSettings);
         }
         $this->ccxtExchange = new $ccxtExchangeName($settings);
