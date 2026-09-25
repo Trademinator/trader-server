@@ -7,11 +7,8 @@
         <div class="flex min-h-svh flex-col items-center justify-center gap-6 p-6 md:p-10">
             <div class="flex w-full max-w-md flex-col gap-6">
                 <a href="{{ route('home') }}" class="flex flex-col items-center gap-2 font-medium">
-                    <span class="flex h-9 w-9 items-center justify-center rounded-md">
-                        <x-app-logo-icon class="size-9 fill-current text-black dark:text-white" />
-                    </span>
-
-                    <span class="sr-only">{{ config('app.name', 'Laravel') }}</span>
+                    <x-app-logo-icon variant="full" class="size-40 rounded-xl" />
+                    <span class="sr-only">{{ config('app.name', 'Trademinator') }}</span>
                 </a>
 
                 <div class="space-y-6">

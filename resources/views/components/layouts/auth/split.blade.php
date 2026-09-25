@@ -8,10 +8,10 @@
             <div class="relative hidden h-full flex-col p-10 text-white lg:flex dark:border-r dark:border-gray-800">
                 <div class="absolute inset-0 bg-gray-900"></div>
                 <a href="{{ route('home') }}" class="relative z-20 flex items-center text-lg font-medium">
-                    <span class="flex h-10 w-10 items-center justify-center rounded-md">
-                        <x-app-logo-icon class="mr-2 h-7 fill-current text-white" />
+                    <span class="mr-2 flex size-10 items-center justify-center overflow-hidden rounded-md bg-black">
+                        <x-app-logo-icon class="size-10" />
                     </span>
-                    {{ config('app.name', 'Laravel') }}
+                    {{ config('app.name', 'Trademinator') }}
                 </a>
 
                 @php
@@ -28,11 +28,8 @@
             <div class="w-full lg:p-8">
                 <div class="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[350px]">
                     <a href="{{ route('home') }}" class="z-20 flex flex-col items-center gap-2 font-medium lg:hidden">
-                        <span class="flex h-9 w-9 items-center justify-center rounded-md">
-                            <x-app-logo-icon class="size-9 fill-current text-black dark:text-white" />
-                        </span>
-
-                        <span class="sr-only">{{ config('app.name', 'Laravel') }}</span>
+                        <x-app-logo-icon variant="full" class="size-40 rounded-xl" />
+                        <span class="sr-only">{{ config('app.name', 'Trademinator') }}</span>
                     </a>
                     {{ $slot }}
                 </div>

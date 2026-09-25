@@ -13,7 +13,7 @@ return [
     |
     */
 
-    'name' => env('APP_NAME', 'Laravel'),
+    'name' => env('APP_NAME', 'Trademinator'),
 
     /*
     |--------------------------------------------------------------------------
@@ -56,6 +56,8 @@ return [
 
     'repository_url' => env('APP_REPOSITORY_URL', 'https://github.com/Trademinator/trader-server'),
 
+    // An empty override uses the bundled silver cyborg artwork.
+    // Set a public asset path or HTTPS URL to supply custom branding.
     'logo_url' => env('APP_LOGO_URL'),
 
     /*
