@@ -2,6 +2,7 @@
 
 namespace App\Domain\Features;
 
+use App\Models\CoinGeckoMarketMapping;
 use App\Models\Ticker;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -29,10 +30,16 @@ final class FeatureBuilder
                     yield $raw;
                 }
             })();
-            $mapping = config('features.coingecko.markets', [])[$exchange.':'.$symbol] ?? null;
-            if ($mapping !== null && strtolower(explode('/', $symbol)[1] ?? '') !== strtolower($mapping['vs_currency'] ?? '')) {
+
+            $mapping = CoinGeckoMarketMapping::query()
+                ->where('status', 'resolved')
+                ->whereHas('market', fn ($market) => $market->where('symbol', $symbol)
+                    ->whereHas('exchange', fn ($query) => $query->where('class', $exchange)))
+                ->first();
+            if ($mapping !== null && strtolower(explode('/', $symbol, 2)[1] ?? '') !== strtolower((string) $mapping->vs_currency)) {
                 throw new RuntimeException('Context mapping must use the market exact quote currency.');
             }
+
             $context = new ContextFeatures;
             $keys = array_merge(FeatureEngine::KEYS, ContextFeatures::KEYS);
             $pending = [];
@@ -40,8 +47,13 @@ final class FeatureBuilder
             $started = microtime(true);
             $snapshot = null;
             $snapshots = $mapping === null ? null : DB::table('market_context_snapshots')
-                ->where('coin_id', $mapping['id'])->where('vs_currency', strtolower($mapping['vs_currency']))
-                ->where('observed_at_ms', '<=', $cutoffMs)->orderBy('observed_at_ms')->orderBy('snapshot_id')->lazy(500)->getIterator();
+                ->where('coin_id', $mapping->coin_id)
+                ->where('vs_currency', strtolower((string) $mapping->vs_currency))
+                ->where('observed_at_ms', '<=', $cutoffMs)
+                ->orderBy('observed_at_ms')
+                ->orderBy('snapshot_id')
+                ->lazy(500)
+                ->getIterator();
             $snapshots?->rewind();
             foreach ((new FeatureEngine)->rows($candles, $period, $cutoffMs) as $row) {
                 if (microtime(true) - $started > 540) {
@@ -55,8 +67,13 @@ final class FeatureBuilder
                 if ($fromMs !== null && $row['microtimestamp'] < $fromMs) {
                     continue;
                 }
-                $extra = $context->calculate($snapshot, $row['close'], $row['available_at_ms'],
-                    config('features.coingecko.max_age_seconds') * 1000, $mapping['category'] ?? null);
+                $extra = $context->calculate(
+                    $snapshot,
+                    $row['close'],
+                    $row['available_at_ms'],
+                    config('features.coingecko.max_age_seconds') * 1000,
+                    $mapping?->category,
+                );
                 $row['features'] = array_merge($row['features'], $extra['features']);
                 $row['context_snapshot_id'] = $extra['snapshot_id'];
                 $row['context_ready'] = $extra['context_ready'];
@@ -65,9 +82,18 @@ final class FeatureBuilder
                 $row['missing'] = array_keys(array_filter($row['features'], fn ($value) => $value === null));
                 $row['ready'] = $row['missing'] === [];
                 $row['version'] = FeatureEngine::VERSION;
-                $pending[] = ['feature_id' => (string) Str::uuid7(), 'exchange' => $exchange, 'symbol' => $symbol, 'period' => $period,
-                    'microtimestamp' => $row['microtimestamp'], 'available_at_ms' => $row['available_at_ms'], 'version' => FeatureEngine::VERSION,
-                    'payload' => json_encode($row, JSON_THROW_ON_ERROR), 'created_at' => now(), 'updated_at' => now()];
+                $pending[] = [
+                    'feature_id' => (string) Str::uuid7(),
+                    'exchange' => $exchange,
+                    'symbol' => $symbol,
+                    'period' => $period,
+                    'microtimestamp' => $row['microtimestamp'],
+                    'available_at_ms' => $row['available_at_ms'],
+                    'version' => FeatureEngine::VERSION,
+                    'payload' => json_encode($row, JSON_THROW_ON_ERROR),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
                 $count++;
                 if (count($pending) === 100) {
                     $this->save($pending);

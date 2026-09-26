@@ -32,7 +32,7 @@ final class MarketSubscriptions
             throw new InvalidArgumentException('This exchange does not list the requested symbol.');
         }
 
-        return DB::transaction(function () use ($user, $exchange, $symbol, $tickSize): MarketSubscription {
+        $subscription = DB::transaction(function () use ($user, $exchange, $symbol, $tickSize): MarketSubscription {
             $market = Market::query()->firstOrCreate(
                 ['exchange_id' => $exchange->exchange_id, 'symbol' => $symbol], ['tick_size' => $tickSize]);
             if (bccomp((string) $market->tick_size, $tickSize, 18) !== 0) {
@@ -49,6 +49,8 @@ final class MarketSubscriptions
 
             return $subscription;
         });
+
+        return $subscription;
     }
 
     public function unsubscribe(User $user, Market $market): void

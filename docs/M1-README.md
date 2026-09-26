@@ -13,7 +13,7 @@ The exchange through CCXT remains the source for OHLCV and execution. M1 extends
 
 ## Installation and use
 
-Run `composer install` and `php artisan migrate`. Start a Laravel queue worker if using `--queue` and set `QUEUE_CONNECTION` to a persistent queue driver; `sync` runs inline.
+Run `composer install` and `php artisan migrate`. If using `--queue`, set `QUEUE_CONNECTION` to a persistent queue driver. A permanent worker daemon is not required; the cron-driven queue drain is documented in [contact.md](contact.md). `sync` runs inline.
 
 ```bash
 php artisan trademinator:sync-ohlcv coinbase BTC/USD 1m --from='7 days ago' --incremental --repair-gaps
@@ -25,7 +25,7 @@ Supply `--tick-size` from the market's CCXT tick-size metadata, accounting for t
 
 The `candle_period_selections` table stores the selected exchange/symbol/timeframe, sample bounds, thresholds and quality metrics for audit. It does not place trades. All timestamps in the candle and decision payload are milliseconds since Unix epoch.
 
-For large sync ranges, `--queue` processes one page per job; keep a persistent queue worker running. `QUEUE_CONNECTION=sync` is not accepted with `--queue`. Each page overlaps a few prior candles, so the `fetched` and `missing_ranges` totals in a direct run can count observations in more than one page; database upserts still keep one row per candle. If an exchange enforces a lower per-request maximum, lower `--page-size` accordingly.
+For large sync ranges, `--queue` processes one page per job; use the persistent queue plus cron-driven `queue:work --stop-when-empty` setup in [contact.md](contact.md). `QUEUE_CONNECTION=sync` is not accepted with `--queue`. Each page overlaps a few prior candles, so the `fetched` and `missing_ranges` totals in a direct run can count observations in more than one page; database upserts still keep one row per candle. If an exchange enforces a lower per-request maximum, lower `--page-size` accordingly.
 
 ## Verification
 
@@ -49,17 +49,9 @@ php artisan trademinator:market-subscription unsubscribe user@example.com kraken
 
 The first due collection chooses the shortest supported quality-qualified completed-candle period using the existing `trademinator:select-candle-period` logic, records the decision, and stores that period on the shared feed. If insufficient history passes quality and coverage, it retries in 15 minutes. The collector fetches a bounded recent window of completed candles with a 90-candle CCXT limit and idempotent upserts into the existing unique `(exchange, symbol, period, microtimestamp)` ticker key. It does not create synthetic candles. Tick size is shared market metadata; subscriptions with a conflicting size are rejected. If exchange precision or tick size changes, update that market intentionally before reselecting a period.
 
-Run the Laravel scheduler and a queue worker on your deployment. Multiple nodes can run `schedule:run` when they share a Redis or database cache store; `onOneServer` and `withoutOverlapping` elect one scheduler, and an atomic database lease and per-market cache lock guard duplicate jobs:
+Run the Laravel scheduler and drain the persistent queue from cron; no permanent worker daemon is required. Multiple nodes can run `schedule:run` when they share a Redis or database cache store; `onOneServer` and `withoutOverlapping` elect one scheduler, and an atomic database lease and per-market cache lock guard duplicate jobs. The complete operating-system crontab is maintained in [contact.md](contact.md).
 
-```cron
-* * * * * cd /path/to/trader-server && /usr/bin/php artisan schedule:run >> /dev/null 2>&1
-```
-
-```bash
-php artisan queue:work --queue=default --timeout=600 --tries=5
-```
-
-Use `QUEUE_CONNECTION=database` (or a shared Redis queue) and `CACHE_STORE=redis` (or another shared atomic-lock capable cache). Set the queue connection's `retry_after` to at least 720 seconds, longer than the 600-second job timeout; restart workers after configuration changes. The lease expires after 15 minutes so an abandoned job can be reclaimed. Run `php artisan trademinator:dispatch-market-feeds` manually to inspect dispatch behavior. After initial deployment, check `market_feeds.status`, `selected_period`, `next_pull_at`, `last_error` and `php artisan queue:failed`. The collector stores the selected period and refreshes the latest 90 candle intervals; it does not backfill an arbitrarily old dormant market. Use `trademinator:sync-ohlcv` for historical backfills.
+Use `QUEUE_CONNECTION=database` (or a shared Redis queue) and `CACHE_STORE=redis` (or another shared atomic-lock capable cache). Set the queue connection's `retry_after` to at least 720 seconds, longer than the 600-second job timeout. The cron worker uses `queue:work --stop-when-empty`, so it exits when the queue has been drained. The lease expires after 15 minutes so an abandoned job can be reclaimed. Run `php artisan trademinator:dispatch-market-feeds` manually to inspect dispatch behavior. After initial deployment, check `market_feeds.status`, `selected_period`, `next_pull_at`, `last_error` and `php artisan queue:failed`. The collector stores the selected period and refreshes the latest 90 candle intervals; it does not backfill an arbitrarily old dormant market. Use `trademinator:sync-ohlcv` for historical backfills.
 
 Authenticated users can manage their subscriptions at `/markets`. The subscription page accepts the configured CCXT exchange ID, the exact exchange symbol and tick size; the list shows shared feed state and the selected period. Unsubscribe requests are scoped to the logged-in user. Users can reactivate an inactive subscription through the same add form.
 

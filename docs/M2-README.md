@@ -17,7 +17,7 @@ php artisan config:cache
 php artisan queue:restart
 ```
 
-Keep the M1 scheduler and queue worker running, using a shared lock-capable cache and a persistent queue. M2 queues one feature build per subscribed market/selected period every five minutes. The existing 600-second worker timeout and queue `retry_after` of at least 720 seconds apply. No new Composer or npm dependencies are required. `FEATURES_ENABLED=false` disables automatic feature dispatch; explicit build commands remain available.
+Keep the M1 scheduler running with a shared lock-capable cache and a persistent queue. A permanent queue-worker daemon is not required; use the cron-driven `queue:work --stop-when-empty` setup in [contact.md](contact.md). M2 queues one feature build per subscribed market/selected period every five minutes. The 600-second worker timeout and queue `retry_after` of at least 720 seconds still apply. No new Composer or npm dependencies are required. `FEATURES_ENABLED=false` disables automatic feature dispatch; explicit build commands remain available.
 
 Build existing stored history immediately:
 
@@ -30,31 +30,29 @@ The legacy `trademinator:create-indicators` command now delegates to M2. Its opt
 
 ## CoinGecko setup
 
-Set `COINGECKO_ENABLED=true`, `COINGECKO_API_KEY=...`, and `COINGECKO_PRO=false` (Demo) or `true` (Pro). The key stays in an HTTP header. Add explicit mappings in `config/features.php`:
+Set `COINGECKO_ENABLED=true`, `COINGECKO_API_KEY=...`, and `COINGECKO_PRO=false` (Demo) or `true` (Pro). The key stays in an HTTP header. Coin IDs are no longer configured in `config/features.php`.
 
-```php
-'markets' => [
-    'kraken:BTC/USD' => [
-        'id' => 'bitcoin',
-        'vs_currency' => 'usd',
-        'category' => 'layer-1',
-    ],
-],
-```
+CoinGecko context is subscription-driven:
 
-Use verified CoinGecko coin/category IDs; symbols alone are ambiguous. The currency must exactly represent the exchange quote asset. Do not map BTC/USDT to USD or assume a stablecoin is worth $1. If CoinGecko does not support the quote currency, leave that market unmapped; its technical features still work. This mapping supports spot-style `BASE/QUOTE` markets; derivative settlement symbols need a later explicit conversion design.
+1. Creating a `MarketSubscription` emits `MarketSubscriptionCreated`.
+2. `EnsureCoinGeckoMarketMapping` creates one `coin_gecko_market_mappings` row for the shared market, not one row per user.
+3. The hourly `trademinator:collect-market-context` command backfills any active subscriptions that predate this migration and resolves pending mappings through CoinGecko.
+4. Automatic resolution accepts only one exact symbol match. Multiple exact matches are marked `ambiguous`; zero matches are marked `unmapped`. Trademinator does not guess a coin ID.
+5. Resolved mappings store the exact quote currency derived from the exchange's `BASE/QUOTE` spot symbol. BTC/USDT therefore remains USDT and is never silently substituted with USD.
+
+The resolver also attempts to map the coin's first CoinGecko category to a category ID for sector/category momentum. Category metadata is optional; failure to resolve a category does not block an otherwise unambiguous coin mapping. Derivative symbols such as `BTC/USD:USD` are marked `unsupported` for automatic mapping until a settlement/conversion design is added.
 
 ```bash
+php artisan migrate --force
 php artisan config:cache
 php artisan trademinator:collect-market-context
 ```
 
-Context collection runs hourly. Requests batch up to 100 unique coin IDs per quote currency, reuse global/category data, and avoid duplicate samples within the same UTC hour. With one quote-currency batch, collection uses two requests per hour, or three when categories are configured. Choose an API plan and collection frequency appropriate for your quota. HTTP failures, including 429, fail visibly without fabricating snapshots; inspect scheduler logs. Collection resumes on the next scheduled run. Shared locks prevent simultaneous collectors.
+Context collection runs hourly. Requests batch up to 100 unique resolved coin IDs per quote currency, reuse global/category data, and avoid duplicate samples within the same UTC hour. Multiple users subscribing to the same market therefore share the same CoinGecko mapping and context stream. HTTP failures, including 429, fail visibly without fabricating snapshots; collection resumes on the next scheduled run. Shared locks prevent simultaneous collectors.
 
-Endpoints and authentication are based on the official documentation:
-- https://docs.coingecko.com/reference/coins-markets
-- https://docs.coingecko.com/reference/coins-categories
-- https://docs.coingecko.com/v3.0.1/reference/introduction
+Mappings can be inspected in `coin_gecko_market_mappings`. `pending` means awaiting resolution, `resolved` is usable, `ambiguous` requires an explicit future/admin mapping decision, `unmapped` means no exact symbol match was found, and `unsupported` currently means the market symbol is not a plain spot `BASE/QUOTE` pair.
+
+Endpoints and authentication are based on the official CoinGecko API endpoints already used by M2: search, coin detail/category metadata, global market data, coin markets, and coin categories.
 
 ## Data contract
 

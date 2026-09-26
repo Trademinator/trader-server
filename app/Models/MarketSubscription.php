@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Events\MarketSubscriptionCreated;
 use App\Traits\HasUniqueIdentifier;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -17,6 +18,11 @@ class MarketSubscription extends Model
     protected $keyType = 'string';
 
     protected $fillable = ['user_id', 'market_id', 'active'];
+
+    protected static function booted(): void
+    {
+        static::created(fn (self $subscription) => event(new MarketSubscriptionCreated($subscription)));
+    }
 
     protected function casts(): array
     {

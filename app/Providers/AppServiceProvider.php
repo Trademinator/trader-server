@@ -4,6 +4,9 @@ namespace App\Providers;
 
 use App\Domain\MarketData\AllowMarketSubscriptions;
 use App\Domain\MarketData\MarketSubscriptionEntitlement;
+use App\Events\MarketSubscriptionCreated;
+use App\Listeners\EnsureCoinGeckoMarketMapping;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -21,6 +24,6 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        Event::listen(MarketSubscriptionCreated::class, EnsureCoinGeckoMarketMapping::class);
     }
 }

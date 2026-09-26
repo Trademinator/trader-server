@@ -34,4 +34,9 @@ class Market extends Model
     {
         return $this->hasMany(MarketSubscription::class, 'market_id', 'market_id');
     }
+
+    public function coinGeckoMapping(): HasOne
+    {
+        return $this->hasOne(CoinGeckoMarketMapping::class, 'market_id', 'market_id');
+    }
 }

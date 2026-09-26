@@ -16,7 +16,7 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 ## Command index
 
 - [`trademinator:build-features`](#trademinatorbuild-features) — Replay stored completed candles into versioned, causal M2 features
-- [`trademinator:collect-market-context`](#trademinatorcollect-market-context) — Collect timestamped CoinGecko context for explicitly mapped markets
+- [`trademinator:collect-market-context`](#trademinatorcollect-market-context) — Collect timestamped CoinGecko context for subscribed markets
 - [`trademinator:create-indicators`](#trademinatorcreate-indicators) — Build M2 indicators and feature vectors from stored completed candles
 - [`trademinator:dispatch-market-features`](#trademinatordispatch-market-features) — Queue M2 feature builds for subscribed markets with selected candle periods
 - [`trademinator:dispatch-market-feeds`](#trademinatordispatch-market-feeds) — Queue due market feeds with at least one active subscription
@@ -41,11 +41,11 @@ php artisan trademinator:build-features kraken BTC/USD 1m
 
 ## trademinator:collect-market-context
 
-Description: Collect timestamped CoinGecko context for explicitly mapped markets
+Description: Collect timestamped CoinGecko context for subscribed markets
 
 Signature: `trademinator:collect-market-context`
 
-Collect CoinGecko snapshots for the explicit market mappings in `config/features.php`. No command-specific arguments or options. Requires `COINGECKO_ENABLED=true`, an API key, and exact coin-ID/quote-currency mappings. Otherwise, disabled collection or no configured mappings stores zero snapshots. Uses a shared lock, batches coin requests, and avoids duplicate observations in the same UTC hour. Provider failures fail the command; they do not become fabricated values. Scheduled hourly.
+Collect CoinGecko snapshots for markets that have active subscriptions. No command-specific arguments or options. Creating a `MarketSubscription` emits `MarketSubscriptionCreated`, which creates a pending `coin_gecko_market_mappings` row. The hourly collector also backfills pre-existing active subscriptions, resolves pending mappings using exact CoinGecko symbol matches, and refuses to guess when a symbol is ambiguous. Requires `COINGECKO_ENABLED=true` and an API key. Resolved mappings are shared by all subscribers of the same market; duplicate coin/quote requests are batched and observations are deduplicated within the same UTC hour. Provider failures fail the command; they do not become fabricated values. Scheduled hourly.
 
 ```bash
 php artisan trademinator:collect-market-context
@@ -224,23 +224,15 @@ Overlapping pages can count the same candle more than once in totals; unique dat
 | `trademinator:dispatch-market-features` | Every five minutes |
 | `trademinator:collect-market-context` | Hourly |
 
-Schedules are defined in `routes/console.php`. All use shared-cache scheduler locks. Configure a shared atomic-lock-capable cache and a persistent queue across nodes. Run Laravel's scheduler each minute and keep a worker running:
+Schedules are defined in `routes/console.php`. All use shared-cache scheduler locks. Configure a shared atomic-lock-capable cache and a persistent queue across nodes. Trademinator does not require a permanent worker daemon: configure the scheduler cron and the `queue:work --stop-when-empty` queue-drain cron documented in [contact.md](contact.md).
 
-```cron
-* * * * * cd /path/to/trader-server && /usr/bin/php artisan schedule:run >> /dev/null 2>&1
-```
-
-```bash
-php artisan queue:work --queue=default --timeout=600 --tries=5
-php artisan queue:failed
-```
-
-Set the queue connection's `retry_after` to at least 720 seconds. After deploying code or configuration changes, clear/rebuild configuration as appropriate and restart long-running workers:
+Set the queue connection's `retry_after` to at least 720 seconds. After deploying code or configuration changes, clear/rebuild configuration as appropriate:
 
 ```bash
 php artisan optimize:clear
 php artisan config:cache
-php artisan queue:restart
+php artisan schedule:list
+php artisan queue:failed
 ```
 
 ## Where the KNN inputs are prepared

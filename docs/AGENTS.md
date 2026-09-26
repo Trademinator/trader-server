@@ -8,6 +8,12 @@
 - Keep specialized guides linked to `docs/CLI.md` instead of treating them as the complete command inventory.
 - Run `php artisan test --filter=TrademinatorCliDocumentationTest` after command or CLI documentation changes. This gate checks registered command names, aliases, coverage, signatures, and descriptions. Review behavior-only documentation updates manually too.
 
+## Cron documentation
+
+- Maintain `docs/contact.md` as the canonical operating-system crontab and scheduler/queue deployment reference.
+- Update `docs/contact.md` in the same change whenever `routes/console.php` adds, removes, renames, or changes the cadence of a scheduled command, or whenever queue-processing requirements change.
+- Trademinator's documented production mode does not require a permanent queue daemon; the queue is drained by the cron-driven `queue:work --stop-when-empty` command documented in `docs/contact.md`.
+
 ## Documentation location
 
 - Keep project Markdown documentation in `docs/`; only the root `README.md` stays at the repository root.

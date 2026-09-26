@@ -10,7 +10,7 @@ final class CollectMarketContext extends Command
 {
     protected $signature = 'trademinator:collect-market-context';
 
-    protected $description = 'Collect timestamped CoinGecko context for explicitly mapped markets';
+    protected $description = 'Collect timestamped CoinGecko context for subscribed markets';
 
     public function handle(CoinGeckoCollector $collector): int
     {
