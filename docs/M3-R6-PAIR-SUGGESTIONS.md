@@ -11,8 +11,13 @@ From the application directory, using your normal application user and PHP 8.4/8
 ```bash
 composer install --no-dev --prefer-dist --optimize-autoloader
 php artisan migrate --force
-php artisan optimize:clear
+php artisan route:clear
+php artisan view:clear
+php artisan config:clear
+php artisan route:list --path=markets
 ```
+
+The route list must include `markets.suggestions` and both `markets.preferences.*` routes. If a missing-route error remains, follow [M3-R7-ROUTE-RECOVERY.md](M3-R7-ROUTE-RECOVERY.md).
 
 If your deployment normally uses cached configuration/routes/views, rebuild those caches using your usual procedure. If PHP OPcache retains old files, reload your PHP service through your normal hosting controls.
 

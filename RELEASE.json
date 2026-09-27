@@ -1,10 +1,10 @@
 {
-  "release": "Trademinator M3 R6",
+  "release": "Trademinator M3 R7",
   "date": "2026-09-26",
   "source_repository": "https://github.com/Trademinator/trader-server",
   "source_commit": "9140440cadc99bda1ec1029510a89e3e1234b5e8",
   "delivery": "Full source snapshot plus compiled frontend assets",
-  "entrypoint_guide": "docs/M3-R6-PAIR-SUGGESTIONS.md",
+  "entrypoint_guide": "docs/M3-R7-ROUTE-RECOVERY.md",
   "cli_reference": "docs/CLI.md",
   "cron_reference": "docs/crontabs.md",
   "new_commands": [
@@ -18,26 +18,15 @@
   "validation": {
     "php": "8.4.26",
     "database": "SQLite in-memory",
-    "test_entrypoint": "php artisan test --compact",
-    "tests_passed": 218,
-    "assertions": 1368,
+    "tests_passed": 41,
+    "assertions": 209,
+    "test_entrypoint": "php artisan test --compact --filter='MarketSuggestionRoutesTest|MarketRouteCacheTest|MarketSubscriptionsWebTest|MarketSuggestionsTest'",
     "frontend_script_tests": 4,
     "frontend_build": "npm run build passed",
     "git_diff_check": "passed",
-    "pint": "passed for changed PHP files",
-    "cli_documentation_gate": "passed in full suite",
-    "catalogue_memory_limit": "128 MiB",
-    "catalogue_probe": {
-      "configured_exchanges": 110,
-      "synthetic_binance_pairs": 5000,
-      "exchange_list_peak_bytes": 50855936,
-      "complete_probe_peak_bytes": 128622592,
-      "spot_requests": 1,
-      "subscription_created": true,
-      "suggestion_page_rendered": true
-    },
-    "browser_visual_check": "Not run: Chromium executable unavailable; Blade rendering and frontend script tests passed",
-    "live_exchange_checks": "Not performed; deterministic exchange fixtures used"
+    "pint": "passed for new PHP regression files",
+    "route_cache_regression": "Old compiled route table reproduces the exception; guarded page stays available. An isolated stale on-disk cache is loaded, cleared and rebuilt; all three feature routes and auth are restored. No deployment caches touched.",
+    "scope": "Market UI guard and route-cache recovery; core collectors and data models unchanged."
   },
   "not_exercised": [
     "MariaDB integration/concurrent-node runtime",
@@ -69,7 +58,8 @@
     "R3 does not implement subscriber credential collection.",
     "R4 replaces the misleading candle-period dropdown with a read-only Automatic display and a separate expandable interval reference. No database, collector, CLI or scheduler changes.",
     "R5 removes the candle-period form control and retains its explanation box. No database, collector, CLI or scheduler changes.",
-    "R6 adds private encrypted preferences, bounded explained pair suggestions and explicit review through the existing subscription form. One additive table migration; no new daemon, schedule or CLI command. Regional reviews default to unknown, and missing evidence remains exploratory."
+    "R6 adds private encrypted preferences, bounded explained pair suggestions and explicit review through the existing subscription form. One additive table migration; no new daemon, schedule or CLI command. Regional reviews default to unknown, and missing evidence remains exploratory.",
+    "R7 guards the optional suggestions link when any suggestion route is missing, tolerates missing optional prefill values during partial updates, and documents targeted route/view cache recovery. The full source retains all R6 routes. No new migration, dependency, command or schedule."
   ],
   "repair_changes": [
     "Isolated SQLite in-memory tests with forced environment, DB_URL removal, deployment-cache bypass and pre-provider guard",
@@ -88,7 +78,8 @@
     "Candle-period form control removed; automatic-selection explanation box and actual subscribed feed period retained.",
     "Optional questionnaire with owner-scoped encrypted answers, edit/delete and private no-store responses",
     "Explained spot-pair suggestions with funding, regional, budget and historical screens; no automatic subscription or orders",
-    "Compact catalogue adds activity/minimum/fee metadata, excludes explicitly inactive pairs and uses v5 cache keys"
+    "Compact catalogue adds activity/minimum/fee metadata, excludes explicitly inactive pairs and uses v5 cache keys",
+    "Missing cached suggestion routes no longer crash /markets; regression coverage verifies route-cache recovery and preserved authentication."
   ],
   "r1_new_migration": null,
   "r2_new_migration": null,
@@ -153,5 +144,30 @@
     "git_diff_check": "passed",
     "scope": "Market-page rendering, options, subscription behavior and browser scripts. Confirmed period control absent and explanation box retained."
   },
-  "r6_new_migration": "2026_09_26_000001_create_market_preference_profiles"
+  "r6_new_migration": "2026_09_26_000001_create_market_preference_profiles",
+  "r6_validation": {
+    "php": "8.4.26",
+    "database": "SQLite in-memory",
+    "test_entrypoint": "php artisan test --compact",
+    "tests_passed": 218,
+    "assertions": 1368,
+    "frontend_script_tests": 4,
+    "frontend_build": "npm run build passed",
+    "git_diff_check": "passed",
+    "pint": "passed for changed PHP files",
+    "cli_documentation_gate": "passed in full suite",
+    "catalogue_memory_limit": "128 MiB",
+    "catalogue_probe": {
+      "configured_exchanges": 110,
+      "synthetic_binance_pairs": 5000,
+      "exchange_list_peak_bytes": 50855936,
+      "complete_probe_peak_bytes": 128622592,
+      "spot_requests": 1,
+      "subscription_created": true,
+      "suggestion_page_rendered": true
+    },
+    "browser_visual_check": "Not run: Chromium executable unavailable; Blade rendering and frontend script tests passed",
+    "live_exchange_checks": "Not performed; deterministic exchange fixtures used"
+  },
+  "r7_new_migration": null
 }

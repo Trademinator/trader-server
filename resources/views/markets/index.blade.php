@@ -91,8 +91,12 @@
 
         <div class="market-panel">
             <h2>Need help choosing pairs?</h2>
+            @if (\Illuminate\Support\Facades\Route::has(['markets.suggestions', 'markets.preferences.store', 'markets.preferences.destroy']))
             <p style="margin: 8px 0 14px">Answer a few optional questions to explore spot pairs that fit your holdings and preferences. You make the final choice.</p>
             <a href="{{ route('markets.suggestions') }}" class="market-subscribe" style="display: inline-block">Help me choose pairs</a>
+            @else
+            <p role="status" class="market-feedback">Pair suggestions are temporarily unavailable. You can still manage your market subscriptions below.</p>
+            @endif
         </div>
         <form method="POST" action="{{ route('markets.store') }}" class="market-panel">
             @csrf
@@ -108,12 +112,12 @@
                         <select id="market-exchange" name="exchange" required @disabled($exchanges === []) data-options-url="{{ route('markets.options', ['exchange' => '__EXCHANGE__']) }}" class="market-control">
                             <option value="">Select an exchange</option>
                             @foreach ($exchanges as $choice)
-                                <option value="{{ $choice['value'] }}" @selected(old('exchange', $prefillExchange) === $choice['value'])>{{ $choice['label'] }}{{ ($choice['access'] ?? null) === 'authentication_required' ? ' (API access required)' : '' }}</option>
+                                <option value="{{ $choice['value'] }}" @selected(old('exchange', $prefillExchange ?? '') === $choice['value'])>{{ $choice['label'] }}{{ ($choice['access'] ?? null) === 'authentication_required' ? ' (API access required)' : '' }}</option>
                             @endforeach
                         </select>
                     </label>
                     <label class="market-field">Pair (base/quote)
-                        <select id="market-symbol" name="symbol" required disabled data-old-symbol="{{ old('symbol', $prefillSymbol) }}" class="market-control">
+                        <select id="market-symbol" name="symbol" required disabled data-old-symbol="{{ old('symbol', $prefillSymbol ?? '') }}" class="market-control">
                             <option value="">Select an exchange first</option>
                         </select>
                     </label>
