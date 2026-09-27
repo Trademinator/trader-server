@@ -17,7 +17,7 @@ php artisan config:cache
 php artisan queue:restart
 ```
 
-Keep the M1 scheduler running with a shared lock-capable cache and a persistent queue. A permanent queue-worker daemon is not required; use the cron-driven `queue:work --stop-when-empty` setup in [contact.md](contact.md). M2 queues one feature build per subscribed market/selected period every five minutes. The 600-second worker timeout and queue `retry_after` of at least 720 seconds still apply. No new Composer or npm dependencies are required. `FEATURES_ENABLED=false` disables automatic feature dispatch; explicit build commands remain available.
+Keep the M1 scheduler running with a shared lock-capable cache and a persistent queue. A permanent queue-worker daemon is not required; use the cron-driven `queue:work --stop-when-empty` setup in [crontabs.md](crontabs.md). M2 queues one feature build per subscribed market/selected period every five minutes. The 600-second worker timeout and queue `retry_after` of at least 720 seconds still apply. No new Composer or npm dependencies are required. `FEATURES_ENABLED=false` disables automatic feature dispatch; explicit build commands remain available.
 
 Build existing stored history immediately:
 

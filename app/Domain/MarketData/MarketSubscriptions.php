@@ -13,9 +13,9 @@ use InvalidArgumentException;
 
 final class MarketSubscriptions
 {
-    public function __construct(private readonly MarketSubscriptionEntitlement $entitlement, private readonly ExchangeRepository $exchanges) {}
+    public function __construct(private readonly MarketSubscriptionEntitlement $entitlement, private readonly ExchangeRepository $exchanges, private readonly MarketCatalog $catalog, private readonly ExchangeMetadata $metadata) {}
 
-    public function subscribe(User $user, Exchange $exchange, string $symbol, string $tickSize): MarketSubscription
+    public function subscribe(User $user, Exchange $exchange, string $symbol, string $tickSize, bool $spotOnly = false): MarketSubscription
     {
         if ($symbol === '' || mb_strlen($symbol) > 32 || ! preg_match('/^\d{1,12}(?:\.\d{1,18})?$/D', $tickSize)
             || (float) $tickSize <= 0) {
@@ -24,12 +24,22 @@ final class MarketSubscriptions
         if (! $this->entitlement->canSubscribe($user, $exchange, $symbol)) {
             throw new InvalidArgumentException('The account cannot subscribe to this market.');
         }
-        $this->exchanges->setExchange($exchange);
-        if (! array_intersect(array_keys($this->exchanges->periods()), CandleTimeframe::SUPPORTED)) {
-            throw new InvalidArgumentException('This exchange does not offer a supported OHLCV candle period.');
-        }
-        if (! array_key_exists($symbol, $this->exchanges->markets())) {
-            throw new InvalidArgumentException('This exchange does not list the requested symbol.');
+        if ($spotOnly) {
+            // Reuse the bounded, server-side catalogue used by the form. Do not
+            // reload all currencies and derivatives on the subsequent POST.
+            $options = $this->catalog->forExchange($exchange);
+            if ($options['periods'] === [] || ! in_array($symbol, array_column($options['symbols'], 'value'), true)) {
+                throw new InvalidArgumentException('This exchange does not list the requested spot symbol with a supported candle period.');
+            }
+        } else {
+            $this->metadata->assertUsable($exchange, spotOnly: false);
+            $this->exchanges->setExchange($exchange);
+            if (! array_intersect(array_keys($this->exchanges->periods()), CandleTimeframe::SUPPORTED)) {
+                throw new InvalidArgumentException('This exchange does not offer a supported OHLCV candle period.');
+            }
+            if (! array_key_exists($symbol, $this->exchanges->markets())) {
+                throw new InvalidArgumentException('This exchange does not list the requested symbol.');
+            }
         }
 
         $subscription = DB::transaction(function () use ($user, $exchange, $symbol, $tickSize): MarketSubscription {

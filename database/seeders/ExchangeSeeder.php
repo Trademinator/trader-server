@@ -2,9 +2,12 @@
 
 namespace Database\Seeders;
 
+use App\Domain\MarketData\MarketCatalog;
 use App\Models\Exchange;
 use ccxt;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class ExchangeSeeder extends Seeder
 {
@@ -13,17 +16,18 @@ class ExchangeSeeder extends Seeder
      */
     public function run(): void
     {
-        if (Exchange::count() == 0) {
-            $colour = new \Console_Color2;
-            foreach (ccxt\Exchange::$exchanges as $exchange) {
-                $payload = [
-                    'name' => $exchange,
-                    'class' => $exchange,
-                    'config' => '{}',
-                ];
-                $newExchange = Exchange::create($payload);
-                echo $colour->convert($newExchange->name.'('.$newExchange->class.') => %B'.$newExchange->exchange_id.'%n').PHP_EOL;
+        $created = DB::transaction(function (): int {
+            $count = 0;
+            foreach (ccxt\Exchange::$exchanges as $id) {
+                // Restore missing catalogue entries; retain existing IDs, names and settings.
+                $exchange = Exchange::query()->firstOrCreate(['class' => $id], ['name' => $id, 'config' => '{}']);
+                $count += $exchange->wasRecentlyCreated ? 1 : 0;
             }
-        }
+
+            return $count;
+        });
+        // Invalidate after commit, including an old cached empty list on a no-op run.
+        Cache::forget(MarketCatalog::EXCHANGES_CACHE);
+        $this->command?->info("Added {$created} missing exchange entries. Existing exchange settings and all user data were preserved.");
     }
 }

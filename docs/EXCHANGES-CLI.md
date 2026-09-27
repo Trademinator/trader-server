@@ -11,7 +11,7 @@ php artisan trademinator:exchange edit kraken --config='{"timeout":30000}'
 php artisan trademinator:exchange delete kraken
 ```
 
-The seeder adds every CCXT exchange when the table is empty. `add` refuses an existing ID: use `edit` for a seeded exchange. To add an exchange again after deleting its record, run `php artisan trademinator:exchange add kraken --name=Kraken`. The command validates new IDs against the installed CCXT version.
+The R1 seeder adds missing CCXT exchanges in empty or partially populated tables, preserves existing IDs/names/settings and invalidates the cached choice list. Invoke it explicitly with `php artisan db:seed --class=ExchangeSeeder --force` only when the full catalogue is wanted. Adding only the exchanges you use is sufficient. `add` refuses an existing ID: use `edit` for a seeded exchange. To add an exchange again after deleting its record, run `php artisan trademinator:exchange add kraken --name=Kraken`. The command validates new IDs against the installed CCXT version. Neither operation restores lost users or subscriptions; see [M3 R1 recovery](M3-R1-RECOVERY.md).
 
 `--name` changes only the display name. `--config` replaces the complete settings object; use `{}` to clear it. Alternatively, pass `--config-file=/path/to/settings.json` to read a JSON object from a file. The settings are passed to CCXT when the exchange is used. `enableRateLimit` is always set to true by Trademinator. The command does not print the settings while listing or modifying exchanges.
 

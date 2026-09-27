@@ -20,8 +20,8 @@
         .market-panel h2, .market-list h2 { font-size: 1.15rem; font-weight: 750; }
         .market-row-scroll { overflow-x: auto; padding: 4px 2px 10px; }
         .market-form-row {
-            display: grid; min-width: 820px;
-            grid-template-columns: minmax(160px, 1.45fr) minmax(145px, 1.2fr) minmax(115px, .75fr) minmax(160px, 1fr) auto;
+            display: grid; min-width: 640px;
+            grid-template-columns: minmax(160px, 1.45fr) minmax(145px, 1.2fr) minmax(115px, .75fr) auto;
             align-items: end; gap: 12px;
         }
         .market-field { display: block; font-size: .86rem; font-weight: 700; }
@@ -89,21 +89,31 @@
             <p role="status" class="market-flash">{{ session('status') }}</p>
         @endif
 
+        <div class="market-panel">
+            <h2>Need help choosing pairs?</h2>
+            <p style="margin: 8px 0 14px">Answer a few optional questions to explore spot pairs that fit your holdings and preferences. You make the final choice.</p>
+            <a href="{{ route('markets.suggestions') }}" class="market-subscribe" style="display: inline-block">Help me choose pairs</a>
+        </div>
         <form method="POST" action="{{ route('markets.store') }}" class="market-panel">
             @csrf
             <h2>Add a market</h2>
+            @if ($catalogueError)
+                <p role="alert" class="market-feedback is-error">{{ $catalogueError }}</p>
+            @elseif ($exchanges === [])
+                <p role="status" class="market-feedback">No exchanges are available yet. Please contact the site administrator to configure an exchange.</p>
+            @endif
             <div class="market-row-scroll">
                 <div class="market-form-row">
                     <label class="market-field">Exchange
-                        <select id="market-exchange" name="exchange" required data-options-url="{{ route('markets.options', ['exchange' => '__EXCHANGE__']) }}" class="market-control">
+                        <select id="market-exchange" name="exchange" required @disabled($exchanges === []) data-options-url="{{ route('markets.options', ['exchange' => '__EXCHANGE__']) }}" class="market-control">
                             <option value="">Select an exchange</option>
                             @foreach ($exchanges as $choice)
-                                <option value="{{ $choice['value'] }}" @selected(old('exchange') === $choice['value'])>{{ $choice['label'] }}</option>
+                                <option value="{{ $choice['value'] }}" @selected(old('exchange', $prefillExchange) === $choice['value'])>{{ $choice['label'] }}{{ ($choice['access'] ?? null) === 'authentication_required' ? ' (API access required)' : '' }}</option>
                             @endforeach
                         </select>
                     </label>
                     <label class="market-field">Pair (base/quote)
-                        <select id="market-symbol" name="symbol" required disabled data-old-symbol="{{ old('symbol') }}" class="market-control">
+                        <select id="market-symbol" name="symbol" required disabled data-old-symbol="{{ old('symbol', $prefillSymbol) }}" class="market-control">
                             <option value="">Select an exchange first</option>
                         </select>
                     </label>
@@ -111,20 +121,15 @@
                         <span>Price tick size</span>
                         <output id="market-tick-size" for="market-symbol" class="market-output">—</output>
                     </div>
-                    <label class="market-field">Candle period
-                        <select id="market-periods" aria-describedby="market-period-help" class="market-control">
-                            <option value="auto">Automatic</option>
-                        </select>
-                    </label>
                     <button id="market-subscribe" type="submit" disabled class="market-subscribe">Subscribe</button>
                 </div>
             </div>
             <h3 class="market-explain-title">What these choices mean</h3>
-            <div class="market-explain" id="market-period-help">
-                <div class="exchange"><strong>Exchange</strong>The trading platform that supplies price data, such as Kraken.</div>
+            <div class="market-explain">
+                <div class="exchange"><strong>Exchange</strong>The trading platform that supplies price data, such as Kraken. Only exchanges with spot markets and supported candles are listed. Some require API credentials.</div>
                 <div class="pair"><strong>Pair</strong>In BTC/USDT, BTC is the asset and USDT is the currency used to price it.</div>
                 <div class="tick"><strong>Price tick size</strong>The smallest price step the exchange allows. A tick of 0.01 means prices move in steps of 0.01 of the second currency. It is a price amount, not a time interval.</div>
-                <div class="period"><strong>Candle period</strong>The time covered by each price candle, such as 15 minutes. Trademinator picks a suitable period automatically.</div>
+                <div class="period"><strong>Candle period</strong>The time covered by each price candle, such as 15 minutes. Trademinator selects it automatically based on candle quality and coverage. Everyone watching this exchange/pair shares the same period, shown under Your markets once selected.</div>
             </div>
             <p id="market-options-status" role="status" aria-live="polite" class="market-feedback"></p>
             @if ($errors->any())
@@ -179,7 +184,6 @@
             });
             const exchange = document.getElementById('market-exchange');
             const symbol = document.getElementById('market-symbol');
-            const periods = document.getElementById('market-periods');
             const tickSize = document.getElementById('market-tick-size');
             const subscribe = document.getElementById('market-subscribe');
             const status = document.getElementById('market-options-status');
@@ -191,7 +195,6 @@
             function reset(message) {
                 symbol.replaceChildren(new Option(message, ''));
                 symbol.disabled = true;
-                periods.replaceChildren(new Option('Automatic', 'auto'));
                 tickSize.textContent = '—';
                 subscribe.disabled = true;
                 hasPeriods = false;
@@ -218,16 +221,19 @@
                 try {
                     const url = exchange.dataset.optionsUrl.replace('__EXCHANGE__', encodeURIComponent(exchange.value));
                     const response = await fetch(url, { headers: { Accept: 'application/json' }, signal: current.signal });
-                    if (!response.ok) throw new Error('Could not load this exchange. Please try again.');
-                    const data = await response.json();
+                    const data = await response.json().catch(() => null);
+                    if (!response.ok || !data) {
+                        if (response.status === 401 || response.status === 419) {
+                            throw new Error('Your session expired. Please sign in again.');
+                        }
+                        const message = data?.message || 'The server could not load pairs. Please retry; if this continues, ask the administrator to check the server log and PHP memory limit.';
+                        throw new Error(message + (data?.reference ? ` Reference: ${data.reference}` : ''));
+                    }
+                    if (!Array.isArray(data.symbols) || !Array.isArray(data.periods)) {
+                        throw new Error('The server returned an invalid pair list. Please retry or contact the administrator.');
+                    }
                     if (request !== current) return;
                     hasPeriods = data.periods.length > 0;
-                    periods.replaceChildren(new Option('Automatic', 'auto'));
-                    for (const period of data.periods) {
-                        const option = new Option(period.label, period.value);
-                        option.disabled = true; // For reference; the shared feed chooses its own period.
-                        periods.add(option);
-                    }
                     symbol.replaceChildren(new Option(data.symbols.length ? 'Select a pair' : 'No spot pairs available', ''));
                     for (const market of data.symbols) {
                         const option = new Option(market.value, market.value);
@@ -243,6 +249,8 @@
                     if (!hasPeriods) {
                         status.classList.add('is-error');
                         status.textContent = 'This exchange does not provide a supported candle period.';
+                    } else if (data.symbols.length === 0) {
+                        status.textContent = 'The exchange responded successfully but returned no supported spot pairs.';
                     }
                 } catch (error) {
                     if (error.name === 'AbortError') return;

@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Domain\MarketData\MarketCatalogException;
 use App\Domain\MarketData\MarketSubscriptions;
 use App\Models\Exchange;
 use App\Models\Market;
@@ -30,8 +31,7 @@ final class ManageMarketSubscriptions extends Command
         $action = (string) $this->argument('action');
         if ($action === 'list') {
             $rows = MarketSubscription::query()->with('market.exchange')->where('user_id', $user->user_id)->get();
-            $this->table(['Exchange', 'Symbol', 'Tick size', 'Active'], $rows->map(fn (MarketSubscription $item): array =>
-                [$item->market->exchange->class, $item->market->symbol, $item->market->tick_size, $item->active ? 'yes' : 'no'])->all());
+            $this->table(['Exchange', 'Symbol', 'Tick size', 'Active'], $rows->map(fn (MarketSubscription $item): array => [$item->market->exchange->class, $item->market->symbol, $item->market->tick_size, $item->active ? 'yes' : 'no'])->all());
 
             return self::SUCCESS;
         }
@@ -64,7 +64,7 @@ final class ManageMarketSubscriptions extends Command
                 $subscriptions->unsubscribe($user, $market);
                 $this->info('Subscription inactive.');
             }
-        } catch (InvalidArgumentException $exception) {
+        } catch (InvalidArgumentException|MarketCatalogException $exception) {
             $this->error($exception->getMessage());
 
             return self::FAILURE;

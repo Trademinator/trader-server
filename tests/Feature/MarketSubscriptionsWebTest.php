@@ -1,5 +1,6 @@
 <?php
 
+use App\Domain\MarketData\ExchangeMetadata;
 use App\Models\Exchange;
 use App\Models\Market;
 use App\Models\MarketFeed;
@@ -24,16 +25,15 @@ it('requires sign in and restricts unsubscribe to the subscription owner', funct
 it('lets a signed-in user subscribe once to a configured market', function () {
     $user = User::factory()->create();
     $exchange = Exchange::query()->create(['name' => 'Demo', 'class' => 'kraken', 'config' => '{}']);
-    $repository = Mockery::mock(\App\Repositories\ExchangeRepository::class);
-    $repository->shouldReceive('setExchange')->times(3)->with(Mockery::type(Exchange::class));
+    $repository = Mockery::mock(ExchangeRepository::class);
+    $repository->shouldReceive('setExchange')->once()->with(Mockery::type(Exchange::class));
     $repository->shouldReceive('describe')->once()->andReturn([
         'name' => 'Kraken', 'timeframes' => ['1m' => '1m'], 'precisionMode' => \ccxt\TICK_SIZE,
     ]);
-    $repository->shouldReceive('periods')->twice()->andReturn(['1m' => '1m']);
-    $repository->shouldReceive('markets')->times(3)->andReturn([
+    $repository->shouldReceive('spotMarkets')->once()->andReturn([
         'BTC/USD' => ['spot' => true, 'precision' => ['price' => 0.01]],
     ]);
-    app()->instance(\App\Repositories\ExchangeRepository::class, $repository);
+    app()->instance(ExchangeRepository::class, $repository);
 
     $this->actingAs($user)->post(route('markets.store'), [
         'exchange' => 'kraken', 'symbol' => 'BTC/USD', 'tick_size' => '999',
@@ -54,13 +54,12 @@ it('groups subscriptions by exchange name with small logos and sorts pairs', fun
         MarketFeed::query()->create(['market_id' => $market->market_id, 'selected_period' => $period]);
         MarketSubscription::query()->create(['user_id' => $user->user_id, 'market_id' => $market->market_id, 'active' => true]);
     }
-    $repository = Mockery::mock(ExchangeRepository::class);
-    $repository->shouldReceive('setExchange')->twice();
-    $repository->shouldReceive('describe')->twice()->andReturn(
-        ['name' => 'Zeta Exchange', 'timeframes' => ['1m' => '1m'], 'urls' => ['logo' => 'https://example.com/zeta.png']],
-        ['name' => 'Alpha Exchange', 'timeframes' => ['1m' => '1m'], 'urls' => ['logo' => 'https://example.com/alpha.png']],
-    );
-    app()->instance(ExchangeRepository::class, $repository);
+    $metadata = Mockery::mock(ExchangeMetadata::class);
+    $metadata->shouldReceive('all')->once()->andReturn([
+        'coinbase' => ['name' => 'Zeta Exchange', 'access' => ['state' => 'public'], 'spot' => true, 'fetchOHLCV' => true, 'timeframes' => ['1m'], 'logo' => 'https://example.com/zeta.png'],
+        'kraken' => ['name' => 'Alpha Exchange', 'access' => ['state' => 'public'], 'spot' => true, 'fetchOHLCV' => true, 'timeframes' => ['1m'], 'logo' => 'https://example.com/alpha.png'],
+    ]);
+    app()->instance(ExchangeMetadata::class, $metadata);
 
     $response = $this->actingAs($user)->get(route('markets.index'))->assertOk();
     $list = explode('<h2>Your markets</h2>', $response->getContent(), 2)[1];

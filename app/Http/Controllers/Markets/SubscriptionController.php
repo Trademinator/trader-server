@@ -3,13 +3,14 @@
 namespace App\Http\Controllers\Markets;
 
 use App\Domain\MarketData\MarketCatalog;
+use App\Domain\MarketData\MarketCatalogException;
 use App\Domain\MarketData\MarketSubscriptions;
 use App\Http\Controllers\Controller;
 use App\Models\Exchange;
 use App\Models\MarketSubscription;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
 use Illuminate\View\View;
 use InvalidArgumentException;
 use Throwable;
@@ -18,7 +19,14 @@ final class SubscriptionController extends Controller
 {
     public function index(Request $request, MarketCatalog $catalog): View
     {
-        $exchanges = $catalog->exchanges();
+        $catalogueError = null;
+        try {
+            $exchanges = $catalog->exchanges();
+        } catch (Throwable $exception) {
+            $failure = MarketCatalogException::reportFailure($exception, 'exchange-list');
+            $catalogueError = $failure['message'].' Reference: '.$failure['reference'];
+            $exchanges = [];
+        }
         $exchangeChoices = collect($exchanges)->keyBy('value');
         $subscriptionGroups = MarketSubscription::query()->with('market.exchange', 'market.feed')
             ->where('user_id', $request->user()->user_id)->get()
@@ -31,18 +39,19 @@ final class SubscriptionController extends Controller
                     'exchange_id' => $exchange->exchange_id,
                     'name' => $choice['label'] ?? $exchange->name,
                     'logo_url' => $choice['logo_url'] ?? null,
-                    'subscriptions' => $items->sort(fn (MarketSubscription $a, MarketSubscription $b): int =>
-                        strcasecmp($a->market->symbol, $b->market->symbol)
+                    'subscriptions' => $items->sort(fn (MarketSubscription $a, MarketSubscription $b): int => strcasecmp($a->market->symbol, $b->market->symbol)
                         ?: strcasecmp($a->market->feed->selected_period ?? '', $b->market->feed->selected_period ?? '')
                         ?: strcmp($a->market_subscription_id, $b->market_subscription_id))->values(),
                 ];
             })
-            ->sort(fn (array $a, array $b): int =>
-                strcasecmp($a['name'], $b['name']) ?: strcmp($a['exchange_id'], $b['exchange_id']))->values();
+            ->sort(fn (array $a, array $b): int => strcasecmp($a['name'], $b['name']) ?: strcmp($a['exchange_id'], $b['exchange_id']))->values();
 
         return view('markets.index', [
             'exchanges' => $exchanges,
+            'catalogueError' => $catalogueError,
             'subscriptionGroups' => $subscriptionGroups,
+            'prefillExchange' => is_string($request->query('exchange')) ? $request->query('exchange') : '',
+            'prefillSymbol' => is_string($request->query('symbol')) ? $request->query('symbol') : '',
         ]);
     }
 
@@ -54,8 +63,9 @@ final class SubscriptionController extends Controller
         }
         try {
             return response()->json($catalog->forExchange($matches->first()));
-        } catch (Throwable) {
-            return response()->json(['message' => 'Could not load markets from this exchange. Please try again.'], 503);
+        } catch (Throwable $exception) {
+            return response()->json(MarketCatalogException::reportFailure($exception, $exchange),
+                MarketCatalogException::fromFailure($exception)->status);
         }
     }
 
@@ -71,16 +81,16 @@ final class SubscriptionController extends Controller
         }
         try {
             $tickSize = $catalog->tickSizeFor($matches->first(), $input['symbol']);
-        } catch (Throwable) {
-            return back()->withInput()->withErrors(['exchange' => 'Could not load this exchange right now. Please try again.']);
-        }
-        try {
             if ($tickSize === null) {
                 throw new InvalidArgumentException('This pair has no fixed price tick size available from CCXT.');
             }
-            $subscriptions->subscribe($request->user(), $matches->first(), $input['symbol'], $tickSize);
+            $subscriptions->subscribe($request->user(), $matches->first(), $input['symbol'], $tickSize, spotOnly: true);
         } catch (InvalidArgumentException $exception) {
             return back()->withInput()->withErrors(['symbol' => $exception->getMessage()]);
+        } catch (Throwable $exception) {
+            $failure = MarketCatalogException::reportFailure($exception, $input['exchange']);
+
+            return back()->withInput()->withErrors(['exchange' => $failure['message'].' Reference: '.$failure['reference']]);
         }
 
         return redirect()->route('markets.index')->with('status', 'Market subscription active.');

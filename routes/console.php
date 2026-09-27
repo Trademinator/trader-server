@@ -18,3 +18,7 @@ Schedule::command('trademinator:collect-market-context')
 
 Schedule::command('trademinator:dispatch-market-features')
     ->everyFiveMinutes()->onOneServer()->withoutOverlapping(5);
+
+// Every node has its own installed source and runtime metadata file. The command
+// uses a local file lock and a shared cache lock around database synchronization.
+Schedule::command('trademinator:refresh-exchanges')->dailyAt('03:20');

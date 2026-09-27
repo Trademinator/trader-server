@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Domain\MarketData\MarketCatalog;
 use App\Traits\HasUniqueIdentifier;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
@@ -13,8 +14,8 @@ class Exchange extends Model
     protected static function booted(): void
     {
         $invalidate = function (self $exchange): void {
-            Cache::forget('trademinator:market-catalog:exchanges:v2');
-            Cache::forget('trademinator:market-catalog:'.$exchange->exchange_id);
+            Cache::forget(MarketCatalog::EXCHANGES_CACHE);
+            Cache::forget(MarketCatalog::PAIRS_CACHE_PREFIX.$exchange->exchange_id);
         };
         static::saved($invalidate);
         static::deleted($invalidate);

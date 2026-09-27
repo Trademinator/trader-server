@@ -1,7 +1,8 @@
 <?php
 
-use App\Http\Controllers\Settings;
 use App\Http\Controllers\Markets\SubscriptionController;
+use App\Http\Controllers\Markets\SuggestionController;
+use App\Http\Controllers\Settings;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -14,6 +15,9 @@ Route::view('dashboard', 'dashboard')
 
 Route::middleware(['auth'])->group(function () {
     Route::get('markets', [SubscriptionController::class, 'index'])->name('markets.index');
+    Route::get('markets/suggestions', [SuggestionController::class, 'index'])->middleware('throttle:12,1')->name('markets.suggestions');
+    Route::put('markets/preferences', [SuggestionController::class, 'store'])->middleware('throttle:12,1')->name('markets.preferences.store');
+    Route::delete('markets/preferences', [SuggestionController::class, 'destroy'])->name('markets.preferences.destroy');
     Route::get('markets/options/{exchange}', [SubscriptionController::class, 'options'])
         ->middleware('throttle:30,1')->name('markets.options');
     Route::post('markets', [SubscriptionController::class, 'store'])->name('markets.store');

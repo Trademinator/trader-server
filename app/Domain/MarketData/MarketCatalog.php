@@ -6,80 +6,103 @@ use App\Models\Exchange;
 use App\Models\Market;
 use App\Repositories\ExchangeRepository;
 use Illuminate\Support\Facades\Cache;
-use Throwable;
 
 use function Trademinator\Time\periods_to_seconds;
 
 /** Read-only, cached CCXT choices for the market subscription form. */
 final class MarketCatalog
 {
-    public function __construct(private readonly ExchangeRepository $repository) {}
+    public const EXCHANGES_CACHE = 'trademinator:market-catalog:exchanges:v5';
+
+    public const PAIRS_CACHE_PREFIX = 'trademinator:market-catalog:spot:v5:';
+
+    public function __construct(private readonly ExchangeRepository $repository, private readonly ExchangeMetadata $metadata) {}
 
     /** @return list<array{value: string, label: string, logo_url: ?string}> */
     public function exchanges(): array
     {
-        return Cache::remember('trademinator:market-catalog:exchanges:v2', 3600, function (): array {
+        // Validate source before consulting a previously successful cache entry.
+        $descriptions = $this->metadata->all();
+        $revision = hash('sha256', json_encode($descriptions, JSON_THROW_ON_ERROR));
+        $cached = Cache::get(self::EXCHANGES_CACHE);
+        if (is_array($cached) && ($cached['revision'] ?? null) === $revision) {
+            return $cached['choices'];
+        }
+        $choices = (function () use ($descriptions): array {
             $choices = [];
             foreach (Exchange::query()->orderBy('class')->get()->groupBy('class') as $group) {
                 if ($group->count() !== 1) {
                     continue;
                 }
                 $exchange = $group->first();
-                try {
-                    $this->repository->setExchange($exchange);
-                    $description = $this->repository->describe();
-                    if (! array_intersect(array_keys($description['timeframes'] ?? []), CandleTimeframe::SUPPORTED)) {
-                        continue;
-                    }
-                    $choices[] = [
-                        'value' => $exchange->class,
-                        'label' => (string) (($description['name'] ?? null) ?: $exchange->name),
-                        'logo_url' => self::logoUrl(is_array($description['urls'] ?? null)
-                            ? ($description['urls']['logo'] ?? null) : null),
-                    ];
-                } catch (Throwable) {
-                    // A configured exchange may have been removed by a CCXT update.
+                $description = $descriptions[$exchange->class] ?? [];
+                if (! ExchangeMetadata::eligible($description)) {
                     continue;
                 }
+                $choices[] = [
+                    'value' => $exchange->class,
+                    'label' => (string) (($description['name'] ?? null) ?: $exchange->name),
+                    'logo_url' => self::logoUrl($description['logo'] ?? null),
+                    'access' => $description['access']['state'],
+                ];
             }
-            usort($choices, fn (array $a, array $b): int =>
-                strcasecmp($a['label'], $b['label']) ?: strcmp($a['value'], $b['value']));
+            usort($choices, fn (array $a, array $b): int => strcasecmp($a['label'], $b['label']) ?: strcmp($a['value'], $b['value']));
 
             return $choices;
-        });
+        })();
+        Cache::put(self::EXCHANGES_CACHE, ['revision' => $revision, 'choices' => $choices], 3600);
+
+        return $choices;
     }
 
     /** @return array{symbols: list<array{value: string, tick_size: ?string}>, periods: list<array{value: string, label: string}>} */
     public function forExchange(Exchange $exchange): array
     {
-        $options = Cache::remember('trademinator:market-catalog:'.$exchange->exchange_id, 300, function () use ($exchange): array {
-            $this->repository->setExchange($exchange);
-            $description = $this->repository->describe();
-            $periods = array_values(array_intersect(array_keys($description['timeframes'] ?? []), CandleTimeframe::SUPPORTED));
-            usort($periods, fn (string $a, string $b): int => periods_to_seconds($a) <=> periods_to_seconds($b));
-            $mode = $description['precisionMode'] ?? null;
-            $symbols = [];
-            if ($periods !== []) {
-                foreach ($this->repository->markets() as $symbol => $market) {
-                    if (! is_array($market) || ! is_string($symbol) || strlen($symbol) > 32
-                        || ! preg_match('/^[A-Z0-9._-]+\/[A-Z0-9._-]+$/D', $symbol)
-                        || ($market['spot'] ?? ($market['type'] ?? null) === 'spot') === false) {
-                        continue;
-                    }
-                    $symbols[] = [
-                        'value' => $symbol,
-                        'tick_size' => self::tickSize($market['precision']['price'] ?? null, $mode),
-                    ];
+        $entry = $this->metadata->assertUsable($exchange);
+        $revision = hash('sha256', json_encode($entry, JSON_THROW_ON_ERROR));
+        $key = self::PAIRS_CACHE_PREFIX.$exchange->exchange_id;
+        $cached = Cache::get($key);
+        if (! is_array($cached) || ($cached['revision'] ?? null) !== $revision) {
+            $options = (function () use ($exchange): array {
+                $this->repository->setExchange($exchange);
+                $description = $this->repository->describe();
+                $periods = array_values(array_intersect(array_keys($description['timeframes'] ?? []), CandleTimeframe::SUPPORTED));
+                if ($periods === []) {
+                    throw new MarketCatalogException('candles_unsupported',
+                        'This exchange does not provide a supported candle period.', 422);
                 }
-            }
-            usort($symbols, fn (array $a, array $b): int => strcmp($a['value'], $b['value']));
+                usort($periods, fn (string $a, string $b): int => periods_to_seconds($a) <=> periods_to_seconds($b));
+                $mode = $description['precisionMode'] ?? null;
+                $symbols = [];
+                if ($periods !== []) {
+                    foreach ($this->repository->spotMarkets() as $symbol => $market) {
+                        if (! is_array($market) || ! is_string($symbol) || strlen($symbol) > 32
+                            || ! preg_match('/^[A-Z0-9._-]+\/[A-Z0-9._-]+$/D', $symbol)
+                            || ($market['spot'] ?? ($market['type'] ?? null) === 'spot') === false
+                            || ($market['active'] ?? null) === false) {
+                            continue;
+                        }
+                        $symbols[] = [
+                            'value' => $symbol,
+                            'tick_size' => self::tickSize($market['precision']['price'] ?? null, $mode),
+                            'active' => is_bool($market['active'] ?? null) ? $market['active'] : null,
+                            'min_cost' => self::nonNegativeNumber($market['limits']['cost']['min'] ?? null),
+                            'min_amount' => self::nonNegativeNumber($market['limits']['amount']['min'] ?? null),
+                            'taker_fee' => self::nonNegativeNumber($market['taker'] ?? null),
+                        ];
+                    }
+                }
+                usort($symbols, fn (array $a, array $b): int => strcmp($a['value'], $b['value']));
 
-            return [
-                'symbols' => $symbols,
-                'periods' => array_map(fn (string $period): array =>
-                    ['value' => $period, 'label' => self::periodLabel($period)], $periods),
-            ];
-        });
+                return [
+                    'symbols' => $symbols,
+                    'periods' => array_map(fn (string $period): array => ['value' => $period, 'label' => self::periodLabel($period)], $periods),
+                ];
+            })();
+            Cache::put($key, ['revision' => $revision, 'options' => $options], 300);
+        } else {
+            $options = $cached['options'];
+        }
 
         // Existing subscriptions retain their persisted price increment even if
         // current CCXT metadata lacks precision for that symbol.
@@ -125,6 +148,11 @@ final class MarketCatalog
 
         return preg_match('/^\d{1,12}(?:\.\d{1,18})?$/D', $normalized) && (float) $normalized > 0
             ? $normalized : null;
+    }
+
+    private static function nonNegativeNumber(mixed $value): ?float
+    {
+        return is_numeric($value) && is_finite((float) $value) && (float) $value >= 0 ? (float) $value : null;
     }
 
     private static function logoUrl(mixed $url): ?string

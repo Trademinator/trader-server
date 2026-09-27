@@ -2,8 +2,9 @@
 
 namespace App\Repositories;
 
-use App\Models\Exchange;
 use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\MarketData\MarketCatalogException;
+use App\Models\Exchange;
 use ccxt;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\App;
@@ -27,14 +28,13 @@ class ExchangeRepository extends BaseRepository
     public function __construct(?Exchange $exchange = null)
     {
         parent::__construct();
+        $this->tickerRepository = new TickerRepository;
         $this->exchange = $exchange;
         if (! is_null($exchange)) {
             $this->setExchange($exchange);
         } else {
             $this->ccxtExchange = null;
         }
-
-        $this->tickerRepository = new TickerRepository;
     }
 
     public function describe(): array
@@ -175,6 +175,81 @@ class ExchangeRepository extends BaseRepository
     public function markets(): array
     {
         return $this->ccxtExchange->load_markets();
+    }
+
+    /** Read-only spot metadata, without load_markets' currency and market indexes. */
+    public function spotMarkets(): array
+    {
+        $client = $this->ccxtExchange;
+        $description = $client->describe();
+        if (($description['has']['spot'] ?? false) !== true) {
+            throw new MarketCatalogException('spot_unsupported',
+                'This exchange adapter does not offer spot pairs. This page currently supports spot markets only.', 422);
+        }
+        if (! ($description['has']['fetchOHLCV'] ?? false)) {
+            throw new MarketCatalogException('candles_unsupported',
+                'This exchange adapter does not offer the candle data required by this page.', 422);
+        }
+        // These settings affect this catalogue client only; persisted credentials,
+        // custom endpoints and the general CLI/collector market loader are retained.
+        $client->options['defaultType'] = 'spot';
+        $client->options['fetchCurrencies'] = false;
+        $client->options['loadAllOptions'] = false;
+        $types = $client->options['fetchMarkets']['types'] ?? null;
+        if (is_array($types)) {
+            foreach (['spot', 'SPOT'] as $spot) {
+                if (in_array($spot, $types, true)) {
+                    $client->options['fetchMarkets']['types'] = [$spot];
+                    break;
+                }
+            }
+        }
+        $params = [];
+        if ($client instanceof ccxt\binance) {
+            $client->options['fetchMarkets'] = ['types' => ['spot']];
+            $client->options['fetchMargins'] = false;
+            // Large permission sets are irrelevant to a read-only pair catalogue.
+            $params['showPermissionSets'] = false;
+        }
+        $result = [];
+        foreach ($this->spotMarketRows($params) as $market) {
+            $symbol = $market['symbol'] ?? null;
+            if (is_string($symbol) && ($market['spot'] ?? ($market['type'] ?? null) === 'spot') === true) {
+                $result[$symbol] = ['spot' => true, 'precision' => $market['precision'] ?? [],
+                    'active' => $market['active'] ?? null, 'limits' => $market['limits'] ?? [],
+                    'taker' => $market['taker'] ?? null];
+            }
+        }
+
+        return $result;
+    }
+
+    private function spotMarketRows(array $params): iterable
+    {
+        $client = $this->ccxtExchange;
+        try {
+            if ($client instanceof ccxt\binance) {
+                // CCXT fetch_markets retains thousands of full normalized market
+                // objects alongside the decoded response. Normalize one at a time
+                // with CCXT's own parser, retaining only the compact result above.
+                $response = $client->publicGetExchangeInfo($params);
+                if (! isset($response['symbols']) || ! is_array($response['symbols'])) {
+                    throw new \UnexpectedValueException('Missing spot symbols in exchange response.');
+                }
+                $client->options['crossMarginPairsData'] = [];
+                $client->options['isolatedMarginPairsData'] = [];
+                $client->last_http_response = null;
+                $client->last_json_response = null;
+                foreach ($response['symbols'] as $market) {
+                    yield $client->parse_market($market);
+                }
+            } else {
+                yield from $client->fetch_markets($params);
+            }
+        } finally {
+            $client->last_http_response = null;
+            $client->last_json_response = null;
+        }
     }
 
     /**

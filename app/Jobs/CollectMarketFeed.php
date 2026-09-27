@@ -4,6 +4,8 @@ namespace App\Jobs;
 
 use App\Domain\MarketData\CandlePeriodSelector;
 use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\MarketData\ExchangeMetadata;
+use App\Domain\MarketData\MarketCatalogException;
 use App\Domain\MarketData\MarketDataSynchronizer;
 use App\Models\MarketFeed;
 use App\Repositories\ExchangeRepository;
@@ -31,7 +33,7 @@ final class CollectMarketFeed implements ShouldQueue
     public function __construct(public readonly string $marketId, public readonly string $leaseToken) {}
 
     public function handle(CandlePeriodSelector $selector, ExchangeRepository $exchanges,
-        MarketDataSynchronizer $synchronizer, TickerRepository $tickers): void
+        MarketDataSynchronizer $synchronizer, TickerRepository $tickers, ExchangeMetadata $metadata): void
     {
         $lock = Cache::lock('trademinator:market-feed:'.$this->marketId, 720);
         if (! $lock->get()) {
@@ -51,6 +53,13 @@ final class CollectMarketFeed implements ShouldQueue
             }
             $market = $feed->market;
             $exchange = $market->exchange;
+            try {
+                $metadata->assertUsable($exchange, spotOnly: false);
+            } catch (MarketCatalogException $exception) {
+                $this->finish('blocked', now()->addHours(6), $exception->getMessage());
+
+                return;
+            }
             if ($feed->selected_period === null) {
                 $exchanges->setExchange($exchange);
                 $periods = array_values(array_intersect(

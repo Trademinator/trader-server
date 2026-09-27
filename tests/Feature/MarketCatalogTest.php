@@ -8,12 +8,12 @@ use App\Repositories\ExchangeRepository;
 it('offers readable exchange names, spot pairs and only supported periods', function () {
     $exchange = Exchange::query()->create(['name' => 'kraken', 'class' => 'kraken', 'config' => '{}']);
     $repository = Mockery::mock(ExchangeRepository::class);
-    $repository->shouldReceive('setExchange')->twice()->with(Mockery::type(Exchange::class));
-    $repository->shouldReceive('describe')->twice()->andReturn([
+    $repository->shouldReceive('setExchange')->once()->with(Mockery::type(Exchange::class));
+    $repository->shouldReceive('describe')->once()->andReturn([
         'name' => 'Kraken', 'timeframes' => ['15m' => '15m', '1m' => '1m', '9m' => '9m'],
         'precisionMode' => \ccxt\TICK_SIZE,
     ]);
-    $repository->shouldReceive('markets')->once()->andReturn([
+    $repository->shouldReceive('spotMarkets')->once()->andReturn([
         'BTC/USD' => ['spot' => true, 'precision' => ['price' => 0.01]],
         'ETH/USDT' => ['spot' => true, 'precision' => ['price' => 0.001]],
         'BTC/USD:USD' => ['spot' => false, 'precision' => ['price' => 0.1]],

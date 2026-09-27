@@ -17,7 +17,7 @@ M0 establishes the stable runtime, persistence, market-data shape, and test base
 - Trait helper calls use `$this->...` instead of undefined namespace functions.
 - Unfinished Dragonfly/Gravestone pattern routines are explicitly quarantined.
 - API-key request/model naming is consistently `api_key` / `current_api_key`.
-- GitHub Actions runs Pest with SQLite in-memory while local tests remain free to use `.env.testing` MariaDB settings.
+- GitHub Actions and local tests use SQLite in-memory exclusively. M3 R1 adds a mandatory pre-provider guard that prevents inheriting persistent deployment database settings; see [M3-R1-RECOVERY.md](M3-R1-RECOVERY.md).
 
 ## After applying
 
