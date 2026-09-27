@@ -518,23 +518,39 @@ trait Technical
         $t = end($tickers);
 
         if (! array_key_exists($key, $t)) {
+            $sum = '0';
             $buffer = [];
+            $position = 0;
+            $window_size = 0;
+
             reset($tickers);
-            foreach ($tickers as &$h) {      // Last element is the most rescent
-                array_push($buffer, $h[$index]);
-                if (count($buffer) > $period) {
-                    array_shift($buffer);
+            foreach ($tickers as &$h) {      // Last element is the most recent
+                $value = $h[$index];
+
+                if ($window_size < $period) {
+                    $buffer[$window_size] = $value;
+                    $window_size++;
+                } else {
+                    $sum = bcsub($sum, $buffer[$position], EXCHANGE_ROUND_DECIMALS);
+                    $buffer[$position] = $value;
+                    $position = ($position + 1) % $period;
                 }
-                $sum = 0;
-                foreach ($buffer as &$b) {
-                    $sum = bcadd($this->bcconv($sum), $b, EXCHANGE_ROUND_DECIMALS);
-                }
-                $period2 = count($buffer);
-                $h[$key] = bcdiv($sum, $this->bcconv($period2), EXCHANGE_ROUND_DECIMALS);
+
+                $sum = bcadd($sum, $value, EXCHANGE_ROUND_DECIMALS);
+                $h[$key] = bcdiv($sum, (string) $window_size, EXCHANGE_ROUND_DECIMALS);
+
                 if ($debug) {
-                    echo "sma($period, $index) = sum(".implode(',', $buffer).")/$period2 = $sum/$period2 = ".$h[$key].PHP_EOL;
+                    $debug_buffer = ($window_size < $period || $position === 0)
+                        ? $buffer
+                        : array_merge(
+                            array_slice($buffer, $position),
+                            array_slice($buffer, 0, $position)
+                        );
+
+                    echo "sma($period, $index) = sum(".implode(',', $debug_buffer).")/$window_size = $sum/$window_size = ".$h[$key].PHP_EOL;
                 }
             }
+            unset($h);
         }
 
         return $key;

@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Markets\SubscriptionController;
 use App\Http\Controllers\Markets\SuggestionController;
+use App\Http\Controllers\Markets\SuggestionReviewController;
 use App\Http\Controllers\Settings;
 use Illuminate\Support\Facades\Route;
 
@@ -16,6 +17,7 @@ Route::view('dashboard', 'dashboard')
 Route::middleware(['auth'])->group(function () {
     Route::get('markets', [SubscriptionController::class, 'index'])->name('markets.index');
     Route::get('markets/suggestions', [SuggestionController::class, 'index'])->middleware('throttle:12,1')->name('markets.suggestions');
+    Route::get('markets/suggestions/review', [SuggestionReviewController::class, 'show'])->middleware('throttle:12,1')->name('markets.suggestions.review');
     Route::put('markets/preferences', [SuggestionController::class, 'store'])->middleware('throttle:12,1')->name('markets.preferences.store');
     Route::delete('markets/preferences', [SuggestionController::class, 'destroy'])->name('markets.preferences.destroy');
     Route::get('markets/options/{exchange}', [SubscriptionController::class, 'options'])

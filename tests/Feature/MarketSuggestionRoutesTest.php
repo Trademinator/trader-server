@@ -1,11 +1,13 @@
 <?php
 
+use App\Domain\MarketSuggestions\Questionnaire;
 use App\Models\Exchange;
 use App\Models\Market;
 use App\Models\MarketSubscription;
 use App\Models\User;
 use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\ViewErrorBag;
 
 it('keeps market management available when a compiled deployment route table lacks suggestion routes', function (string $missing) {
     $user = User::factory()->create();
@@ -31,3 +33,27 @@ it('keeps market management available when a compiled deployment route table lac
     $this->delete(route('markets.destroy', $subscription->market_subscription_id))->assertRedirect(route('markets.index'));
     expect($subscription->fresh()->active)->toBeFalse();
 })->with(['markets.suggestions', 'markets.preferences.store', 'markets.preferences.destroy', 'all']);
+
+it('keeps suggestions readable when a stale route cache has no detailed review route', function () {
+    $routes = new RouteCollection;
+    foreach (app('router')->getRoutes() as $route) {
+        if ($route->getName() !== 'markets.suggestions.review') {
+            $routes->add($route);
+        }
+    }
+    app('router')->setCompiledRoutes($routes->compile());
+    app('url')->setRoutes(app('router')->getRoutes());
+    $data = [
+        'answers' => Questionnaire::defaults(), 'hasProfile' => false, 'errors' => new ViewErrorBag,
+        'exchanges' => [], 'choices' => Questionnaire::choices(),
+        'bands' => Questionnaire::BANDS, 'countries' => [], 'provinces' => [],
+        'failure' => null, 'results' => ['generated_at' => '2026-09-27 00:00 UTC',
+            'access' => ['message' => 'Unverified', 'source' => null], 'items' => [
+                ['symbol' => 'BTC/CAD', 'explore' => true, 'reasons' => [], 'cautions' => [],
+                    'evidence' => ['known' => false], 'subscribed' => false],
+            ], 'notes' => [], 'excluded' => [], 'catalogue_count' => 1, 'considered' => 1],
+    ];
+    $this->actingAs(User::factory()->create());
+
+    $this->view('markets.suggestions', $data)->assertSee('Detailed pair reviews are temporarily unavailable')->assertSee('BTC/CAD');
+});

@@ -12,7 +12,7 @@ final class PairSuggestions
 {
     public function __construct(private MarketCatalog $catalog, private RegionalAccess $access, private CandleEvidence $evidence) {}
 
-    public function suggest(User $user, array $answers, Exchange $exchange): array
+    public function suggest(User $user, array $answers, Exchange $exchange, ?string $reviewSymbol = null): array
     {
         $access = $this->access->check($answers);
         $result = ['items' => [], 'excluded' => [], 'notes' => [], 'access' => $access, 'considered' => 0,
@@ -81,9 +81,18 @@ final class PairSuggestions
                 continue;
             }
             $direct = (bool) array_intersect([$base, $quote], $held);
-            $score = ($direct ? 40 : 0) + (in_array($quote, $held, true) ? 20 : 0)
-                + (in_array($base, $held, true) ? 10 : 0) + ($quote === $target ? 30 : ($base === $target ? 20 : 0));
-            $candidates[] = $option + ['base' => $base, 'quote' => $quote, 'score' => $score, 'direct' => $direct];
+            $breakdown = [
+                ['label' => 'Direct funding', 'points' => $direct ? 40 : 0, 'maximum' => 40,
+                    'rule' => '40 points when you hold either asset on this exchange.'],
+                ['label' => 'Quote asset held', 'points' => in_array($quote, $held, true) ? 20 : 0, 'maximum' => 20,
+                    'rule' => '20 points when you hold '.$quote.', which can fund a spot purchase of '.$base.'.'],
+                ['label' => 'Base asset held', 'points' => in_array($base, $held, true) ? 10 : 0, 'maximum' => 10,
+                    'rule' => '10 points when you hold '.$base.', which can fund a spot sale for '.$quote.'.'],
+                ['label' => 'Goal currency match', 'points' => $quote === $target ? 30 : ($base === $target ? 20 : 0), 'maximum' => 30,
+                    'rule' => '30 points if the quote is '.$target.'; otherwise 20 if the base is '.$target.'; otherwise 0.'],
+            ];
+            $candidates[] = $option + ['base' => $base, 'quote' => $quote, 'score' => array_sum(array_column($breakdown, 'points')),
+                'score_breakdown' => $breakdown, 'direct' => $direct];
         }
         usort($candidates, fn ($a, $b) => ($b['score'] <=> $a['score']) ?: strcmp($a['value'], $b['value']));
         $limit = max(1, min(50, (int) config('market_suggestions.candidate_limit', 24)));
@@ -102,7 +111,7 @@ final class PairSuggestions
             $quote = $candidate['quote'];
             $market = $markets->get($symbol);
             $evidence = $this->evidence->inspect($exchange->class, $symbol, $market?->feed?->selected_period,
-                $answers['horizon'], $target === $base);
+                $answers['horizon'], $target === $base, $symbol === $reviewSymbol);
             $riskLimit = (float) config('market_suggestions.risk_limits.'.$answers['risk'], 0.10);
             if ($answers['experience'] === 'new') {
                 $riskLimit = min($riskLimit, 0.10);
@@ -175,13 +184,34 @@ final class PairSuggestions
             if ($answers['experience'] === 'new') {
                 $cautions[] = 'Beginner screening uses a 10% historical swing threshold. It does not cap future losses.';
             }
-            $explore = ! $access['verified'] || ! $answers['access_confirmed'] || ! $evidence['known']
-                || ! $candidate['direct'] || ($candidate['active'] ?? null) !== true || $answers['goal'] === 'learn'
-                || $answers['loss_impact'] !== 'no' || $answers['risk'] === 'unsure' || $answers['horizon'] === 'unsure'
-                || $answers['money_needed'] === 'unsure' || $answers['allocation'] === 'unsure';
+            $explorationReasons = [];
+            foreach ([
+                [! $access['verified'], 'No current independent regional access review is available.'],
+                [! $answers['access_confirmed'], 'You have not confirmed access to this exchange.'],
+                [! $evidence['known'], $evidence['message']],
+                [! $candidate['direct'], 'Direct funding from a stated holding is not established.'],
+                [($candidate['active'] ?? null) !== true, 'The exchange has not explicitly confirmed this market is active.'],
+                [$answers['goal'] === 'learn', 'Your goal is learning and following markets.'],
+                [$answers['loss_impact'] !== 'no', 'You have not ruled out an impact on essential expenses.'],
+                [$answers['risk'] === 'unsure', 'Your risk preference is not yet specified.'],
+                [$answers['horizon'] === 'unsure', 'Your holding horizon is not yet specified.'],
+                [$answers['money_needed'] === 'unsure', 'When you might need the money is unknown.'],
+                [$answers['allocation'] === 'unsure', 'Your intended allocation range is unknown.'],
+            ] as [$applies, $explanation]) {
+                if ($applies) {
+                    $explorationReasons[] = $explanation;
+                }
+            }
+            $explore = $explorationReasons !== [];
             $result['items'][] = ['symbol' => $symbol, 'base' => $base, 'quote' => $quote, 'reasons' => $reasons,
                 'cautions' => $cautions, 'evidence' => $evidence, 'explore' => $explore,
                 'score' => $candidate['score'], 'risk_currency' => $target === $base ? $base : $quote,
+                'score_breakdown' => $candidate['score_breakdown'], 'exploration_reasons' => $explorationReasons,
+                'risk_limit' => $riskLimit, 'target' => $target, 'direct' => $candidate['direct'],
+                'market_details' => ['tick_size' => $candidate['tick_size'], 'active' => $candidate['active'] ?? null,
+                    'min_cost' => $candidate['min_cost'] ?? null, 'min_amount' => $candidate['min_amount'] ?? null,
+                    'indicative_min_cost' => $minCost, 'taker_fee' => $fee, 'allocation_cap' => $allocationMax,
+                    'affordability_checked' => $quote === $answers['reference_currency'] && $allocationMax !== null && $minCost !== null],
                 'subscribed' => $market !== null && in_array($market->market_id, $subscribed, true)];
         }
         usort($result['items'], fn ($a, $b) => ($a['explore'] <=> $b['explore']) ?: ($b['score'] <=> $a['score']) ?: strcmp($a['symbol'], $b['symbol']));

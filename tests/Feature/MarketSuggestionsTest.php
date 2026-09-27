@@ -128,14 +128,20 @@ it('shows funding matches as exploratory when history or regional evidence is mi
     expect(Market::query()->count())->toBe(0)->and(MarketSubscription::query()->count())->toBe(0);
 });
 
-it('opens a prefilled review and only subscribes after explicit confirmation', function () {
+it('opens a detailed review and subscribes directly only after explicit confirmation', function () {
     suggestionExchange();
     $user = User::factory()->create();
     saveSuggestionAnswers($user);
-    $this->actingAs($user)->get(route('markets.index', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD']))->assertOk()->assertSee('data-old-symbol="BTC/CAD"', false)->assertSee('Help me choose pairs');
+    $reviewUrl = route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD']);
+    $this->actingAs($user)->get(route('markets.suggestions', ['show' => 1]))->assertSee(e($reviewUrl), false);
+    $this->get($reviewUrl)->assertOk()->assertSee('Exactly how your score is calculated')
+        ->assertSee('Subscribe to BTC/CAD')->assertSee('action="'.route('markets.store').'"', false)
+        ->assertSee('name="exchange" value="kraken"', false)->assertSee('name="symbol" value="BTC/CAD"', false)
+        ->assertSee('name="_token"', false)->assertHeader('Cache-Control', 'no-store, private');
     expect(MarketSubscription::query()->count())->toBe(0);
     $this->post(route('markets.store'), ['exchange' => 'kraken', 'symbol' => 'BTC/CAD'])->assertRedirect(route('markets.index'));
-    $this->get(route('markets.suggestions', ['show' => 1]))->assertOk()->assertSee('Already subscribed')->assertDontSee('Review BTC/CAD');
+    $this->get(route('markets.suggestions', ['show' => 1]))->assertOk()->assertSee('Already subscribed')->assertSee('Review BTC/CAD');
+    $this->get($reviewUrl)->assertOk()->assertSee('Already subscribed')->assertDontSee('Subscribe to BTC/CAD');
     expect(MarketSubscription::query()->count())->toBe(1);
 });
 
@@ -278,4 +284,155 @@ it('does not use a stale short history to convert minimum amount into order cost
     Ticker::query()->orderBy('microtimestamp')->limit(50)->get()->each->delete();
     $evidence = app(CandleEvidence::class)->inspect('kraken', 'BTC/CAD', '1d', 'days');
     expect($evidence['known'])->toBeFalse()->and($evidence['last_close'])->toBeNull();
+});
+
+it('requires authentication and uses only the signed in users review preferences', function () {
+    suggestionExchange();
+    $owner = User::factory()->create();
+    saveSuggestionAnswers($owner);
+    $url = route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD', 'user_id' => $owner->user_id]);
+
+    $this->get($url)->assertRedirect(route('login'));
+    $this->getJson($url)->assertUnauthorized();
+    $this->actingAs(User::factory()->create())->get($url)->assertRedirect(route('markets.suggestions'));
+    $this->getJson($url)->assertStatus(409)->assertJsonPath('message', 'Your saved preferences are no longer available. Return to pair suggestions.');
+    $this->assertDatabaseCount('market_subscriptions', 0);
+});
+
+it('explains the exact points without making them a profit or confidence estimate', function (array $changes, int $score, array $points) {
+    suggestionExchange();
+    $user = User::factory()->create();
+    saveSuggestionAnswers($user, $changes);
+
+    $response = $this->actingAs($user)->get(route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD']))
+        ->assertOk()->assertSee('KNN confidence score')->assertSee('Unknown')->assertSee('Explore only');
+
+    expect($response->viewData('item')['score'])->toBe($score);
+    expect(array_column($response->viewData('item')['score_breakdown'], 'points'))->toBe($points);
+    expect($response->viewData('item')['evidence']['series'])->toBeEmpty();
+    $this->assertDatabaseCount('market_feeds', 0);
+})->with([
+    'both held' => [[], 100, [40, 20, 10, 30]],
+    'quote held' => [['holdings' => [['asset' => 'CAD', 'band' => '100_500']]], 90, [40, 20, 0, 30]],
+    'base held' => [['holdings' => [['asset' => 'BTC', 'band' => '100_500']]], 80, [40, 0, 10, 30]],
+    'holdings unknown' => [['holdings' => []], 30, [0, 0, 0, 30]],
+    'accumulate base' => [['goal' => 'accumulate', 'target_asset' => 'BTC'], 90, [40, 20, 10, 20]],
+]);
+
+it('returns only the reviewed pairs valid closed candles and rechecks fresh history on refresh', function () {
+    $this->freezeTime();
+    suggestionExchange();
+    suggestionHistory();
+    suggestionHistory('ETH/CAD');
+    $user = User::factory()->create();
+    saveSuggestionAnswers($user);
+    currentRegionalReview();
+    $timestamp = now()->startOfDay()->getTimestamp() * 1000;
+    Ticker::query()->create(['exchange' => 'kraken', 'symbol' => 'BTC/CAD', 'period' => '1d', 'microtimestamp' => $timestamp,
+        'payload' => json_encode(['open' => 102, 'high' => 103, 'low' => 101, 'close' => 102, 'volume' => 123])]);
+    $url = route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD']);
+
+    $response = $this->actingAs($user)->getJson($url)->assertOk()->assertHeader('Cache-Control', 'no-store, private')
+        ->assertJsonPath('symbol', 'BTC/CAD')->assertJsonPath('evidence.known', true)
+        ->assertJsonCount(60, 'evidence.series')->assertJsonMissingPath('answers');
+
+    $series = $response->json('evidence.series');
+    expect($series[0]['time'])->toBe(now()->startOfDay()->subDays(60)->getTimestamp());
+    expect($series[59]['time'])->toBe(now()->startOfDay()->subDay()->getTimestamp());
+    expect($series[59]['close'])->toBe(101);
+    $this->travel(1)->days();
+    $this->getJson($url)->assertOk()->assertJsonCount(61, 'evidence.series')->assertJsonPath('evidence.series.60.close', 102);
+    $this->assertDatabaseCount('market_subscriptions', 0);
+    $this->assertDatabaseCount('market_feeds', 0);
+});
+
+it('shows risk units formulas and the effective holding window from the same evidence', function () {
+    $this->freezeTime();
+    suggestionExchange();
+    suggestionHistory();
+    currentRegionalReview();
+    $user = User::factory()->create();
+    saveSuggestionAnswers($user, ['goal' => 'accumulate', 'target_asset' => 'BTC']);
+
+    $response = $this->actingAs($user)->get(route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD']))
+        ->assertOk()->assertSee('Inverse price measurement')->assertSee('BTC per CAD')->assertSee('CAD per BTC')
+        ->assertSee('3 × 1d = 72 hours')->assertSee('1.00%');
+
+    $evidence = $response->viewData('item')['evidence'];
+    expect($evidence['inverse'])->toBeTrue();
+    expect($evidence['series'][0]['close'])->toBe(100.0);
+    expect($evidence['drawdown'])->toEqualWithDelta(1 / 101, 0.000000001);
+});
+
+it('does not present stale gapped or corrupt chart history as usable risk evidence', function (string $kind, int $count, string $message) {
+    $this->freezeTime();
+    suggestionExchange();
+    suggestionHistory(age: $kind === 'stale' ? 10 : 0);
+    if ($kind === 'gap') {
+        Ticker::query()->orderBy('microtimestamp')->skip(20)->first()->delete();
+    }
+    if ($kind === 'corrupt') {
+        Ticker::query()->orderByDesc('microtimestamp')->first()->update(['payload' => '{"close":0}']);
+    }
+    $user = User::factory()->create();
+    saveSuggestionAnswers($user);
+
+    $this->actingAs($user)->getJson(route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD']))
+        ->assertOk()->assertJsonPath('evidence.known', false)->assertJsonPath('evidence.message', $message)
+        ->assertJsonCount($count, 'evidence.series');
+})->with([
+    ['stale', 60, 'Stored price history is stale.'],
+    ['gap', 59, 'Stored price history has gaps.'],
+    ['corrupt', 0, 'Stored candles contain invalid data.'],
+]);
+
+it('refuses obsolete or invented shortlist links and never offers subscription on those reviews', function (array $changes, string $symbol) {
+    suggestionExchange();
+    $user = User::factory()->create();
+    saveSuggestionAnswers($user, $changes);
+    $url = route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => $symbol]);
+
+    $this->actingAs($user)->get($url)->assertStatus(409)->assertSee('no longer in your current shortlist')->assertDontSee('data-review-subscribe', false);
+    $this->getJson($url)->assertStatus(409)->assertJsonMissingPath('evidence');
+    $this->assertDatabaseCount('market_subscriptions', 0);
+})->with([
+    'pair removed by new answer' => [['excluded_assets' => 'BTC'], 'BTC/CAD'],
+    'essential expenses change' => [['loss_impact' => 'yes'], 'BTC/CAD'],
+    'unknown pair' => [[], 'FAKE/CAD'],
+]);
+
+it('rejects a different exchange and invalid review identifiers', function () {
+    suggestionExchange();
+    $user = User::factory()->create();
+    saveSuggestionAnswers($user);
+
+    $this->actingAs($user)->getJson(route('markets.suggestions.review', ['exchange' => 'bitso', 'symbol' => 'BTC/CAD']))->assertNotFound();
+    $this->getJson(route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => ['BTC/CAD']]))
+        ->assertUnprocessable()->assertJsonValidationErrors('symbol');
+    $this->getJson(route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => '<script>alert(1)</script>']))
+        ->assertUnprocessable()->assertJsonValidationErrors('symbol');
+});
+
+it('shows a readable review failure when catalogue loading fails', function () {
+    Exchange::query()->create(['name' => 'Kraken', 'class' => 'kraken', 'config' => '{}']);
+    $repository = Mockery::mock(ExchangeRepository::class);
+    $repository->shouldReceive('setExchange')->andThrow(new RuntimeException('fixture outage'));
+    app()->instance(ExchangeRepository::class, $repository);
+    $user = User::factory()->create();
+    saveSuggestionAnswers($user);
+    $url = route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD']);
+
+    $this->actingAs($user)->get($url)->assertStatus(503)->assertSee('Pair review unavailable')->assertSee('Reference:')->assertDontSee('fixture outage')->assertDontSee('data-review-subscribe', false);
+    $this->getJson($url)->assertStatus(503)->assertJsonMissingPath('evidence');
+    $this->assertDatabaseCount('market_subscriptions', 0);
+});
+
+it('escapes exchange names and never renders saved answers as executable markup', function () {
+    $exchange = suggestionExchange();
+    $exchange->update(['name' => '<script>alert(42)</script>']);
+    $user = User::factory()->create();
+    saveSuggestionAnswers($user);
+
+    $this->actingAs($user)->get(route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD']))
+        ->assertOk()->assertSee('&lt;script&gt;alert(42)&lt;/script&gt;', false)->assertDontSee('<script>alert(42)</script>', false);
 });

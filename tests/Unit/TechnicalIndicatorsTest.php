@@ -35,6 +35,30 @@ function m0Technical(): object
     };
 }
 
+it('keeps SMA warm-up and rolling-window precision', function () {
+    $candles = [];
+    foreach ([
+        '1.00000000',
+        '-0.50000000',
+        '2.25000000',
+        '-1.75000000',
+        '4.00000000',
+    ] as $value) {
+        $candles[] = ['signal' => $value];
+    }
+
+    $key = m0Technical()->sma($candles, 3, 'signal');
+
+    expect($key)->toBe('sma(3,signal)')
+        ->and(array_column($candles, $key))->toBe([
+            '1.00000000',
+            '0.25000000',
+            '0.91666666',
+            '0.00000000',
+            '1.50000000',
+        ]);
+});
+
 it('computes CCI with mean absolute deviation and protects a zero denominator', function () {
     $candles = array_fill(0, 30, [
         'microtimestamp' => 1_700_000_000_000,

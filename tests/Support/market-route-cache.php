@@ -19,7 +19,7 @@ $directory = dirname($cache);
 if (! is_dir($directory)) {
     mkdir($directory, 0700, true);
 }
-$names = ['markets.suggestions', 'markets.preferences.store', 'markets.preferences.destroy'];
+$names = ['markets.suggestions', 'markets.suggestions.review', 'markets.preferences.store', 'markets.preferences.destroy'];
 try {
     $old = new RouteCollection;
     foreach ($app['router']->getRoutes() as $route) {
