@@ -37,30 +37,50 @@ trait Bc
         return ltrim((string) $number, '-');
     }
 
+    /** Expand numeric input into a BCMath decimal without float-rounding strings. */
     public function bcconv($number): string
     {
-        if (! is_numeric($number)) {
-            throw new InvalidArgumentException('bcconv expects a numeric value.');
+        if (is_float($number)) {
+            if (! is_finite($number)) {
+                throw new InvalidArgumentException('bcconv expects a finite numeric value.');
+            }
+            $precision = ini_get('serialize_precision');
+            try {
+                ini_set('serialize_precision', '-1');
+                $number = json_encode($number, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
+            } finally {
+                ini_set('serialize_precision', $precision);
+            }
         }
-
-        $value = (float) $number;
-        if (! is_finite($value)) {
+        if ((! is_int($number) && ! is_string($number))
+            || ! preg_match('/^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/D', (string) $number, $parts)
+            || (($parts[2] ?? '') === '' && ($parts[3] ?? '') === '')) {
             throw new InvalidArgumentException('bcconv expects a finite numeric value.');
         }
-
-        if ($value == 0.0) {
-            return '0';
+        $integer = $parts[2] === '' ? '0' : $parts[2];
+        $fraction = $parts[3] ?? '';
+        $exponent = $parts[4] ?? '0';
+        if (strlen(ltrim($exponent, '+-0')) > 4 || abs((int) $exponent) > 4096
+            || strlen($integer) + strlen($fraction) > 4096) {
+            throw new InvalidArgumentException('bcconv input exceeds the supported decimal length.');
         }
-
-        $precision = max(1, (int) ini_get('precision'));
-        $decimals = max(0, $precision - (int) floor(log10(abs($value))) - 1);
-        $formatted = number_format($value, $decimals, '.', '');
-
-        if (str_contains($formatted, '.')) {
-            $formatted = rtrim(rtrim($formatted, '0'), '.');
+        $digits = $integer.$fraction;
+        $point = strlen($integer) + (int) $exponent;
+        if ($point <= 0) {
+            $integer = '0';
+            $fraction = str_repeat('0', -$point).$digits;
+        } elseif ($point >= strlen($digits)) {
+            $integer = $digits.str_repeat('0', $point - strlen($digits));
+            $fraction = '';
+        } else {
+            $integer = substr($digits, 0, $point);
+            $fraction = substr($digits, $point);
         }
+        $integer = ltrim($integer, '0');
+        $integer = $integer === '' ? '0' : $integer;
+        $sign = $parts[1] === '-' && trim($integer.$fraction, '0') !== '' ? '-' : '';
 
-        return $formatted === '-0' ? '0' : $formatted;
+        return $sign.$integer.($fraction !== '' ? '.'.$fraction : '');
     }
 
     public function bcmax(...$values): string|false

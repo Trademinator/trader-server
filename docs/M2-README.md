@@ -6,8 +6,9 @@ M2 converts M1's stored, completed exchange candles into versioned feature vecto
 
 ## Install
 
-This patch is based on repository commit `038cef67643e6570917fd05c31eb3bcb63b27bbb`.
-Apply the files from the archive at the repository root (review changes first if your checkout has newer edits).
+The original M2 implementation started at commit `038cef67643e6570917fd05c31eb3bcb63b27bbb`. The current ticker-slice source archive is based on GitHub commit `f41a9de8dc338564fed0535fbb16aaa4dee32f05` (2026-09-28), including the newly added `TickerManipulation` trait and the earlier market-review/UI changes.
+
+For an existing installation, extract into a staging directory first. Preserve the deployed `.env`, `APP_KEY`, database, dependencies and runtime `storage/` contents. This update adds no migration, dependency version, cron entry or daemon. The existing compiled frontend assets are included unchanged. The commands below describe general M2 setup, not a request to reset a database.
 
 ```bash
 composer install
@@ -56,12 +57,12 @@ Endpoints and authentication are based on the official CoinGecko API endpoints a
 
 ## Data contract
 
-`market_features` has a unique `(exchange, symbol, period, microtimestamp, version)` key. `App\Models\MarketFeature` exposes the JSON `payload` as an array. Repeated builds update the same rows and preserve their UUIDs. `market_context_snapshots` stores append-only observed context, provider timestamps in the payload, and UUID references from feature rows. Source candle decimal strings remain unchanged; indicator calculations use double precision and are not execution prices.
+`market_features` has a unique `(exchange, symbol, period, microtimestamp, version)` key. `App\Models\MarketFeature` exposes the JSON `payload` as an array. Repeated builds update the same rows and preserve their UUIDs. `market_context_snapshots` stores append-only observed context, provider timestamps in the payload, and UUID references from feature rows. Source candle decimal strings remain unchanged. Technical indicators use BCMath at their explicit calculation scales and are stored as decimal strings; conversion to floating point occurs at the existing ML/context boundary, including bounded `tanh` normalization, not inside the indicator recurrences. Identical results require the same trait version, parameters, decimal-scale setting and candle history.
 
 Each feature payload contains:
 
-- `version`: `m2-v2`, identifying the trait-backed formulas, ordering, and normalization.
-- Existing `m2-v1` rows may coexist in `market_features`; M2/M3 queries select `FeatureEngine::VERSION`, so rebuilding creates the new `m2-v2` rows without rewriting the historical v1 contract.
+- `version`: `m2-v3`, identifying the batch-trait formulas, ordering and normalization. The corrected SMA working sum now retains input precision until its published result is truncated.
+- Existing `m2-v1` and `m2-v2` rows may coexist in `market_features`; M2/M3 queries select `FeatureEngine::VERSION`. Rebuilding creates `m2-v3` rows without rewriting the older contracts. Existing frozen datasets stay unchanged; build new datasets for the new version.
 - `microtimestamp`: candle opening time in milliseconds; `available_at_ms`: candle closing time.
 - `history_start_ms`: beginning of the uninterrupted candle segment used to seed calculations.
 - `indicators`: named raw technical indicator values, with `null` during warm-up. Trait-backed decimal results are stored as decimal strings so BCMath precision is not lost before normalization.
@@ -99,7 +100,48 @@ Signed bounded normalization is `B(x,s) = 0.5 + 0.5*tanh(x/s)`. Zero change is 0
 | `context.circulating_fraction` | Circulating supply / max supply; unknown/uncapped max supply stays null |
 | `context.volume_share` | Coin volume / global volume in the same currency; liquidity/activity proxy, not order-book depth |
 
-Ratios representing fractions are clamped to `[0,1]`. The `Technical` trait is the single source of truth for OHLCV-derived mathematics. FeatureEngine uses the same incremental BCMath primitives as the public batch indicator APIs, so the Server and future Trademinator Client package cannot silently diverge in EMA, RSI, Stochastic RSI, CCI, ATRP, returns, volume activity or candle geometry. FeatureEngine only applies the versioned ML normalization after trait calculations.
+Ratios representing fractions are clamped to `[0,1]`. `FeatureEngine::calculateSlice()` calls the ordinary `Technical` array methods directly: `ema()`, `rsi()`, `sto_rsi()`, `cci()`, `atrp()`, `roc()`, `volume_activity()` and `candle_geometry()`. All former indicator methods ending in `_next` have been removed, not renamed or left as a second implementation. The engine applies versioned ML normalization after the shared trait calculations.
+
+## Timestamp indexing and ordinary indicator slices
+
+`app/Traits/TickerManipulation.php` owns naming, indexing and slicing. `Technical` uses this trait, preserving the user's separation of ticker manipulation from indicator mathematics. There are no database or Laravel dependencies inside either slicing helper.
+
+`normalize_ticker($tickers, true)` turns each CCXT OHLCV row `[milliseconds, open, high, low, close, volume]` into named decimal-string values and keys the **outer** array by integer Unix seconds. For example, timestamp `1790620264123` produces `$tickers[1790620264]['high']`, while `$tickers[1790620264]['microtimestamp']` stays `1790620264123`. `human_date` uses the trait's `YmdHis` format in UTC. Numeric inner keys are removed. With `$reindex = false`, existing outer keys are preserved.
+
+Use `normalize_ticker($tickers, true, 'milliseconds')` when distinct sub-second rows must remain separate. Duplicate outer timestamps, including collisions after conversion to seconds, are rejected rather than silently overwriting a row. Validation builds a separate result and leaves the original input intact on failure. Rows are independent copies, not aliases to a reused loop reference. Decimal strings and scientific notation are preserved/expanded without `sprintf('%f')` rounding; a float already returned by CCXT cannot recover precision that was lost before normalization.
+
+Every production OHLCV request currently goes through `TickerRepository::fetch()`. Its next statement after `fetch_ohlcv()` calls `normalize_ticker()` with reindexing enabled, before logging or consuming the page. `OhlcvNormalizer`, the older `Indexing::normalize()` adapter and the namespaced helper delegate to the same implementation. Exchange paging and database keys still use the original `microtimestamp` in milliseconds; no database migration is needed.
+
+### Calling the slice API
+
+```php
+$technical = new class
+{
+    use \App\Traits\Technical;
+};
+
+$technical->normalize_ticker($tickers, true);
+$calculated = [];
+foreach ($technical->ticker_slide(
+    $tickers,
+    function (array &$slice) use ($technical): void {
+        $technical->ema($slice, 24);
+    },
+    period: 24,
+    multiplier: 3,
+    batchSize: 500,
+) as $timestamp => $ticker) {
+    $calculated[$timestamp] = $ticker; // Or persist this newly calculated row.
+}
+```
+
+`ticker_slide()` combines retained overlap with each new batch, invokes the real array method through the callback, and emits **only the new rows**. Keys and chronological order are preserved. It keeps its carry through `ticker_slice()`; do not use `array_merge()` on integer timestamp keys because that renumbers them. The optional `continuous` callback allows callers to reset at a gap or a new independent history segment. FeatureEngine supplies that check for closed-candle history.
+
+`ticker_slice($calculated, 24, 3)` normally retains the final 72 rows; multiplier 2 retains 48. During initial warm-up it can retain up to `(multiplier + 2) * period` rows so the first retained boundary is mature. Recursive EMA/SMMA and Wilder averages retain their already-calculated boundary values in those rows. They are **not cold-reseeded** from 48/72 raw prices: two or three periods alone cannot guarantee the same EMA as the complete history. Internal boundary metadata is stripped from rows emitted by `ticker_slide()` and never stored by FeatureBuilder.
+
+To continue manually, calculate the full initial prefix, obtain `ticker_slice()` from that calculated prefix, append new **raw** candles using their timestamps, then call `ema()` on that array. Do not edit the retained calculated overlap; a correction to old candles requires replaying the history. A missing mature seed or insufficient window overlap raises an exception rather than emitting an approximation. `period` must cover all indicator lookbacks used by the callback, including dependencies. Parity regression coverage covers the feature-engine methods and EMA24; unrelated legacy indicators have not received a complete new mathematical audit in this update.
+
+SMA retains an exact working sum and publishes at `EXCHANGE_ROUND_DECIMALS`; EMA, Wilder averages and RSI use their explicit higher scales. Default ATR/ATRP use SMMA, while explicit SMA/EMA results have mode-qualified keys (`atrp(14,sma)`, for example) so two methods cannot overwrite each other's cached results.
 
 ## Time integrity and limitations
 
@@ -108,16 +150,21 @@ Ratios representing fractions are clamped to `[0,1]`. The `Technical` trait is t
 - Context is eligible only if **received** at or before candle close, not merely labelled by the provider with an earlier time. A collection today can never enrich yesterday's historical vectors. The first usable context appears on a subsequent closed candle.
 - Observations expire after two hours and are also bounded by the provider timestamps' age. Current CoinGecko endpoints cannot backfill point-in-time historical context. Accumulate it going forward.
 - Appending future candles does not change prior feature values. Correcting historical source candles can legitimately change subsequent derived features; builds replay all retained history. M3 will need immutable dataset snapshots for experiment reproducibility.
-- Replays read candles/context in bounded database pages, retain 20 technical bars plus up to 30 days of return anchors, and upsert in batches of 100. This initial implementation trades replay work for deterministic seeding. It is not an incremental checkpoint engine. A 540-second guard prevents a build outliving its shared 720-second lock. Very large histories need an offline dataset/checkpoint workflow in M3; monitor failed queue jobs.
+- Replays read candles/context in bounded database pages and calculate up to 500 new candles with a 60-row technical overlap (up to 100 initial warm-up rows). They separately retain up to 30 days of elapsed-return anchors and upsert in batches of 100. History is still replayed from the earliest stored candle for reproducible seeds. Slice carry is in-memory only, not a persisted checkpoint engine. A 540-second guard prevents a build outliving its shared 720-second lock. Very large histories need an offline dataset/checkpoint workflow in M3; monitor failed queue jobs.
 - M2 does not fetch missing exchange history. Use the M1 sync command before rebuilding features.
 
 ## Verification
 
 ```bash
-php artisan test --filter='FeatureEngine|MarketFeatures'
+php artisan test --filter='TickerManipulationTest|TechnicalSliceTest|TechnicalIndicatorsTest|OhlcvNormalizerTest|FeatureEngineTest|TickerNormalizationTest|MarketFeaturesTest'
 php artisan test
 ```
 
 Tests cover causal prefix invariance, numerical examples, neutral flat markets, warm-up, gap resets, completed candles, timestamp validation, elapsed returns, stale/future context, idempotent persistence, raw-candle preservation, exact quote mapping, CoinGecko batching/authentication, hourly deduplication, and HTTP failure behavior.
 
-Verified during implementation: **85 tests passed, 341 assertions**, using PHP 8.4.26 and SQLite; Pint passed for every changed PHP file. Test HTTP calls are mocked and unexpected Laravel HTTP requests are blocked, including the existing password-breach lookup. MariaDB-specific behavior and authenticated live CoinGecko responses were not exercised in this environment.
+Historical validation reported for the original M2 release (not rerun for this archive): **85 tests passed, 341 assertions**, using PHP 8.4.26 and SQLite; Pint passed for that earlier release. Test HTTP calls are mocked and unexpected Laravel HTTP requests are blocked, including the existing password-breach lookup. MariaDB-specific behavior and authenticated live CoinGecko responses were not exercised in this environment.
+
+
+For the current ticker-slice archive, a standalone PHP decimal harness executed **47 selected unit-test bodies/dataset cases and 7,005 assertions**, with all passing. It used a GMP-backed BCMath-compatible verification layer, **not native PHP BCMath and not Pest/Laravel**. The verification backend was separately checked against Python Decimal for 3,500 arithmetic cases. The shim is not included in the application archive and is not a production fallback. Strict comparisons covered batch sizes 1, 7, 48, 72 and 500, EMA24 continuation, all feature-path indicators, gap resets, key preservation and normalization precision. All 10 existing frontend script tests also passed. Full PHP syntax checks and their count are recorded in `RELEASE.json`.
+
+Native BCMath/Pest, the Laravel repository integration regression, MariaDB, concurrent workers and live exchanges were not exercised in this build environment: BCMath, Composer and `vendor/` were unavailable. Run the native command above in a test checkout with Composer dependencies and BCMath before production deployment. A successful syntax check alone is not runtime verification.

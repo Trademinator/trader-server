@@ -1,49 +1,70 @@
 {
-  "release": "Trademinator M3 Final R3",
+  "release": "Trademinator M3 Final R4 — ordinary trait methods and ticker slices",
   "date": "2026-09-28",
   "source_repository": "https://github.com/Trademinator/trader-server",
-  "source_commit": "e0d95cd2b16aad4acd49b1eae0eb51902ac2809f",
-  "delivery": "Full source snapshot plus compiled frontend assets",
-  "entrypoint_guide": "docs/M3-README.md",
+  "source_commit": "f41a9de8dc338564fed0535fbb16aaa4dee32f05",
+  "delivery": "Full application source with tests and existing compiled frontend assets; not a patcher.",
+  "entrypoint_guide": "docs/M2-README.md",
   "cli_reference": "docs/CLI.md",
   "cron_reference": "docs/CRONTABS.md",
-  "new_commands": [
-    "trademinator:build-dataset",
-    "trademinator:dataset-info",
-    "trademinator:backtest",
-    "trademinator:refresh-exchanges"
-  ],
+  "new_commands": [],
   "new_migration": "2026_09_26_000000_create_research_tables",
   "compiled_frontend_assets": true,
   "validation": {
-    "php": "8.4.26",
-    "database": "SQLite in-memory",
-    "tests_passed": 3,
-    "assertions": 39,
-    "test_entrypoint": "php artisan test --compact tests/Feature/MarketSubscriptionsWebTest.php",
-    "frontend_script_tests": 10,
-    "frontend_test_entrypoint": "node --test tests/Frontend/*.test.mjs",
-    "frontend_build": "npm run build passed",
+    "php": "8.4.23",
+    "php_lint": {
+      "passed": true,
+      "files": 258,
+      "command": "php -l for every PHP source and Blade file"
+    },
+    "json_syntax": {
+      "passed": true,
+      "files": 8
+    },
+    "frontend_syntax": {
+      "passed": true,
+      "files": 5,
+      "command": "node --check"
+    },
+    "frontend_tests": {
+      "passed": 10,
+      "failed": 0,
+      "command": "node --test tests/Frontend/*.test.mjs"
+    },
+    "frontend_build": "Existing compiled assets retained byte-for-byte. npm rebuild was not needed and was not run.",
+    "standalone_unit_bodies": {
+      "passed": 47,
+      "failed": 0,
+      "assertions": 7005,
+      "backend": "PHP 8.4.23 executing project test closures with a standalone expectation harness and GMP-backed BCMath-compatible decimal operations; NOT Pest or native BCMath",
+      "verified_backend_operations_against_python_decimal": 3500,
+      "backend_shipped": false
+    },
+    "native_bcmath": "NOT RUN: extension not installed in the build environment",
+    "pest_laravel": "NOT RUN: Composer and vendor directory unavailable",
+    "repository_integration_regression": "Added tests/Feature/TickerNormalizationTest.php; requires native Laravel/Pest run",
+    "pint": "NOT RUN: vendor/bin/pint unavailable",
     "git_diff_check": "passed",
-    "pint": "passed for changed PHP files",
-    "browser_visual_check": "Not run: no browser executable available; rendered panel/control wiring verified with the real Blade response.",
-    "scope": "Independent collapsed exchange panels, correctly targeted controls, subscription links, existing market form and chart scripts."
+    "scope": "Strict full-batch/sliced output equality, warm-up, gaps, normalization precision and indexing, mutable-row independence, callback key safety and preservation of frontend tests."
   },
   "not_exercised": [
-    "MariaDB integration/concurrent-node runtime",
-    "Live exchange/CoinGecko APIs and the user server regional reachability",
-    "Full application test suite; targeted suites listed in validation were run.",
-    "The packaged source contains no vendor directory; Laravel/Pest tests require composer install.",
-    "This build runner did not have the PHP BCMath extension, so BCMath runtime tests could not be executed here; PHP syntax validation was run instead."
+    "Native PHP BCMath and the Composer-installed Pest/Laravel runtime",
+    "New Laravel/Mockery TickerNormalizationTest integration test",
+    "Full application suite, MariaDB integration and concurrent-node runtime",
+    "Live CCXT/CoinGecko responses and regional reachability",
+    "Complete mathematical audit of unrelated legacy indicators",
+    "Browser visual validation"
   ],
   "excluded": [
     ".git",
     "vendor",
     "node_modules",
     ".env",
-    "databases",
-    "private research snapshots",
-    "runtime logs and caches"
+    "actual database files",
+    "runtime storage data and locks",
+    "standalone verification decimal backends and local patcher scripts",
+    "stale root checksum duplicates (current manifests are in docs/)",
+    "duplicate lowercase docs/crontabs.md (canonical file is docs/CRONTABS.md)"
   ],
   "notes": [
     "No dependency versions changed. Corrected pre-existing lockfile root platform metadata/content hash to match composer.json; package records unchanged.",
@@ -174,7 +195,7 @@
     "live_exchange_checks": "Not performed; deterministic exchange fixtures used"
   },
   "r7_new_migration": null,
-  "source_note": "Full snapshot matching GitHub source_commit, plus the trait-backed FeatureEngine/Technical BCMath alignment in this archive.",
+  "source_note": "Application, tests, resources, public source assets, routes, configuration, dependency manifests and other tracked source were matched by Git object hashes to the newly pushed source commit before these fixes. Existing production frontend build retained from the previous full archive; frontend source is unchanged.",
   "previous_validation": {
     "php": "8.4.26",
     "database": "SQLite in-memory",
@@ -188,7 +209,7 @@
     "route_cache_regression": "Old compiled route table reproduces the exception; guarded page stays available. An isolated stale on-disk cache is loaded, cleared and rebuilt; all three feature routes and auth are restored. No deployment caches touched.",
     "scope": "Market UI guard and route-cache recovery; core collectors and data models unchanged."
   },
-  "milestone_status": "M3 interface work complete; trait-backed M2 feature math aligned before M4.",
+  "milestone_status": "M3 UI retained; slice-based shared technical calculation implemented before M4.",
   "final_update": {
     "new_migration": null,
     "dependency_changes": [
@@ -205,7 +226,7 @@
       "Logo container and image background made transparent, border removed; initial fallback hidden behind successfully loaded transparent logos.",
       "Bootstrap Collapse makes each exchange group independently expandable, initially closed, with accessible button state, chevron, market count, and reduced-motion support."
     ],
-    "retained": "Recent BCMath and technical indicator fixes from the source repository.",
+    "retained": "The source commit includes all previously delivered market-review, independent collapse and transparent-logo interface changes. They remain unchanged in this archive.",
     "package": "Complete application source plus compiled frontend assets; no vendor, node_modules, .env, database or runtime storage data."
   },
   "previous_final_validation": {
@@ -223,16 +244,77 @@
     "scope": "Subscription listing, personal/technical review and authorization, route integration, chart refresh, and preservation of the recent technical indicator fixes."
   },
   "technical_alignment": {
-    "feature_version": "m2-v2",
+    "feature_version": "m2-v3",
     "single_source_of_truth": "App\\Traits\\Technical",
-    "bcmath": "All new incremental technical primitives use BCMath for decimal arithmetic.",
-    "streaming": "FeatureEngine remains streaming/bounded-state; it does not materialize full candle history.",
-    "parity_tests": "FeatureEngine raw EMA, RSI, Stochastic RSI, CCI and ATRP outputs are asserted equal to the public Technical batch APIs.",
+    "ticker_manipulation": "App\\Traits\\TickerManipulation",
+    "removed_next_methods": 9,
+    "implementation": "FeatureEngine::calculateSlice invokes the ordinary array APIs; ticker_slide/ticker_slice retain calculated overlap and recursive boundary values. No alternative single-candle indicator recurrence API.",
+    "normalization": "normalize_ticker is called directly immediately after the sole production CCXT fetch_ohlcv call. Reindex=true means integer Unix seconds; original integer milliseconds remain in microtimestamp. Explicit milliseconds indexing is supported.",
+    "precision": "Normalized decimal strings never pass through float formatting. Shared technical recurrences use BCMath. Existing final ML/context values and tanh normalization remain floating-point.",
+    "slice_validation": "Batch sizes 1, 7, 48, 72 and 500, including EMA24, have strict decimal-string/all-row parity assertions. Cold raw tail reseeding and insufficient overlap fail visibly.",
+    "indicators": "EMA, SMA, SMMA, RSI, ATR/ATRP, Stochastic RSI, CCI, ROC, volume activity and candle geometry",
     "additional_fixes": [
-      "percentage() now divides by the base value",
-      "roc() stays neutral until its requested lag exists and then uses the exact lag candle"
+      "Timestamp-key compatibility for position-based Ichimoku/inflexion/slope access",
+      "Mode-qualified alternate ATR/ATRP keys",
+      "Exact SMA working sum with published scale retained",
+      "Decimal/scientific input conversion without narrowing string values"
     ],
     "migration": null,
-    "scheduler_changes": false
-  }
+    "scheduler_changes": false,
+    "dependency_changes": false,
+    "rebuild": "Build new m2-v3 feature rows and datasets when needed; old versions and frozen datasets are not overwritten."
+  },
+  "validation_history": [
+    {
+      "release": "Trademinator M3 Final R3",
+      "validation": {
+        "php": "8.4.26",
+        "database": "SQLite in-memory",
+        "tests_passed": 3,
+        "assertions": 39,
+        "test_entrypoint": "php artisan test --compact tests/Feature/MarketSubscriptionsWebTest.php",
+        "frontend_script_tests": 10,
+        "frontend_test_entrypoint": "node --test tests/Frontend/*.test.mjs",
+        "frontend_build": "npm run build passed",
+        "git_diff_check": "passed",
+        "pint": "passed for changed PHP files",
+        "browser_visual_check": "Not run: no browser executable available; rendered panel/control wiring verified with the real Blade response.",
+        "scope": "Independent collapsed exchange panels, correctly targeted controls, subscription links, existing market form and chart scripts."
+      },
+      "technical_alignment": {
+        "feature_version": "m2-v2",
+        "single_source_of_truth": "App\\Traits\\Technical",
+        "bcmath": "All new incremental technical primitives use BCMath for decimal arithmetic.",
+        "streaming": "FeatureEngine remains streaming/bounded-state; it does not materialize full candle history.",
+        "parity_tests": "FeatureEngine raw EMA, RSI, Stochastic RSI, CCI and ATRP outputs are asserted equal to the public Technical batch APIs.",
+        "additional_fixes": [
+          "percentage() now divides by the base value",
+          "roc() stays neutral until its requested lag exists and then uses the exact lag candle"
+        ],
+        "migration": null,
+        "scheduler_changes": false
+      },
+      "provenance": "Inherited historical metadata, not a validation run for the current archive."
+    }
+  ],
+  "source_commit_title": "new trait",
+  "changed_files": [
+    "RELEASE.json",
+    "app/Domain/Features/FeatureEngine.php",
+    "app/Domain/MarketData/OhlcvNormalizer.php",
+    "app/Repositories/TickerRepository.php",
+    "app/Traits/Bc.php",
+    "app/Traits/Indexing.php",
+    "app/Traits/Technical.php",
+    "app/Traits/TickerManipulation.php",
+    "docs/M2-FILES.sha256",
+    "docs/M2-README.md",
+    "docs/checksums.sha256",
+    "tests/Feature/TickerNormalizationTest.php",
+    "tests/Support/TickerFixtures.php",
+    "tests/Unit/FeatureEngineTest.php",
+    "tests/Unit/OhlcvNormalizerTest.php",
+    "tests/Unit/TechnicalSliceTest.php",
+    "tests/Unit/TickerManipulationTest.php"
+  ]
 }

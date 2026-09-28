@@ -128,3 +128,38 @@ it('uses Technical as the single source of truth for technical indicator math', 
     }
 });
 
+it('produces identical features for different batch sizes including gaps and a live last candle', function () {
+    $source = \Tests\Support\TickerFixtures::candles(245);
+    $keys = array_keys($source);
+    foreach (array_slice($keys, 90, 5) as $key) {
+        unset($source[$key]);
+    }
+    $cutoff = end($source)['microtimestamp'];
+    $engine = new FeatureEngine;
+    $expected = iterator_to_array($engine->rows($source, '1m', $cutoff, 1000));
+
+    foreach ([1, 7, 64] as $batchSize) {
+        $actual = iterator_to_array($engine->rows($source, '1m', $cutoff, $batchSize));
+        expect($actual)->toBe($expected);
+    }
+    expect($expected)->toHaveCount(239);
+    expect($expected[90]['technical_ready'])->toBeFalse();
+    expect($expected[90]['indicators']['rsi(14)'])->toBeNull();
+    expect($expected[117]['technical_ready'])->toBeTrue();
+    expect(end($expected)['microtimestamp'])->toBeLessThan($cutoff);
+});
+
+it('ignores incoming indicator cache fields instead of trusting another history or feature version', function () {
+    $source = \Tests\Support\TickerFixtures::candles(65);
+    $engine = new FeatureEngine;
+    $expected = iterator_to_array($engine->rows($source, '1m', PHP_INT_MAX));
+    foreach ($source as &$row) {
+        $row['ema(3,close)'] = '999999999';
+        $row['__ticker_seed'] = true;
+        $row['__ticker_cached'] = true;
+        $row['__ticker_position'] = 9000;
+    }
+    unset($row);
+
+    expect(iterator_to_array($engine->rows($source, '1m', PHP_INT_MAX, 7)))->toBe($expected);
+});

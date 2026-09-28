@@ -19,7 +19,7 @@ it('normalizes raw CCXT candles into one canonical associative shape', function 
         ->and(array_key_exists(5, $candles[0]))->toBeFalse();
 });
 
-it('reindexes canonical candles by microtimestamp without changing the candle shape', function () {
+it('reindexes canonical candles by Unix seconds without changing the candle shape', function () {
     $raw = [
         [1_700_000_000_000, 100, 101, 99, 100.5, 5],
         [1_700_000_060_000, 100.5, 102, 100, 101.5, 6],
@@ -27,8 +27,8 @@ it('reindexes canonical candles by microtimestamp without changing the candle sh
 
     $candles = (new OhlcvNormalizer)->normalize($raw, true);
 
-    expect(array_keys($candles))->toBe([1_700_000_000_000, 1_700_000_060_000])
-        ->and($candles[1_700_000_060_000]['close'])->toBe('101.5');
+    expect(array_keys($candles))->toBe([1_700_000_000, 1_700_000_060])
+        ->and($candles[1_700_000_060]['close'])->toBe('101.5');
 });
 
 it('preserves computed associative indicator keys when renormalizing', function () {

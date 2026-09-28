@@ -2,13 +2,13 @@
 
 namespace App\Traits;
 
-use App\Domain\MarketData\OhlcvNormalizer;
-
 trait Indexing
 {
+    use TickerManipulation;
+
     public function normalize(array &$tickers, bool $reindex = false): array
     {
-        $tickers = (new OhlcvNormalizer)->normalize($tickers, $reindex);
+        $this->normalize_ticker($tickers, $reindex);
 
         return $tickers;
     }

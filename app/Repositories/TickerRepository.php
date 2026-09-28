@@ -2,8 +2,8 @@
 
 namespace App\Repositories;
 
-use App\Domain\MarketData\OhlcvNormalizer;
 use App\Models\Ticker;
+use App\Traits\TickerManipulation;
 use ccxt\Exchange;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
@@ -15,6 +15,8 @@ use JasonGuru\LaravelMakeRepository\Repository\BaseRepository;
  */
 class TickerRepository extends BaseRepository
 {
+    use TickerManipulation;
+
     protected ?Ticker $ticker;
 
     protected ?Exchange $ccxtExchange = null;
@@ -28,12 +30,13 @@ class TickerRepository extends BaseRepository
     public function fetch(string $symbol, string $period, int $startFetching, int $records, array $params): array
     {
         $myTickers = $this->ccxtExchange->fetch_ohlcv($symbol, $period, $startFetching, $records, $params);
+        $this->normalize_ticker($myTickers, true);
 
         if (App::hasDebugModeEnabled()) {
             Log::debug('myTickers: '.print_r($myTickers, true));
         }
 
-        return (new OhlcvNormalizer)->normalize($myTickers);
+        return $myTickers;
     }
 
     public function fetchFromDB(string $exchange, string $symbol, string $period, ?int $startFetching = null, ?int $endFetching = null): array
@@ -82,7 +85,7 @@ class TickerRepository extends BaseRepository
     // array_merge breaks timestamp keys, so normalize and reindex canonically.
     public function fixTickerIndex(array $tickers): array
     {
-        return (new OhlcvNormalizer)->normalize($tickers, true);
+        return $this->normalize_ticker($tickers, true);
     }
 
     /**

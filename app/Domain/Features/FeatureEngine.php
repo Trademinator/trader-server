@@ -11,7 +11,7 @@ final class FeatureEngine
 {
     use Technical;
 
-    public const VERSION = 'm2-v2';
+    public const VERSION = 'm2-v3';
 
     public const KEYS = [
         'trend.ema_3_12', 'trend.direction', 'return.4', 'return.12',
@@ -36,147 +36,81 @@ final class FeatureEngine
         return is_finite($ratio) ? $ratio : null;
     }
 
-    /** @return \Generator<array> Input must be chronological completed associative candles. */
-    public function rows(iterable $candles, string $period, int $cutoffMs): \Generator
+    /** @return \Generator<array> Chronological, completed candles only. */
+    public function rows(iterable $candles, string $period, int $cutoffMs, int $batchSize = 500): \Generator
     {
-        $timeframe = new CandleTimeframe;
-        $previousTime = null;
-        $count = 0;
-        $historyStart = null;
-        $states = $this->freshTechnicalStates();
-        $barCloses = [];
+        $calculated = $this->ticker_slide(
+            $this->closedCandles($candles, $period, $cutoffMs),
+            $this->calculateSlice(...),
+            period: 20,
+            multiplier: 3,
+            batchSize: $batchSize,
+            continuous: static fn (array $previous, array $current): bool => $previous['history_start_ms'] === $current['history_start_ms'],
+        );
         $elapsedCloses = [];
-
-        foreach ($candles as $raw) {
-            $timestamp = $raw['microtimestamp'] ?? null;
-            if (! is_numeric($timestamp) || (float) $timestamp != (int) $timestamp || $timestamp < 0) {
-                throw new InvalidArgumentException('Candle timestamp must be nonnegative integer milliseconds.');
-            }
-            $timestamp = (int) $timestamp;
-            if ($previousTime !== null && $timestamp <= $previousTime) {
-                throw new InvalidArgumentException('Candles must have unique ascending timestamps.');
-            }
-
-            $closeAt = $timeframe->next($timestamp, $period);
-            if ($closeAt > $cutoffMs) {
-                break;
-            }
-
-            foreach (['open', 'high', 'low', 'close', 'volume'] as $key) {
-                if (! isset($raw[$key]) || ! is_numeric($raw[$key]) || ! is_finite((float) $raw[$key]) || $raw[$key] < 0) {
-                    throw new InvalidArgumentException('Invalid OHLCV field: '.$key);
-                }
-            }
-
-            $o = (string) $raw['open'];
-            $h = (string) $raw['high'];
-            $l = (string) $raw['low'];
-            $c = (string) $raw['close'];
-            $v = (string) $raw['volume'];
-            if ((float) min((float) $o, (float) $h, (float) $l, (float) $c) <= 0
-                || (float) $h < max((float) $o, (float) $c, (float) $l)
-                || (float) $l > min((float) $o, (float) $c)) {
-                throw new InvalidArgumentException('Invalid candle price bounds.');
-            }
-
-            // Missing intervals break indicator continuity; never synthesize candles.
-            if ($previousTime !== null && $timestamp !== $timeframe->next($previousTime, $period)) {
-                $states = $this->freshTechnicalStates();
-                $barCloses = [];
+        $historyStart = null;
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        foreach ($calculated as $candle) {
+            $timestamp = $candle['microtimestamp'];
+            $count = $candle['__feature_count'];
+            $close = $candle['close'];
+            if ($historyStart !== $candle['history_start_ms']) {
                 $elapsedCloses = [];
-                $count = 0;
-                $historyStart = null;
+                $historyStart = $candle['history_start_ms'];
             }
-
-            $historyStart ??= $timestamp;
-            $count++;
             $indicators = [];
             $features = array_fill_keys(self::KEYS, null);
-
-            // All OHLCV-derived mathematics comes from App\Traits\Technical.
-            $ema3 = $this->technical_ema_next($states['ema'][3], $c, 3);
-            $ema12 = $this->technical_ema_next($states['ema'][12], $c, 12);
-            $indicators['ema(3,close)'] = $count >= 3 ? $ema3 : null;
-            $indicators['ema(12,close)'] = $count >= 12 ? $ema12 : null;
-            if ($count >= 12) {
-                $trend = $this->technical_normalized_difference_value($ema3, $ema12, $c);
-                $features['trend.ema_3_12'] = self::bounded($trend === null ? null : (float) $trend, 0.05);
-                $features['trend.direction'] = $this->technical_compare_value($ema3, $ema12);
+            foreach ([3, 12] as $p) {
+                $indicators["ema($p,close)"] = $count >= $p ? $candle["ema($p,close)"] : null;
             }
-
+            if ($count >= 12) {
+                $trend = $this->technical_normalized_difference_value($candle['ema(3,close)'], $candle['ema(12,close)'], $close);
+                $features['trend.ema_3_12'] = self::bounded($trend === null ? null : (float) $trend, 0.05);
+                $features['trend.direction'] = $this->technical_compare_value($candle['ema(3,close)'], $candle['ema(12,close)']);
+            }
             foreach ([4, 12] as $p) {
-                $old = $barCloses[count($barCloses) - $p] ?? null;
-                $change = $old === null ? null : $this->technical_relative_change_value($c, $old);
+                $change = $count > $p ? bcdiv($candle["roc($p,close)"], '100', $scale) : null;
                 $indicators["return($p,close)"] = $change;
                 $features["return.$p"] = self::bounded($change === null ? null : (float) $change, 0.1);
             }
-            $barCloses[] = $c;
-            if (count($barCloses) > 12) {
-                array_shift($barCloses);
-            }
-
-            $rsi3 = $this->technical_rsi_next($states['rsi'][3], $c, 3);
-            $rsi14 = $this->technical_rsi_next($states['rsi'][14], $c, 14);
-            foreach ([3 => $rsi3, 14 => $rsi14] as $p => $rsi) {
-                $indicators["rsi($p)"] = $rsi['mature'] ? $rsi['value'] : null;
-                $features["momentum.rsi_$p"] = $rsi['mature']
-                    ? (float) bcdiv($rsi['value'], '100', EXCHANGE_ROUND_DECIMALS * 2)
-                    : null;
-            }
-
-            $atrp3 = $this->technical_atrp_next($states['atrp'][3], $h, $l, $c, 3);
-            $atrp14 = $this->technical_atrp_next($states['atrp'][14], $h, $l, $c, 14);
-            foreach ([3 => $atrp3, 14 => $atrp14] as $p => $atrp) {
-                $indicators["atrp($p)"] = $atrp['mature'] ? $atrp['value'] : null;
-                if ($atrp['mature']) {
-                    $scaled = bcdiv($atrp['value'], '10', EXCHANGE_ROUND_DECIMALS * 2);
-                    $features["volatility.atrp_$p"] = bccomp($scaled, '1', EXCHANGE_ROUND_DECIMALS * 2) > 0
-                        ? 1.0
-                        : (float) $scaled;
+            foreach ([3, 14] as $p) {
+                $rsi = $count > $p ? $candle["rsi($p)"] : null;
+                $indicators["rsi($p)"] = $rsi;
+                $features["momentum.rsi_$p"] = $rsi === null ? null : (float) bcdiv($rsi, '100', $scale);
+                $atrp = $count >= $p ? $candle["atrp($p)"] : null;
+                $indicators["atrp($p)"] = $atrp;
+                if ($atrp !== null) {
+                    $scaled = bcdiv($atrp, '10', $scale);
+                    $features["volatility.atrp_$p"] = bccomp($scaled, '1', $scale) > 0 ? 1.0 : (float) $scaled;
                 }
             }
+            $stochastic = $count >= 28 ? $candle['%k(14)'] : null;
+            $indicators['stoch_rsi(14,14)'] = $stochastic;
+            $features['momentum.stoch_rsi_14'] = $stochastic === null ? null : (float) bcdiv($stochastic, '100', $scale);
+            $cci = $count >= 20 ? $candle['cci(20)'] : null;
+            $indicators['cci(20)'] = $cci;
+            $features['momentum.cci_20'] = $cci === null ? null : self::bounded((float) $cci, 200);
+            $features['volume.activity_20'] = $count >= 20 ? self::bounded((float) $candle['volume_activity(20)'], 2) : null;
+            foreach (['body', 'upper_wick', 'lower_wick'] as $part) {
+                $features['candle.'.$part] = (float) $candle['candle.'.$part];
+            }
+            $features['candle.direction'] = $candle['candle.direction'];
 
-            $stochRsi = $this->technical_stoch_rsi_next(
-                $states['stoch_rsi_14'],
-                $rsi14['value'],
-                $rsi14['mature'],
-                14
-            );
-            $indicators['stoch_rsi(14,14)'] = $stochRsi['mature'] ? $stochRsi['value'] : null;
-            $features['momentum.stoch_rsi_14'] = $stochRsi['mature']
-                ? (float) bcdiv($stochRsi['value'], '100', EXCHANGE_ROUND_DECIMALS * 2)
-                : null;
-
-            $cci = $this->technical_cci_next($states['cci_20'], $h, $l, $c, 20);
-            $indicators['cci(20)'] = $cci['mature'] ? $cci['value'] : null;
-            $features['momentum.cci_20'] = $cci['mature'] ? self::bounded((float) $cci['value'], 200) : null;
-
-            $volume = $this->technical_volume_activity_next($states['volume_20'], $v, 20);
-            $features['volume.activity_20'] = $volume['mature'] ? self::bounded((float) $volume['value'], 2) : null;
-
-            $geometry = $this->technical_candle_geometry($o, $h, $l, $c);
-            $features['candle.body'] = (float) $geometry['body'];
-            $features['candle.upper_wick'] = (float) $geometry['upper_wick'];
-            $features['candle.lower_wick'] = (float) $geometry['lower_wick'];
-            $features['candle.direction'] = $geometry['direction'];
-
-            // Exact elapsed-time anchors, not N bars disguised as a day. 30d is not a calendar month.
-            $elapsedCloses[$timestamp] = $c;
-            foreach (['24h' => 86400000, '7d' => 604800000, '30d' => 2592000000] as $name => $ms) {
-                $old = $elapsedCloses[$timestamp - $ms] ?? null;
-                $change = $old === null ? null : $this->technical_relative_change_value($c, $old);
-                $indicators["return($name)"] = $change;
+            // Elapsed-time return anchors are independent of the indicator slice.
+            $elapsedCloses[$timestamp] = $close;
+            foreach (['24h' => 86400000, '7d' => 604800000, '30d' => 2592000000] as $name => $duration) {
+                $past = $elapsedCloses[$timestamp - $duration] ?? null;
+                $change = $past === null ? null : $this->technical_relative_change_value($close, $past);
+                $indicators['return('.$name.')'] = $change;
                 $features['return.'.$name] = self::bounded($change === null ? null : (float) $change, 0.1);
             }
             while ($elapsedCloses !== [] && array_key_first($elapsedCloses) < $timestamp - 2592000000) {
                 unset($elapsedCloses[array_key_first($elapsedCloses)]);
             }
-
-            $previousTime = $timestamp;
             yield [
-                'close' => (float) $c,
+                'close' => (float) $close,
                 'microtimestamp' => $timestamp,
-                'available_at_ms' => $closeAt,
+                'available_at_ms' => $candle['available_at_ms'],
                 'history_start_ms' => $historyStart,
                 'indicators' => $indicators,
                 'features' => $features,
@@ -185,15 +119,71 @@ final class FeatureEngine
         }
     }
 
-    private function freshTechnicalStates(): array
+    /** The ordinary public trait APIs are the sole indicator implementations. */
+    private function calculateSlice(array &$slice): void
     {
-        return [
-            'ema' => [3 => [], 12 => []],
-            'rsi' => [3 => [], 14 => []],
-            'atrp' => [3 => [], 14 => []],
-            'stoch_rsi_14' => [],
-            'cci_20' => [],
-            'volume_20' => [],
-        ];
+        $this->ema($slice, 3, 'close');
+        $this->ema($slice, 12, 'close');
+        $this->roc($slice, 4, 'close');
+        $this->roc($slice, 12, 'close');
+        $this->rsi($slice, 3);
+        $this->rsi($slice, 14);
+        $this->atrp($slice, 3);
+        $this->atrp($slice, 14);
+        $this->sto_rsi($slice, 14, 3, 3);
+        $this->cci($slice, 20);
+        $this->volume_activity($slice, 20);
+        $this->candle_geometry($slice);
+    }
+
+    /** @return \Generator<int, array<string, mixed>> */
+    private function closedCandles(iterable $candles, string $period, int $cutoffMs): \Generator
+    {
+        $timeframe = new CandleTimeframe;
+        $previous = $historyStart = null;
+        $count = 0;
+        foreach ($candles as $raw) {
+            if (! is_array($raw)) {
+                throw new InvalidArgumentException('Each candle must be an array.');
+            }
+            $timestamp = $raw['microtimestamp'] ?? null;
+            if ((! is_int($timestamp) && ! is_string($timestamp)) || ! ctype_digit((string) $timestamp)
+                || filter_var($timestamp, FILTER_VALIDATE_INT) === false) {
+                throw new InvalidArgumentException('Candle timestamp must be nonnegative integer milliseconds.');
+            }
+            $timestamp = (int) $timestamp;
+            if ($previous !== null && $timestamp <= $previous) {
+                throw new InvalidArgumentException('Candles must have unique ascending timestamps.');
+            }
+            $closeAt = $timeframe->next($timestamp, $period);
+            if ($closeAt > $cutoffMs) {
+                break;
+            }
+            // Ignore incoming indicator/cache fields: rebuild solely from raw OHLCV.
+            $row = ['microtimestamp' => $timestamp];
+            foreach (['open', 'high', 'low', 'close', 'volume'] as $key) {
+                if (! isset($raw[$key])) {
+                    throw new InvalidArgumentException('Invalid OHLCV field: '.$key);
+                }
+                $row[$key] = $raw[$key];
+            }
+            $normalized = [$row];
+            $this->normalize_ticker($normalized);
+            $row = $normalized[0];
+            $precision = $this->bcdec($row['low']);
+            if (bccomp($row['low'], '0', $precision) <= 0 || ! is_finite((float) $row['close'])) {
+                throw new InvalidArgumentException('Invalid candle price bounds.');
+            }
+            if ($previous !== null && $timestamp !== $timeframe->next($previous, $period)) {
+                $count = 0;
+                $historyStart = null;
+            }
+            $historyStart ??= $timestamp;
+            $row['history_start_ms'] = $historyStart;
+            $row['available_at_ms'] = $closeAt;
+            $row['__feature_count'] = ++$count;
+            $previous = $timestamp;
+            yield $timestamp => $row;
+        }
     }
 }
