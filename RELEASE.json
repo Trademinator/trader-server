@@ -6,7 +6,7 @@
   "delivery": "Full source snapshot plus compiled frontend assets",
   "entrypoint_guide": "docs/M3-R7-ROUTE-RECOVERY.md",
   "cli_reference": "docs/CLI.md",
-  "cron_reference": "docs/crontabs.md",
+  "cron_reference": "docs/CRONTABS.md",
   "new_commands": [
     "trademinator:build-dataset",
     "trademinator:dataset-info",

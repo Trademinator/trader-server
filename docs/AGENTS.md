@@ -10,9 +10,9 @@
 
 ## Cron documentation
 
-- Maintain `docs/crontabs.md` as the canonical operating-system crontab and scheduler/queue deployment reference.
-- Update `docs/crontabs.md` in the same change whenever `routes/console.php` adds, removes, renames, or changes the cadence of a scheduled command, or whenever queue-processing requirements change.
-- Trademinator's documented production mode does not require a permanent queue daemon; the queue is drained by the cron-driven `queue:work --stop-when-empty` command documented in `docs/crontabs.md`.
+- Maintain `docs/CRONTABS.md` as the canonical operating-system crontab and scheduler/queue deployment reference.
+- Update `docs/CRONTABS.md` in the same change whenever `routes/console.php` adds, removes, renames, or changes the cadence of a scheduled command, or whenever queue-processing requirements change.
+- Trademinator's documented production mode does not require a permanent queue daemon; the queue is drained by the cron-driven `queue:work --stop-when-empty` command documented in `docs/CRONTABS.md`.
 
 ## Documentation location
 

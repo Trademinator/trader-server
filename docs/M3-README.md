@@ -20,7 +20,7 @@ php artisan config:cache
 php artisan schedule:list
 ```
 
-For a new installation, configure `.env` and generate its application key first. If rebuilding frontend assets, use `npm ci && npm run build`. Ensure the application/CLI user can write `storage/` and `bootstrap/cache/`. Keep the two existing system cron entries in [crontabs.md](crontabs.md); M3 requires no additional cron entry, queued job or permanent daemon.
+For a new installation, configure `.env` and generate its application key first. If rebuilding frontend assets, use `npm ci && npm run build`. Ensure the application/CLI user can write `storage/` and `bootstrap/cache/`. Keep the two existing system cron entries in [CRONTABS.md](CRONTABS.md); M3 requires no additional cron entry, queued job or permanent daemon.
 
 ## Run M3
 

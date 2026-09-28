@@ -47,7 +47,7 @@ The Composer hook builds runtime metadata automatically; the Artisan command als
 
 Reload PHP-FPM/FCGI as required by your OPcache policy. Use atomic application/vendor deployments; source hashing does not replace reloading long-running processes with old loaded classes. R3 adds **no migration or dependency-version change**. It corrects the pre-existing Composer lockfile root platform metadata/content hash to match `composer.json` (PHP 8.4/8.5, `ext-intl`, and development `ext-pdo_sqlite`); all locked package records remain unchanged. Existing M3/R2 databases need no migration for this repair. An installation still on M2 must follow the original M3 migration instructions separately. Never run `migrate:fresh`, `migrate:refresh`, `db:wipe` or key generation to apply this repair. R1's guarded SQLite in-memory test configuration remains included. No application-wide cache flush is needed.
 
-The two existing cron entries remain sufficient; see [crontabs.md](crontabs.md). `schedule:list` should now also show the daily refresh. Full command signatures/options are in [CLI.md](CLI.md#trademinatorrefresh-exchanges).
+The two existing cron entries remain sufficient; see [CRONTABS.md](CRONTABS.md). `schedule:list` should now also show the daily refresh. Full command signatures/options are in [CLI.md](CLI.md#trademinatorrefresh-exchanges).
 
 ## Reviewing a CCXT update
 

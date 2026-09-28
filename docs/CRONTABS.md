@@ -26,6 +26,7 @@ Those are the only system crontab entries currently required. Do **not** add sep
 | `trademinator:dispatch-market-feeds` | Every minute | Queue due shared market feeds that have active subscribers. |
 | `trademinator:dispatch-market-features` | Every five minutes | Queue M2 feature builds for subscribed markets with selected candle periods. |
 | `trademinator:collect-market-context` | Hourly | Resolve pending subscription-driven CoinGecko mappings and collect timestamped market context. |
+| `trademinator:refresh-exchanges` | Daily at 03:20, application timezone | Inspect installed CCXT source, refresh access classifications and add missing exchange rows while preserving existing data. |
 
 The schedule source of truth is `routes/console.php`; this document must be updated in the same change whenever that schedule changes.
 
@@ -33,7 +34,9 @@ The schedule source of truth is `routes/console.php`; this document must be upda
 
 Use a persistent `QUEUE_CONNECTION` (`database` or shared Redis). `sync` and `null` are not suitable for the shared market-feed dispatcher. Set the queue connection's `retry_after` to at least **720 seconds**, which is longer than the **600-second** job timeout above.
 
-Use a shared atomic-lock-capable cache store such as Redis when multiple application nodes run the scheduler. `onOneServer`, `withoutOverlapping`, database leases, and per-market locks protect shared work from duplicate execution. The local `flock` only prevents overlapping cron workers on the same host; the queue backend itself safely coordinates workers across hosts.
+Use a shared atomic-lock-capable cache store such as Redis when multiple application nodes run the scheduler. `onOneServer`, `withoutOverlapping`, database leases, and per-market locks protect shared work from duplicate execution. The R3 exchange refresh runs on **every node** because each node owns its installed CCXT files and runtime snapshot; the command uses its own local file lock and a shared cache lock for database inserts. It is offline and does not update the CCXT package or approve changed adapters. Composer install/update also rebuilds local metadata without database access. No additional system cron entry is needed.
+
+The local `flock` only prevents overlapping cron workers on the same host; the queue backend itself safely coordinates workers across hosts.
 
 ## Deployment checks
 
@@ -47,3 +50,9 @@ php artisan queue:failed
 ```
 
 Because the documented queue worker is not persistent, `php artisan queue:restart` is not required for the cron-driven worker model.
+
+## M3 research commands
+
+`trademinator:build-dataset`, `trademinator:dataset-info`, and `trademinator:backtest` run explicitly on demand. The original M3 research implementation adds no schedules, jobs, worker timeouts or required system cron entries. M3 R3 adds the daily exchange refresh above through the existing scheduler. The two entries above remain sufficient. Each dataset/backtest invocation creates a new immutable experiment, so automatic repetition would consume storage. See [CLI.md](CLI.md) and [M3-README.md](M3-README.md) for the workflow.
+
+The canonical filename is `docs/CRONTABS.md`. This corrects the previous GitHub filename `docs/contabs.md` and supersedes references to the earlier `docs/contact.md`.

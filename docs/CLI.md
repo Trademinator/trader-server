@@ -250,7 +250,7 @@ Overlapping pages can count the same candle more than once in totals; unique dat
 | `trademinator:dispatch-market-features` | Every five minutes |
 | `trademinator:collect-market-context` | Hourly |
 
-Schedules are defined in `routes/console.php`. All use shared-cache scheduler locks. Configure a shared atomic-lock-capable cache and a persistent queue across nodes. Trademinator does not require a permanent worker daemon: configure the scheduler cron and the `queue:work --stop-when-empty` queue-drain cron documented in [crontabs.md](crontabs.md).
+Schedules are defined in `routes/console.php`. All use shared-cache scheduler locks. Configure a shared atomic-lock-capable cache and a persistent queue across nodes. Trademinator does not require a permanent worker daemon: configure the scheduler cron and the `queue:work --stop-when-empty` queue-drain cron documented in [CRONTABS.md](CRONTABS.md).
 
 Set the queue connection's `retry_after` to at least 720 seconds. After deploying code or configuration changes, clear/rebuild configuration as appropriate:
 
@@ -361,4 +361,4 @@ php artisan trademinator:refresh-exchanges --check --json
 php artisan trademinator:refresh-exchanges
 ```
 
-Manual refresh is appropriate immediately after deployment. The scheduler provides periodic reconciliation; the Composer hook is the primary reaction to dependency changes. See [cron configuration](crontabs.md).
+Manual refresh is appropriate immediately after deployment. The scheduler provides periodic reconciliation; the Composer hook is the primary reaction to dependency changes. See [cron configuration](CRONTABS.md).

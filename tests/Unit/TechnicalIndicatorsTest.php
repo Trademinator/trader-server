@@ -35,6 +35,7 @@ function m0Technical(): object
     };
 }
 
+
 it('keeps SMA warm-up and rolling-window precision', function () {
     $candles = [];
     foreach ([
@@ -120,8 +121,11 @@ it('honors the requested stochastic and stochastic RSI periods', function () {
     $lastRsi = end($rsiCandles);
 
     expect($rsiFastK)->toBe('%k(5)')
-        ->and($lastRsi)->toHaveKey('max(5,rsi(5),8)')
-        ->and($lastRsi)->toHaveKey('min(5,rsi(5),8)');
+        ->and($lastRsi)->toHaveKey($rsiFastK);
+
+    expect((float) $lastRsi[$rsiFastK])
+        ->toBeGreaterThanOrEqual(0.0)
+        ->toBeLessThanOrEqual(100.0);
 });
 
 it('executes indicators that previously used invalid bare trait-method calls', function () {
@@ -158,3 +162,67 @@ it('quarantines unfinished candlestick-pattern routines instead of executing par
     expect(fn () => $patterns->is_dragonfly($candles))->toThrow(LogicException::class)
         ->and(fn () => $patterns->is_grave_stone($candles))->toThrow(LogicException::class);
 });
+
+it('seeds EMA with a full-period SMA before applying the standard alpha', function () {
+    $candles = array_map(
+        fn ($value) => ['signal' => $value],
+        ['1.00000000', '2.00000000', '3.00000000', '4.00000000', '5.00000000']
+    );
+
+    $key = m0Technical()->ema($candles, 3, 'signal');
+
+    expect(array_column($candles, $key))->toBe([
+        '1.0000000000000000',
+        '1.5000000000000000',
+        '2.0000000000000000',
+        '3.0000000000000000',
+        '4.0000000000000000',
+    ]);
+});
+
+it('uses one Wilder smoothing pass for RSI instead of smoothing averages twice', function () {
+    $candles = [];
+    foreach (['10', '11', '10', '12', '11'] as $close) {
+        $candles[] = [
+            'open' => $close,
+            'high' => $close,
+            'low' => $close,
+            'close' => $close,
+            'volume' => '1',
+        ];
+    }
+
+    $key = m0Technical()->rsi($candles, 3);
+
+    expect($candles[3][$key])->toBe('75.0000000000000019')
+        ->and($candles[4][$key])->toBe('54.5454545454545455');
+});
+
+it('uses Wilder SMMA as the default ATR average while retaining explicit SMA and EMA modes', function () {
+    $candles = [
+        ['open' => '10', 'high' => '11', 'low' => '9', 'close' => '10', 'volume' => '1'],
+        ['open' => '10', 'high' => '12', 'low' => '8', 'close' => '10', 'volume' => '1'],
+        ['open' => '10', 'high' => '13', 'low' => '7', 'close' => '10', 'volume' => '1'],
+        ['open' => '10', 'high' => '14', 'low' => '6', 'close' => '10', 'volume' => '1'],
+    ];
+
+    $key = m0Technical()->atr($candles, 3);
+
+    expect($candles[2][$key])->toBe('4.0000000000000000')
+        ->and($candles[3][$key])->toBe('5.3333333333333333');
+});
+
+it('maps a flat mature stochastic RSI window to neutral 50', function () {
+    $candles = array_fill(0, 12, [
+        'open' => '100',
+        'high' => '100',
+        'low' => '100',
+        'close' => '100',
+        'volume' => '1',
+    ]);
+
+    [$fastK] = m0Technical()->sto_rsi($candles, 3, 2, 2);
+
+    expect(end($candles)[$fastK])->toBe('50.0000000000000000');
+});
+

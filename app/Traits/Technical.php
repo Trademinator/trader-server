@@ -61,36 +61,48 @@ trait Technical
             echo "ema(tickers, $period = 2, $index = 'close')".PHP_EOL;
         }
 
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('EMA period must be greater than zero.');
+        }
+
         $key = 'ema('.$period.','.$index.')';
         $t = end($tickers);
+
         if (! array_key_exists($key, $t)) {
             if ($period == 1) {
                 $this->clone_key($tickers, $index, $key);
-            } else {
-                $i = 1;
-                reset($tickers);
-                foreach ($tickers as &$h) {      // Last element is the most recent
-                    if ($i == 1) {
-                        $h[$key] = number_format($h[$index], EXCHANGE_ROUND_DECIMALS, '.', '');
-                        if ($debug) {
-                            echo "ema($period, $index) = ".$h[$key].PHP_EOL;
-                        }
-                    } else {
-                        // K = 2 ÷(N + 1)
-                        $ii = ($i > $period) ? $period : $i;
-                        $k = bcdiv(2, bcadd(1, $ii, EXCHANGE_ROUND_DECIMALS), EXCHANGE_ROUND_DECIMALS * 2);
-                        // EMA [today] = (Price [today] x K) + (EMA [yesterday] x (1 - K))
-                        $a = bcmul($k, $h[$index], EXCHANGE_ROUND_DECIMALS * 2);
-                        $z = bcmul(bcsub(1, $k, EXCHANGE_ROUND_DECIMALS * 2), $p[$key], EXCHANGE_ROUND_DECIMALS * 2);
-                        $h[$key] = bcadd($a, $z, EXCHANGE_ROUND_DECIMALS * 2);
-                        if ($debug) {
-                            echo "ema($period, $index) = (".$h[$index]." * $k) + (ema_p($index) * ( 1 - $k)) = $a + $z = ".$h[$key].PHP_EOL;
-                        }
-                    }
-                    $p = $h;
-                    $i++;
-                }
+
+                return $key;
             }
+
+            $scale = EXCHANGE_ROUND_DECIMALS * 2;
+            $sum = '0';
+            $i = 0;
+            $alpha = bcdiv('2', bcadd((string) $period, '1', $scale), $scale);
+
+            reset($tickers);
+            foreach ($tickers as &$h) {
+                $i++;
+
+                if ($i <= $period) {
+                    $sum = bcadd($sum, (string) $h[$index], $scale);
+                    $h[$key] = bcdiv($sum, (string) $i, $scale);
+                } else {
+                    $delta = bcsub((string) $h[$index], (string) $p[$key], $scale);
+                    $h[$key] = bcadd(
+                        (string) $p[$key],
+                        bcmul($alpha, $delta, $scale),
+                        $scale
+                    );
+                }
+
+                if ($debug) {
+                    echo "ema($period, $index) = ".$h[$key].PHP_EOL;
+                }
+
+                $p = $h;
+            }
+            unset($h);
         }
 
         return $key;
@@ -615,7 +627,11 @@ trait Technical
         global $debug;
 
         if ($debug) {
-            echo "sto(tickers, $period1 = 14, $period2 = 3, $period3 = 3)".PHP_EOL;
+            echo "sto_rsi(tickers, $period1 = 14, $period2 = 3, $period3 = 3)".PHP_EOL;
+        }
+
+        if ($period1 <= 0 || $period2 <= 0 || $period3 <= 0) {
+            throw new \InvalidArgumentException('Stochastic RSI periods must be greater than zero.');
         }
 
         $key_fastk = '%k('.$period1.')';
@@ -628,46 +644,65 @@ trait Technical
             $key_rsi = $this->rsi($tickers, $period1);
         }
 
-        if (! array_key_exists($key_fastk, $t) or ! array_key_exists($key_dk, $t) or ! array_key_exists($key_slowd, $t)) {
-            [$key_min_max_rsi_min, $key_min_max_rsi_max, $key_min_max_rsi_steps_min, $key_min_max_rsi_steps_max, $key_abs_min_max_rsi_min, $key_abs_min_max_rsi_max,
-                $key_abs_min_max_rsi_steps_min, $key_abs_min_max_rsi_steps_max] = $this->min_max($tickers, $period1, $key_rsi, EXCHANGE_ROUND_DECIMALS);
+        if (! array_key_exists($key_fastk, $t) || ! array_key_exists($key_dk, $t) || ! array_key_exists($key_slowd, $t)) {
+            $scale = EXCHANGE_ROUND_DECIMALS * 2;
+            $rsi_buffer = [];
+            $candle_count = 0;
 
             reset($tickers);
-            foreach ($tickers as &$h) {      // Last element is the most rescent
-                if ($h[$key_rsi] == $h[$key_min_max_rsi_max]) {
-                    $h[$key_fastk] = 100;
+            foreach ($tickers as &$h) {
+                $candle_count++;
+
+                if ($candle_count > $period1) {
+                    $rsi_buffer[] = (string) $h[$key_rsi];
+                    if (count($rsi_buffer) > $period1) {
+                        array_shift($rsi_buffer);
+                    }
+                }
+
+                if (count($rsi_buffer) < $period1) {
+                    $h[$key_fastk] = bcadd('50', '0', $scale);
+                    continue;
+                }
+
+                $min = $rsi_buffer[0];
+                $max = $rsi_buffer[0];
+
+                foreach ($rsi_buffer as $value) {
+                    if (bccomp((string) $value, (string) $min, $scale) < 0) {
+                        $min = (string) $value;
+                    }
+                    if (bccomp((string) $value, (string) $max, $scale) > 0) {
+                        $max = (string) $value;
+                    }
+                }
+
+                $span = bcsub((string) $max, (string) $min, $scale);
+                if (bccomp($span, '0', $scale) === 0) {
+                    $h[$key_fastk] = bcadd('50', '0', $scale);
                 } else {
                     $h[$key_fastk] = bcmul(
-                        100,
+                        '100',
                         bcdiv(
-                            bcsub(
-                                $h[$key_rsi],
-                                $h[$key_min_max_rsi_min],
-                                EXCHANGE_ROUND_DECIMALS),
-                            bcsub(
-                                $h[$key_min_max_rsi_max],
-                                $h[$key_min_max_rsi_min],
-                                EXCHANGE_ROUND_DECIMALS),
-                            EXCHANGE_ROUND_DECIMALS),
-                        2);
+                            bcsub((string) $h[$key_rsi], (string) $min, $scale),
+                            $span,
+                            $scale
+                        ),
+                        $scale
+                    );
                 }
             }
-            $t = $this->sma($tickers, $period2, $key_fastk);
-            $this->rename_key($tickers, $t, $key_dk);
-            $s = $this->sma($tickers, $period3, $key_dk);
-            $this->rename_key($tickers, $s, $key_slowd);
-            reset($tickers);
-            foreach ($tickers as &$h) {      // Last element is the most rescent
-                $h[$key_dk] = number_format($h[$key_dk], 2, '.', '');
-                $h[$key_slowd] = number_format($h[$key_slowd], 2, '.', '');
-            }
+            unset($h);
+
+            $smoothed_k = $this->sma($tickers, $period2, $key_fastk);
+            $this->rename_key($tickers, $smoothed_k, $key_dk);
+
+            $smoothed_d = $this->sma($tickers, $period3, $key_dk);
+            $this->rename_key($tickers, $smoothed_d, $key_slowd);
         }
 
-        $keys = [$key_fastk, $key_dk, $key_slowd];
-
-        return $keys;
+        return [$key_fastk, $key_dk, $key_slowd];
     }
-
     public function compare(&$tickers, $index = 'close', $compare = 'open', $digits = (EXCHANGE_ROUND_DECIMALS * 2))
     {
         global $debug;
@@ -896,51 +931,83 @@ trait Technical
             echo "gain(tickers, $period = 14)".PHP_EOL;
         }
 
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('Gain period must be greater than zero.');
+        }
+
         $agkey = 'average_gain('.$period.')';
         $alkey = 'average_loss('.$period.')';
         $dkey = 'delta('.$period.')';
         $t = end($tickers);
 
-        if (! array_key_exists($agkey, $t) or ! array_key_exists($alkey, $t)) {
-            $i = 1;
-            $k = 1;
+        if (! array_key_exists($agkey, $t) || ! array_key_exists($alkey, $t)) {
+            $scale = EXCHANGE_ROUND_DECIMALS * 2;
+            $delta_count = 0;
+            $gain_sum = '0';
+            $loss_sum = '0';
+            $previous_average_gain = '0';
+            $previous_average_loss = '0';
+            $first = true;
+
             reset($tickers);
-            foreach ($tickers as &$h) {      // Last element is most the recent
-                if ($i < $period) {
-                    $k = $i;
+            foreach ($tickers as &$h) {
+                if ($first) {
+                    $h[$dkey] = bcadd('0', '0', $scale);
+                    $h['gain'] = bcadd('0', '0', $scale);
+                    $h['loss'] = bcadd('0', '0', $scale);
+                    $h[$agkey] = bcadd('0', '0', $scale);
+                    $h[$alkey] = bcadd('0', '0', $scale);
+                    $first = false;
                 } else {
-                    $k = $period;
+                    $delta = bcsub((string) $h['close'], (string) $p['close'], $scale);
+                    $h[$dkey] = $delta;
+
+                    if (bccomp($delta, '0', $scale) < 0) {
+                        $h['gain'] = bcadd('0', '0', $scale);
+                        $h['loss'] = $this->bcabs($delta);
+                    } else {
+                        $h['gain'] = $delta;
+                        $h['loss'] = bcadd('0', '0', $scale);
+                    }
+
+                    $delta_count++;
+
+                    if ($delta_count <= $period) {
+                        $gain_sum = bcadd($gain_sum, (string) $h['gain'], $scale);
+                        $loss_sum = bcadd($loss_sum, (string) $h['loss'], $scale);
+                        $h[$agkey] = bcdiv($gain_sum, (string) $delta_count, $scale);
+                        $h[$alkey] = bcdiv($loss_sum, (string) $delta_count, $scale);
+                    } else {
+                        $period_minus_one = bcsub((string) $period, '1', 0);
+                        $h[$agkey] = bcdiv(
+                            bcadd(
+                                bcmul($previous_average_gain, $period_minus_one, $scale),
+                                (string) $h['gain'],
+                                $scale
+                            ),
+                            (string) $period,
+                            $scale
+                        );
+                        $h[$alkey] = bcdiv(
+                            bcadd(
+                                bcmul($previous_average_loss, $period_minus_one, $scale),
+                                (string) $h['loss'],
+                                $scale
+                            ),
+                            (string) $period,
+                            $scale
+                        );
+                    }
                 }
 
-                if ($i == 1) {                   // First element needs default values
-                    $h[$alkey] = 0;
-                    $h[$agkey] = 0;
-                    $h['loss'] = 0;
-                    $h['gain'] = 0;
-                    $h[$dkey] = 0;
-                } else {
-                    $delta = bcsub($h['close'], $p['close'], EXCHANGE_ROUND_DECIMALS * 2);
-                    $h[$dkey] = $delta;
-                    if (bccomp($delta, 0, EXCHANGE_ROUND_DECIMALS * 2) < 0) {        // Loss
-                        $h['loss'] = $this->bcabs(number_format($delta, EXCHANGE_ROUND_DECIMALS, '.', ''));
-                        $h['gain'] = 0;
-                    } else {
-                        $h['loss'] = 0;
-                        $h['gain'] = number_format($delta, EXCHANGE_ROUND_DECIMALS, '.', '');
-                    }
-                    // Could be smma
-                    $k1 = $k - 1;
-                    $h[$alkey] = bcdiv(bcadd(bcmul($p[$alkey], $k1, EXCHANGE_ROUND_DECIMALS * 2), $h['loss'], EXCHANGE_ROUND_DECIMALS * 2), $k, EXCHANGE_ROUND_DECIMALS * 2);
-                    $h[$agkey] = bcdiv(bcadd(bcmul($p[$agkey], $k1, EXCHANGE_ROUND_DECIMALS * 2), $h['gain'], EXCHANGE_ROUND_DECIMALS * 2), $k, EXCHANGE_ROUND_DECIMALS * 2);
-                }
+                $previous_average_gain = (string) $h[$agkey];
+                $previous_average_loss = (string) $h[$alkey];
                 $p = $h;
-                $i++;
             }
+            unset($h);
         }
 
-        $keys = ['gain', 'loss', $alkey, $agkey, $dkey];
-
-        return $keys;
+        return ['gain', 'loss', $alkey, $agkey, $dkey];
     }
 
     // RSI
@@ -952,31 +1019,37 @@ trait Technical
             echo "rsi(tickers, $period = 14)".PHP_EOL;
         }
 
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('RSI period must be greater than zero.');
+        }
+
         $key = 'rsi('.$period.')';
         $t = end($tickers);
 
         if (! array_key_exists($key, $t)) {
-            $this->gain($tickers, $period);
-            $gain_key = $this->smma($tickers, $period, 'gain');
-            $loss_key = $this->smma($tickers, $period, 'loss');
+            [, , $loss_key, $gain_key] = $this->gain($tickers, $period);
+            $scale = EXCHANGE_ROUND_DECIMALS * 2;
 
             reset($tickers);
-            foreach ($tickers as &$h) {      // Last element is most rescent
-                if (bccomp($h[$loss_key], 0, EXCHANGE_ROUND_DECIMALS * 2) > 0) {
-                    $rs = bcdiv($h[$gain_key], $h[$loss_key], EXCHANGE_ROUND_DECIMALS * 2);
-                    // RSI = (100 – (100 / (1 + RS)))
-                    $h[$key] = bcsub(100, bcdiv($this->bcconv(100), bcadd($this->bcconv(1), $this->bcconv($rs), EXCHANGE_ROUND_DECIMALS * 2), EXCHANGE_ROUND_DECIMALS * 2), 2);
-                } elseif (bccomp($h[$gain_key], 0, EXCHANGE_ROUND_DECIMALS * 2) == 0) {
-                    $h[$key] = 50;
+            foreach ($tickers as &$h) {
+                if (bccomp((string) $h[$loss_key], '0', $scale) > 0) {
+                    $rs = bcdiv((string) $h[$gain_key], (string) $h[$loss_key], $scale);
+                    $h[$key] = bcsub(
+                        '100',
+                        bcdiv('100', bcadd('1', $rs, $scale), $scale),
+                        $scale
+                    );
+                } elseif (bccomp((string) $h[$gain_key], '0', $scale) === 0) {
+                    $h[$key] = bcadd('50', '0', $scale);
                 } else {
-                    $h[$key] = 100;
+                    $h[$key] = bcadd('100', '0', $scale);
                 }
             }
+            unset($h);
         }
 
         return $key;
     }
-
     public function roc(&$tickers, $delay = 1, $index = 'close')
     {
         global $debug;
@@ -1081,11 +1154,15 @@ trait Technical
         return $keys;
     }
 
-    public function atr(&$tickers, $period = 14, string $average_function = 'sma')
+    public function atr(&$tickers, $period = 14, string $average_function = 'smma')
     {
         global $debug;
         if ($debug) {
-            echo "atr(tickers, $period = 14, $average_function = 'sma')".PHP_EOL;
+            echo "atr(tickers, $period = 14, $average_function = 'smma')".PHP_EOL;
+        }
+
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('ATR period must be greater than zero.');
         }
 
         $t = end($tickers);
@@ -1095,44 +1172,52 @@ trait Technical
             $tr_key = $this->tr($tickers);
             $average_function = strtolower($average_function);
 
-            if (! in_array($average_function, ['sma', 'ema'], true)) {
-                $average_function = 'sma';
+            if (! in_array($average_function, ['sma', 'ema', 'smma'], true)) {
+                $average_function = 'smma';
             }
 
-            $source_key = $average_function === 'ema'
-                ? $this->ema($tickers, $period, $tr_key)
-                : $this->sma($tickers, $period, $tr_key);
+            $source_key = match ($average_function) {
+                'ema' => $this->ema($tickers, $period, $tr_key),
+                'sma' => $this->sma($tickers, $period, $tr_key),
+                default => $this->smma($tickers, $period, $tr_key),
+            };
 
-            // Rename ema/sma(period,tr) new key into the stable ATR key.
             $this->rename_key($tickers, $source_key, $key);
         }
 
         return $key;
     }
-
-    public function atrp(&$tickers, $period = 14, string $average_function = 'sma')
+    public function atrp(&$tickers, $period = 14, string $average_function = 'smma')
     {
         global $debug;
         if ($debug) {
-            echo "atrp(tickers, $period = 14)".PHP_EOL;
+            echo "atrp(tickers, $period = 14, $average_function = 'smma')".PHP_EOL;
         }
 
         $t = end($tickers);
         $key = 'atrp('.$period.')';
         if (! array_key_exists($key, $t)) {
+            $scale = EXCHANGE_ROUND_DECIMALS * 2;
             $atr_key = $this->atr($tickers, $period, $average_function);
+
             reset($tickers);
             foreach ($tickers as &$h) {
-                if (floatval($h['close']) == 0.0) {
-                    $c = $this->bcpow10(EXCHANGE_ROUND_DECIMALS * -1, EXCHANGE_ROUND_DECIMALS);
-                } else {
-                    $c = $h['close'];
+                $close = (string) $h['close'];
+                if (bccomp($close, '0', $scale) === 0) {
+                    $close = $this->bcpow10(EXCHANGE_ROUND_DECIMALS * -1, $scale);
                 }
-                $h[$key] = bcmul(bcdiv($h[$atr_key], $c, EXCHANGE_ROUND_DECIMALS * 2), 100, EXCHANGE_ROUND_DECIMALS * 2);
+
+                $h[$key] = bcmul(
+                    bcdiv((string) $h[$atr_key], $close, $scale),
+                    '100',
+                    $scale
+                );
+
                 if ($debug) {
-                    echo "atrp($period) = 100 * atr($period) / close = 100 * ".$h[$atr_key].'/'.$h['close'].' = '.$h[$key].PHP_EOL;
+                    echo "atrp($period) = 100 * atr($period) / close = ".$h[$key].PHP_EOL;
                 }
             }
+            unset($h);
         }
 
         return $key;
@@ -1146,27 +1231,45 @@ trait Technical
             echo "smma(tickers, $period = 20, $index = 'close')".PHP_EOL;
         }
 
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('SMMA period must be greater than zero.');
+        }
+
         $key = 'smma('.$period.','.$index.')';
         $t = end($tickers);
+
         if (! array_key_exists($key, $t)) {
-            $sma_key = $this->sma($tickers, $period, $index);
+            $scale = EXCHANGE_ROUND_DECIMALS * 2;
+            $sum = '0';
             $i = 0;
-            $k = $period - 1;
+            $period_minus_one = bcsub((string) $period, '1', 0);
+
             reset($tickers);
-            foreach ($tickers as &$h) {      // Last element is the most rescent
-                if ($i == 0) {
-                    $h[$key] = $h[$sma_key];
-                    $i = 1;
+            foreach ($tickers as &$h) {
+                $i++;
+
+                if ($i <= $period) {
+                    $sum = bcadd($sum, (string) $h[$index], $scale);
+                    $h[$key] = bcdiv($sum, (string) $i, $scale);
                 } else {
-                    $h[$key] = bcdiv(bcadd(bcmul($p[$key], $k, EXCHANGE_ROUND_DECIMALS * 2), $h[$index], EXCHANGE_ROUND_DECIMALS * 2), $period, EXCHANGE_ROUND_DECIMALS * 2);
+                    $h[$key] = bcdiv(
+                        bcadd(
+                            bcmul((string) $p[$key], $period_minus_one, $scale),
+                            (string) $h[$index],
+                            $scale
+                        ),
+                        (string) $period,
+                        $scale
+                    );
                 }
+
                 $p = $h;
             }
+            unset($h);
         }
 
         return $key;
     }
-
     public function adx(&$tickers, $period = 14)
     {
         global $debug;

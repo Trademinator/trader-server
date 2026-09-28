@@ -23,7 +23,7 @@ If your deployment normally uses cached configuration/routes/views, rebuild thos
 
 **Do not regenerate APP_KEY, run `migrate:fresh`, `migrate:refresh`, or `db:wipe`.** The new migration only creates `market_preference_profiles`; it does not empty or modify users, exchanges, market subscriptions or candle data. Keep APP_KEY with your backups because questionnaire answers are encrypted with it.
 
-No new Composer/npm dependency, Artisan command, cron entry, queue job or permanent daemon is required. Existing market collection continues as documented in [crontabs.md](crontabs.md). The complete command reference remains [CLI.md](CLI.md).
+No new Composer/npm dependency, Artisan command, cron entry, queue job or permanent daemon is required. Existing market collection continues as documented in [CRONTABS.md](CRONTABS.md). The complete command reference remains [CLI.md](CLI.md).
 
 ## Subscriber flow
 
