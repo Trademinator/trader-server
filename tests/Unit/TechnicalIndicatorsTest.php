@@ -226,3 +226,31 @@ it('maps a flat mature stochastic RSI window to neutral 50', function () {
     expect(end($candles)[$fastK])->toBe('50.0000000000000000');
 });
 
+it('calculates percentage change relative to the base value with BCMath', function () {
+    $candles = [
+        ['open' => '100.00000000', 'close' => '110.00000000'],
+        ['open' => '200.00000000', 'close' => '180.00000000'],
+    ];
+
+    $key = m0Technical()->percentage($candles, 'close', 'open');
+
+    expect($candles[0][$key])->toBe('10.0000000000000000')
+        ->and($candles[1][$key])->toBe('-10.0000000000000000');
+});
+
+it('keeps ROC neutral until the requested lag exists and then uses the exact base candle', function () {
+    $candles = array_map(
+        fn ($close) => ['close' => $close],
+        ['100.00000000', '110.00000000', '121.00000000', '133.10000000']
+    );
+
+    $key = m0Technical()->roc($candles, 2, 'close');
+
+    expect(array_column($candles, $key))->toBe([
+        '0.0000000000000000',
+        '0.0000000000000000',
+        '21.0000000000000000',
+        '21.0000000000000000',
+    ]);
+});
+

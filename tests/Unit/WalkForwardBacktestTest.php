@@ -1,5 +1,7 @@
 <?php
 
+use App\Domain\Features\FeatureEngine;
+
 use App\Domain\Research\BaselineBacktester;
 use App\Domain\Research\WalkForward;
 
@@ -12,7 +14,7 @@ function researchRows(int $count = 16): array
 function researchManifest(): array
 {
     return ['dataset_id' => 'test', 'rows_sha256' => 'hash', 'keys' => ['trend.direction'],
-        'feature_version' => 'm2-v1', 'label_definition' => ['horizon' => 2]];
+        'feature_version' => FeatureEngine::VERSION, 'label_definition' => ['horizon' => 2]];
 }
 
 it('purges labels reaching the validation boundary and never shuffles or overlaps test blocks', function () {

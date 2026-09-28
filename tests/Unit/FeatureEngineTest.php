@@ -2,6 +2,7 @@
 
 use App\Domain\Features\ContextFeatures;
 use App\Domain\Features\FeatureEngine;
+use App\Traits\Technical;
 
 function m2Candles(int $count = 80, bool $flat = false): array
 {
@@ -22,8 +23,8 @@ it('has reproducible causal features and explicit warm up', function () {
     $long = iterator_to_array($engine->rows(m2Candles(80), '1m', PHP_INT_MAX));
     expect(array_slice($long, 0, 40))->toBe($short)
         ->and($short[1]['indicators']['ema(3,close)'])->toBeNull()
-        ->and($short[2]['indicators']['ema(3,close)'])->toBe(101.0)
-        ->and($short[3]['indicators']['rsi(3)'])->toBe(100.0)
+        ->and($short[2]['indicators']['ema(3,close)'])->toBe('101.0000000000000000')
+        ->and($short[3]['indicators']['rsi(3)'])->toBe('100.0000000000000000')
         ->and($short[26]['technical_ready'])->toBeFalse()
         ->and($short[27]['technical_ready'])->toBeTrue()
         ->and(array_keys($short[39]['features']))->toBe(FeatureEngine::KEYS);
@@ -63,7 +64,7 @@ it('rejects duplicates unsorted timestamps and invalid prices', function () {
 it('uses elapsed time for daily returns', function () {
     $rows = iterator_to_array((new FeatureEngine)->rows(m2Candles(1441), '1m', PHP_INT_MAX));
     expect($rows[1439]['features']['return.24h'])->toBeNull()
-        ->and($rows[1440]['indicators']['return(24h)'])->toBe(14.4)
+        ->and($rows[1440]['indicators']['return(24h)'])->toBe('14.4000000000000000')
         ->and($rows[1440]['features']['return.7d'])->toBeNull();
 });
 
@@ -94,3 +95,36 @@ it('expires provider data independently of its receipt time and rejects malforme
         ->and($row['features']['context.price_deviation'])->toBeNull()
         ->and($context->calculate($snapshot, 100, 1051, 1000)['snapshot_id'])->toBeNull();
 });
+
+it('uses Technical as the single source of truth for technical indicator math', function () {
+    expect(class_uses(FeatureEngine::class))->toHaveKey(Technical::class);
+
+    $source = m2Candles(80);
+    $traitCandles = $source;
+    $technical = new class
+    {
+        use Technical;
+    };
+
+    $ema3 = $technical->ema($traitCandles, 3, 'close');
+    $ema12 = $technical->ema($traitCandles, 12, 'close');
+    $rsi3 = $technical->rsi($traitCandles, 3);
+    $rsi14 = $technical->rsi($traitCandles, 14);
+    [$stochRsi14] = $technical->sto_rsi($traitCandles, 14, 3, 3);
+    $cci20 = $technical->cci($traitCandles, 20);
+    $atrp3 = $technical->atrp($traitCandles, 3);
+    $atrp14 = $technical->atrp($traitCandles, 14);
+
+    $rows = iterator_to_array((new FeatureEngine)->rows($source, '1m', PHP_INT_MAX));
+    foreach ([27, 39, 79] as $i) {
+        expect($rows[$i]['indicators']['ema(3,close)'])->toBe($traitCandles[$i][$ema3])
+            ->and($rows[$i]['indicators']['ema(12,close)'])->toBe($traitCandles[$i][$ema12])
+            ->and($rows[$i]['indicators']['rsi(3)'])->toBe($traitCandles[$i][$rsi3])
+            ->and($rows[$i]['indicators']['rsi(14)'])->toBe($traitCandles[$i][$rsi14])
+            ->and($rows[$i]['indicators']['stoch_rsi(14,14)'])->toBe($traitCandles[$i][$stochRsi14])
+            ->and($rows[$i]['indicators']['cci(20)'])->toBe($traitCandles[$i][$cci20])
+            ->and($rows[$i]['indicators']['atrp(3)'])->toBe($traitCandles[$i][$atrp3])
+            ->and($rows[$i]['indicators']['atrp(14)'])->toBe($traitCandles[$i][$atrp14]);
+    }
+});
+

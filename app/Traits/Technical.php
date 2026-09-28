@@ -52,6 +52,376 @@ trait Technical
         return $normalized_key;
     }
 
+
+    /** Incremental SMA primitive shared by batch indicators and streaming consumers. */
+    public function technical_sma_next(array &$state, mixed $value, int $period, int $scale = EXCHANGE_ROUND_DECIMALS): string
+    {
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('SMA period must be greater than zero.');
+        }
+
+        $state += ['sum' => '0', 'buffer' => [], 'position' => 0, 'size' => 0];
+        $value = (string) $value;
+
+        if ($state['size'] < $period) {
+            $state['buffer'][$state['size']] = $value;
+            $state['size']++;
+        } else {
+            $state['sum'] = bcsub($state['sum'], (string) $state['buffer'][$state['position']], $scale);
+            $state['buffer'][$state['position']] = $value;
+            $state['position'] = ($state['position'] + 1) % $period;
+        }
+
+        $state['sum'] = bcadd($state['sum'], $value, $scale);
+        $state['value'] = bcdiv($state['sum'], (string) $state['size'], $scale);
+
+        return $state['value'];
+    }
+
+    /** Incremental EMA primitive. The first mature value is seeded from the period SMA. */
+    public function technical_ema_next(array &$state, mixed $value, int $period): string
+    {
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('EMA period must be greater than zero.');
+        }
+
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $value = (string) $value;
+        $state += ['count' => 0, 'sum' => '0', 'value' => '0'];
+        $state['count']++;
+
+        if ($period === 1) {
+            $state['value'] = bcadd($value, '0', $scale);
+
+            return $state['value'];
+        }
+
+        if ($state['count'] <= $period) {
+            $state['sum'] = bcadd($state['sum'], $value, $scale);
+            $state['value'] = bcdiv($state['sum'], (string) $state['count'], $scale);
+
+            return $state['value'];
+        }
+
+        $alpha = bcdiv('2', bcadd((string) $period, '1', $scale), $scale);
+        $delta = bcsub($value, $state['value'], $scale);
+        $state['value'] = bcadd($state['value'], bcmul($alpha, $delta, $scale), $scale);
+
+        return $state['value'];
+    }
+
+    /** Incremental Wilder/SMMA primitive seeded by the first complete-period SMA. */
+    public function technical_smma_next(array &$state, mixed $value, int $period): string
+    {
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('SMMA period must be greater than zero.');
+        }
+
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $value = (string) $value;
+        $state += ['count' => 0, 'sum' => '0', 'value' => '0'];
+        $state['count']++;
+
+        if ($state['count'] <= $period) {
+            $state['sum'] = bcadd($state['sum'], $value, $scale);
+            $state['value'] = bcdiv($state['sum'], (string) $state['count'], $scale);
+
+            return $state['value'];
+        }
+
+        $periodMinusOne = bcsub((string) $period, '1', 0);
+        $state['value'] = bcdiv(
+            bcadd(bcmul($state['value'], $periodMinusOne, $scale), $value, $scale),
+            (string) $period,
+            $scale
+        );
+
+        return $state['value'];
+    }
+
+    /** Incremental Wilder gain/loss state used by RSI. */
+    public function technical_gain_loss_next(array &$state, mixed $close, int $period): array
+    {
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('Gain period must be greater than zero.');
+        }
+
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $close = (string) $close;
+        $state += [
+            'previous_close' => null, 'delta_count' => 0,
+            'gain_sum' => '0', 'loss_sum' => '0',
+            'average_gain' => '0', 'average_loss' => '0',
+        ];
+
+        if ($state['previous_close'] === null) {
+            $state['previous_close'] = $close;
+
+            return [
+                'delta' => bcadd('0', '0', $scale),
+                'gain' => bcadd('0', '0', $scale),
+                'loss' => bcadd('0', '0', $scale),
+                'average_gain' => bcadd('0', '0', $scale),
+                'average_loss' => bcadd('0', '0', $scale),
+                'mature' => false,
+            ];
+        }
+
+        $delta = bcsub($close, (string) $state['previous_close'], $scale);
+        $gain = bccomp($delta, '0', $scale) < 0 ? bcadd('0', '0', $scale) : $delta;
+        $loss = bccomp($delta, '0', $scale) < 0 ? $this->bcabs($delta) : bcadd('0', '0', $scale);
+        $state['delta_count']++;
+
+        if ($state['delta_count'] <= $period) {
+            $state['gain_sum'] = bcadd($state['gain_sum'], $gain, $scale);
+            $state['loss_sum'] = bcadd($state['loss_sum'], $loss, $scale);
+            $state['average_gain'] = bcdiv($state['gain_sum'], (string) $state['delta_count'], $scale);
+            $state['average_loss'] = bcdiv($state['loss_sum'], (string) $state['delta_count'], $scale);
+        } else {
+            $periodMinusOne = bcsub((string) $period, '1', 0);
+            $state['average_gain'] = bcdiv(
+                bcadd(bcmul($state['average_gain'], $periodMinusOne, $scale), $gain, $scale),
+                (string) $period,
+                $scale
+            );
+            $state['average_loss'] = bcdiv(
+                bcadd(bcmul($state['average_loss'], $periodMinusOne, $scale), $loss, $scale),
+                (string) $period,
+                $scale
+            );
+        }
+
+        $state['previous_close'] = $close;
+
+        return [
+            'delta' => $delta,
+            'gain' => $gain,
+            'loss' => $loss,
+            'average_gain' => $state['average_gain'],
+            'average_loss' => $state['average_loss'],
+            'mature' => $state['delta_count'] >= $period,
+        ];
+    }
+
+    /** Incremental Wilder RSI primitive. */
+    public function technical_rsi_next(array &$state, mixed $close, int $period): array
+    {
+        $parts = $this->technical_gain_loss_next($state, $close, $period);
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+
+        if (bccomp($parts['average_loss'], '0', $scale) > 0) {
+            $rs = bcdiv($parts['average_gain'], $parts['average_loss'], $scale);
+            $value = bcsub('100', bcdiv('100', bcadd('1', $rs, $scale), $scale), $scale);
+        } elseif (bccomp($parts['average_gain'], '0', $scale) === 0) {
+            $value = bcadd('50', '0', $scale);
+        } else {
+            $value = bcadd('100', '0', $scale);
+        }
+
+        return $parts + ['value' => $value];
+    }
+
+    /** True range for one candle. */
+    public function technical_true_range_value(mixed $high, mixed $low, mixed $previousClose = null): string
+    {
+        $scale = EXCHANGE_ROUND_DECIMALS;
+        $high = (string) $high;
+        $low = (string) $low;
+        $previousClose = $previousClose === null ? $low : (string) $previousClose;
+
+        return $this->bcmax(
+            bcsub($high, $low, $scale),
+            $this->bcabs(bcsub($high, $previousClose, $scale)),
+            $this->bcabs(bcsub($previousClose, $low, $scale))
+        );
+    }
+
+    /** Incremental Wilder ATR percentage primitive. */
+    public function technical_atrp_next(array &$state, mixed $high, mixed $low, mixed $close, int $period): array
+    {
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $close = (string) $close;
+        $state += ['previous_close' => null, 'average' => []];
+        $tr = $this->technical_true_range_value($high, $low, $state['previous_close']);
+        $atr = $this->technical_smma_next($state['average'], $tr, $period);
+        $state['previous_close'] = $close;
+
+        if (bccomp($close, '0', $scale) === 0) {
+            $close = $this->bcpow10(EXCHANGE_ROUND_DECIMALS * -1, $scale);
+        }
+
+        return [
+            'tr' => $tr,
+            'atr' => $atr,
+            'value' => bcmul(bcdiv($atr, $close, $scale), '100', $scale),
+            'mature' => ($state['average']['count'] ?? 0) >= $period,
+        ];
+    }
+
+    /** Typical price for one candle. */
+    public function technical_typical_price_value(mixed $high, mixed $low, mixed $close): string
+    {
+        $scale = EXCHANGE_ROUND_DECIMALS;
+        $sum = bcadd((string) $high, (string) $low, $scale);
+        $sum = bcadd($sum, (string) $close, $scale);
+
+        return bcdiv($sum, '3', $scale);
+    }
+
+    /** Incremental CCI primitive using the same rolling SMA and mean absolute deviation contract as cci(). */
+    public function technical_cci_next(array &$state, mixed $high, mixed $low, mixed $close, int $period): array
+    {
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('CCI period must be greater than zero.');
+        }
+
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $state += ['average' => []];
+        $tp = $this->technical_typical_price_value($high, $low, $close);
+        $mean = $this->technical_sma_next($state['average'], $tp, $period, EXCHANGE_ROUND_DECIMALS);
+        $deviationSum = '0';
+
+        foreach ($state['average']['buffer'] as $value) {
+            $deviationSum = bcadd(
+                $deviationSum,
+                $this->bcabs(bcsub((string) $value, $mean, $scale)),
+                $scale
+            );
+        }
+
+        $mad = bcdiv($deviationSum, (string) $state['average']['size'], $scale);
+        $denominator = bcmul($mad, '0.015', $scale);
+        $value = bccomp($denominator, '0', $scale) === 0
+            ? '0'
+            : bcdiv(bcsub($tp, $mean, $scale), $denominator, $scale);
+
+        return [
+            'typical_price' => $tp,
+            'mean' => $mean,
+            'mad' => $mad,
+            'value' => $value,
+            'mature' => $state['average']['size'] >= $period,
+        ];
+    }
+
+    /** Incremental fast Stochastic RSI primitive. */
+    public function technical_stoch_rsi_next(array &$state, mixed $rsi, bool $rsiMature, int $period = 14): array
+    {
+        if ($period <= 0) {
+            throw new \InvalidArgumentException('Stochastic RSI period must be greater than zero.');
+        }
+
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $state += ['buffer' => []];
+
+        if (! $rsiMature) {
+            return ['value' => bcadd('50', '0', $scale), 'mature' => false];
+        }
+
+        $state['buffer'][] = (string) $rsi;
+        if (count($state['buffer']) > $period) {
+            array_shift($state['buffer']);
+        }
+
+        if (count($state['buffer']) < $period) {
+            return ['value' => bcadd('50', '0', $scale), 'mature' => false];
+        }
+
+        $min = $state['buffer'][0];
+        $max = $state['buffer'][0];
+        foreach ($state['buffer'] as $value) {
+            if (bccomp((string) $value, $min, $scale) < 0) {
+                $min = (string) $value;
+            }
+            if (bccomp((string) $value, $max, $scale) > 0) {
+                $max = (string) $value;
+            }
+        }
+
+        $span = bcsub($max, $min, $scale);
+        $value = bccomp($span, '0', $scale) === 0
+            ? bcadd('50', '0', $scale)
+            : bcmul('100', bcdiv(bcsub((string) $rsi, $min, $scale), $span, $scale), $scale);
+
+        return ['value' => $value, 'mature' => true];
+    }
+
+    /** Signed fractional change (current-base)/base. */
+    public function technical_relative_change_value(mixed $current, mixed $base): ?string
+    {
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $base = (string) $base;
+        if (bccomp($base, '0', $scale) === 0) {
+            return null;
+        }
+
+        return bcdiv(bcsub((string) $current, $base, $scale), $base, $scale);
+    }
+
+    /** Signed difference divided by a third value. */
+    public function technical_normalized_difference_value(mixed $a, mixed $b, mixed $denominator): ?string
+    {
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $denominator = (string) $denominator;
+        if (bccomp($denominator, '0', $scale) === 0) {
+            return null;
+        }
+
+        return bcdiv(bcsub((string) $a, (string) $b, $scale), $denominator, $scale);
+    }
+
+    public function technical_compare_value(mixed $a, mixed $b): int
+    {
+        return bccomp((string) $a, (string) $b, EXCHANGE_ROUND_DECIMALS * 2);
+    }
+
+    /** Candle geometry fractions and direction, calculated entirely with BCMath. */
+    public function technical_candle_geometry(mixed $open, mixed $high, mixed $low, mixed $close): array
+    {
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $open = (string) $open;
+        $high = (string) $high;
+        $low = (string) $low;
+        $close = (string) $close;
+        $range = bcsub($high, $low, $scale);
+
+        if (bccomp($range, '0', $scale) === 0) {
+            return [
+                'body' => bcadd('0', '0', $scale),
+                'upper_wick' => bcadd('0', '0', $scale),
+                'lower_wick' => bcadd('0', '0', $scale),
+                'direction' => $this->technical_compare_value($close, $open),
+            ];
+        }
+
+        $upperBody = $this->bcmax($open, $close);
+        $lowerBody = $this->bcmin($open, $close);
+
+        return [
+            'body' => bcdiv($this->bcabs(bcsub($close, $open, $scale)), $range, $scale),
+            'upper_wick' => bcdiv(bcsub($high, $upperBody, $scale), $range, $scale),
+            'lower_wick' => bcdiv(bcsub($lowerBody, $low, $scale), $range, $scale),
+            'direction' => $this->technical_compare_value($close, $open),
+        ];
+    }
+
+    /** Incremental volume-vs-SMA activity, as a signed fractional change. */
+    public function technical_volume_activity_next(array &$state, mixed $volume, int $period = 20): array
+    {
+        $state += ['average' => []];
+        $mean = $this->technical_sma_next($state['average'], $volume, $period, EXCHANGE_ROUND_DECIMALS);
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $value = bccomp($mean, '0', $scale) === 0
+            ? bcadd('0', '0', $scale)
+            : $this->technical_relative_change_value($volume, $mean);
+
+        return [
+            'mean' => $mean,
+            'value' => $value,
+            'mature' => $state['average']['size'] >= $period,
+        ];
+    }
+
     // Exponential Moving Average
     public function ema(&$tickers, $period = 2, $index = 'close')
     {
@@ -61,54 +431,28 @@ trait Technical
             echo "ema(tickers, $period = 2, $index = 'close')".PHP_EOL;
         }
 
-        if ($period <= 0) {
-            throw new \InvalidArgumentException('EMA period must be greater than zero.');
-        }
-
         $key = 'ema('.$period.','.$index.')';
         $t = end($tickers);
-
         if (! array_key_exists($key, $t)) {
-            if ($period == 1) {
+            if ((int) $period === 1) {
                 $this->clone_key($tickers, $index, $key);
 
                 return $key;
             }
 
-            $scale = EXCHANGE_ROUND_DECIMALS * 2;
-            $sum = '0';
-            $i = 0;
-            $alpha = bcdiv('2', bcadd((string) $period, '1', $scale), $scale);
-
+            $state = [];
             reset($tickers);
             foreach ($tickers as &$h) {
-                $i++;
-
-                if ($i <= $period) {
-                    $sum = bcadd($sum, (string) $h[$index], $scale);
-                    $h[$key] = bcdiv($sum, (string) $i, $scale);
-                } else {
-                    $delta = bcsub((string) $h[$index], (string) $p[$key], $scale);
-                    $h[$key] = bcadd(
-                        (string) $p[$key],
-                        bcmul($alpha, $delta, $scale),
-                        $scale
-                    );
-                }
-
+                $h[$key] = $this->technical_ema_next($state, $h[$index], (int) $period);
                 if ($debug) {
                     echo "ema($period, $index) = ".$h[$key].PHP_EOL;
                 }
-
-                $p = $h;
             }
             unset($h);
         }
 
         return $key;
     }
-
-    // Typical Price
     public function tp(&$tickers)
     {
         global $debug;
@@ -139,32 +483,20 @@ trait Technical
             echo 'tr(tickers)'.PHP_EOL;
         }
 
-        $i = 1;
         $key = 'tr()';
         $t = end($tickers);
         if (! array_key_exists($key, $t)) {
+            $previousClose = null;
             reset($tickers);
-            foreach ($tickers as &$h) {      // Last element is the most rescent
-                if ($i == 1) {
-                    $previous_close = $h['low'];
-                } else {
-                    $previous_close = $p['close'];
-                }
-                $tr1 = bcsub($h['high'], $h['low'], EXCHANGE_ROUND_DECIMALS);
-                $tr2 = $this->bcabs(bcsub($h['high'], $previous_close, EXCHANGE_ROUND_DECIMALS));
-                $tr3 = $this->bcabs(bcsub($previous_close, $h['low'], EXCHANGE_ROUND_DECIMALS));
-                $p = $h;
-                $i++;
-                $h[$key] = $this->bcmax($tr1, $tr2, $tr3);
-                if ($debug) {
-                    echo "tr() = max($tr1, $tr2, $tr3) = ".$h[$key].PHP_EOL;
-                }
+            foreach ($tickers as &$h) {
+                $h[$key] = $this->technical_true_range_value($h['high'], $h['low'], $previousClose);
+                $previousClose = (string) $h['close'];
             }
+            unset($h);
         }
 
         return $key;
     }
-
     public function min_max(&$tickers, $period = 30, $index = 'close', $decimals = EXCHANGE_ROUND_DECIMALS)
     {
         global $debug;
@@ -309,21 +641,20 @@ trait Technical
         $key = 'percentage('.$index1.','.$index2.')';
 
         if (! array_key_exists($key, $t)) {
+            $scale = EXCHANGE_ROUND_DECIMALS * 2;
             reset($tickers);
             foreach ($tickers as &$h) {
-                $h[$key] = bcmul(
-                    bcdiv(
-                        bcsub(
-                            $h[$index1],
-                            $h[$index2], EXCHANGE_ROUND_DECIMALS * 8),
-                        $h[$index1], EXCHANGE_ROUND_DECIMALS * 8),
-                    100, 8);
+                $base = (string) $h[$index2];
+                $change = $this->technical_relative_change_value($h[$index1], $base);
+                $h[$key] = $change === null
+                    ? bcadd('0', '0', $scale)
+                    : bcmul($change, '100', $scale);
             }
+            unset($h);
         }
 
         return $key;
     }
-
     public function difference(&$tickers, $index1 = 'close', $index2 = 'open')
     {
         global $debug;
@@ -528,47 +859,17 @@ trait Technical
 
         $key = 'sma('.$period.','.$index.')';
         $t = end($tickers);
-
         if (! array_key_exists($key, $t)) {
-            $sum = '0';
-            $buffer = [];
-            $position = 0;
-            $window_size = 0;
-
+            $state = [];
             reset($tickers);
-            foreach ($tickers as &$h) {      // Last element is the most recent
-                $value = $h[$index];
-
-                if ($window_size < $period) {
-                    $buffer[$window_size] = $value;
-                    $window_size++;
-                } else {
-                    $sum = bcsub($sum, $buffer[$position], EXCHANGE_ROUND_DECIMALS);
-                    $buffer[$position] = $value;
-                    $position = ($position + 1) % $period;
-                }
-
-                $sum = bcadd($sum, $value, EXCHANGE_ROUND_DECIMALS);
-                $h[$key] = bcdiv($sum, (string) $window_size, EXCHANGE_ROUND_DECIMALS);
-
-                if ($debug) {
-                    $debug_buffer = ($window_size < $period || $position === 0)
-                        ? $buffer
-                        : array_merge(
-                            array_slice($buffer, $position),
-                            array_slice($buffer, 0, $position)
-                        );
-
-                    echo "sma($period, $index) = sum(".implode(',', $debug_buffer).")/$window_size = $sum/$window_size = ".$h[$key].PHP_EOL;
-                }
+            foreach ($tickers as &$h) {
+                $h[$key] = $this->technical_sma_next($state, $h[$index], (int) $period);
             }
             unset($h);
         }
 
         return $key;
     }
-
-    // Stochastic Price
     public function sto(&$tickers, $period1 = 14, $period2 = 3, $period3 = 3)
     {
         global $debug;
@@ -931,78 +1232,21 @@ trait Technical
             echo "gain(tickers, $period = 14)".PHP_EOL;
         }
 
-        if ($period <= 0) {
-            throw new \InvalidArgumentException('Gain period must be greater than zero.');
-        }
-
         $agkey = 'average_gain('.$period.')';
         $alkey = 'average_loss('.$period.')';
         $dkey = 'delta('.$period.')';
         $t = end($tickers);
 
         if (! array_key_exists($agkey, $t) || ! array_key_exists($alkey, $t)) {
-            $scale = EXCHANGE_ROUND_DECIMALS * 2;
-            $delta_count = 0;
-            $gain_sum = '0';
-            $loss_sum = '0';
-            $previous_average_gain = '0';
-            $previous_average_loss = '0';
-            $first = true;
-
+            $state = [];
             reset($tickers);
             foreach ($tickers as &$h) {
-                if ($first) {
-                    $h[$dkey] = bcadd('0', '0', $scale);
-                    $h['gain'] = bcadd('0', '0', $scale);
-                    $h['loss'] = bcadd('0', '0', $scale);
-                    $h[$agkey] = bcadd('0', '0', $scale);
-                    $h[$alkey] = bcadd('0', '0', $scale);
-                    $first = false;
-                } else {
-                    $delta = bcsub((string) $h['close'], (string) $p['close'], $scale);
-                    $h[$dkey] = $delta;
-
-                    if (bccomp($delta, '0', $scale) < 0) {
-                        $h['gain'] = bcadd('0', '0', $scale);
-                        $h['loss'] = $this->bcabs($delta);
-                    } else {
-                        $h['gain'] = $delta;
-                        $h['loss'] = bcadd('0', '0', $scale);
-                    }
-
-                    $delta_count++;
-
-                    if ($delta_count <= $period) {
-                        $gain_sum = bcadd($gain_sum, (string) $h['gain'], $scale);
-                        $loss_sum = bcadd($loss_sum, (string) $h['loss'], $scale);
-                        $h[$agkey] = bcdiv($gain_sum, (string) $delta_count, $scale);
-                        $h[$alkey] = bcdiv($loss_sum, (string) $delta_count, $scale);
-                    } else {
-                        $period_minus_one = bcsub((string) $period, '1', 0);
-                        $h[$agkey] = bcdiv(
-                            bcadd(
-                                bcmul($previous_average_gain, $period_minus_one, $scale),
-                                (string) $h['gain'],
-                                $scale
-                            ),
-                            (string) $period,
-                            $scale
-                        );
-                        $h[$alkey] = bcdiv(
-                            bcadd(
-                                bcmul($previous_average_loss, $period_minus_one, $scale),
-                                (string) $h['loss'],
-                                $scale
-                            ),
-                            (string) $period,
-                            $scale
-                        );
-                    }
-                }
-
-                $previous_average_gain = (string) $h[$agkey];
-                $previous_average_loss = (string) $h[$alkey];
-                $p = $h;
+                $parts = $this->technical_gain_loss_next($state, $h['close'], (int) $period);
+                $h[$dkey] = $parts['delta'];
+                $h['gain'] = $parts['gain'];
+                $h['loss'] = $parts['loss'];
+                $h[$agkey] = $parts['average_gain'];
+                $h[$alkey] = $parts['average_loss'];
             }
             unset($h);
         }
@@ -1058,27 +1302,37 @@ trait Technical
             echo "roc(tickers, $delay = 1, $index = 'close')".PHP_EOL;
         }
 
+        if ($delay <= 0) {
+            throw new \InvalidArgumentException('ROC delay must be greater than zero.');
+        }
+
         $key = 'roc('.$delay.','.$index.')';
         $t = end($tickers);
 
         if (! array_key_exists($key, $t)) {
-            $delayed_index = $this->delayed($tickers, $delay, $index);
+            $scale = EXCHANGE_ROUND_DECIMALS * 2;
+            $delayedIndex = $this->delayed($tickers, $delay, $index);
+            $i = 0;
 
             reset($tickers);
-            $i = 0;
-            foreach ($tickers as &$h) {      // Last element is most rescent
-                if ($i == 0) {
-                    $h[$key] = '100.00';
-                    $i = 1;
-                } else {
-                    $h[$key] = bcmul(bcdiv(bcsub($h[$index], $h[$delayed_index], EXCHANGE_ROUND_DECIMALS * 2), $h[$delayed_index], EXCHANGE_ROUND_DECIMALS * 2), 100, 2);
+            foreach ($tickers as &$h) {
+                if ($i < $delay) {
+                    $h[$key] = bcadd('0', '0', $scale);
+                    $i++;
+                    continue;
                 }
+
+                $change = $this->technical_relative_change_value($h[$index], $h[$delayedIndex]);
+                $h[$key] = $change === null
+                    ? bcadd('0', '0', $scale)
+                    : bcmul($change, '100', $scale);
+                $i++;
             }
+            unset($h);
         }
 
         return $key;
     }
-
     public function macd(&$tickers, $short_period = 12, $long_period = 26, $signal_period = 9)
     {
         global $debug;
@@ -1231,39 +1485,13 @@ trait Technical
             echo "smma(tickers, $period = 20, $index = 'close')".PHP_EOL;
         }
 
-        if ($period <= 0) {
-            throw new \InvalidArgumentException('SMMA period must be greater than zero.');
-        }
-
         $key = 'smma('.$period.','.$index.')';
         $t = end($tickers);
-
         if (! array_key_exists($key, $t)) {
-            $scale = EXCHANGE_ROUND_DECIMALS * 2;
-            $sum = '0';
-            $i = 0;
-            $period_minus_one = bcsub((string) $period, '1', 0);
-
+            $state = [];
             reset($tickers);
             foreach ($tickers as &$h) {
-                $i++;
-
-                if ($i <= $period) {
-                    $sum = bcadd($sum, (string) $h[$index], $scale);
-                    $h[$key] = bcdiv($sum, (string) $i, $scale);
-                } else {
-                    $h[$key] = bcdiv(
-                        bcadd(
-                            bcmul((string) $p[$key], $period_minus_one, $scale),
-                            (string) $h[$index],
-                            $scale
-                        ),
-                        (string) $period,
-                        $scale
-                    );
-                }
-
-                $p = $h;
+                $h[$key] = $this->technical_smma_next($state, $h[$index], (int) $period);
             }
             unset($h);
         }

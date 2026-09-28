@@ -1,8 +1,8 @@
 {
-  "release": "Trademinator M3 Final R2",
+  "release": "Trademinator M3 Final R3",
   "date": "2026-09-28",
   "source_repository": "https://github.com/Trademinator/trader-server",
-  "source_commit": "7eb5447da325a1d453f55dbaeb94f95c1883d575",
+  "source_commit": "e0d95cd2b16aad4acd49b1eae0eb51902ac2809f",
   "delivery": "Full source snapshot plus compiled frontend assets",
   "entrypoint_guide": "docs/M3-README.md",
   "cli_reference": "docs/CLI.md",
@@ -32,7 +32,9 @@
   "not_exercised": [
     "MariaDB integration/concurrent-node runtime",
     "Live exchange/CoinGecko APIs and the user server regional reachability",
-    "Full application test suite; targeted suites listed in validation were run."
+    "Full application test suite; targeted suites listed in validation were run.",
+    "The packaged source contains no vendor directory; Laravel/Pest tests require composer install.",
+    "This build runner did not have the PHP BCMath extension, so BCMath runtime tests could not be executed here; PHP syntax validation was run instead."
   ],
   "excluded": [
     ".git",
@@ -172,7 +174,7 @@
     "live_exchange_checks": "Not performed; deterministic exchange fixtures used"
   },
   "r7_new_migration": null,
-  "source_note": "Full snapshot of source_commit plus the market subscription review and layout changes in this archive.",
+  "source_note": "Full snapshot matching GitHub source_commit, plus the trait-backed FeatureEngine/Technical BCMath alignment in this archive.",
   "previous_validation": {
     "php": "8.4.26",
     "database": "SQLite in-memory",
@@ -186,7 +188,7 @@
     "route_cache_regression": "Old compiled route table reproduces the exception; guarded page stays available. An isolated stale on-disk cache is loaded, cleared and rebuilt; all three feature routes and auth are restored. No deployment caches touched.",
     "scope": "Market UI guard and route-cache recovery; core collectors and data models unchanged."
   },
-  "milestone_status": "M3 requested interface work complete; M4 remains separate.",
+  "milestone_status": "M3 interface work complete; trait-backed M2 feature math aligned before M4.",
   "final_update": {
     "new_migration": null,
     "dependency_changes": [
@@ -219,5 +221,18 @@
     "pint": "passed for changed PHP files",
     "browser_visual_check": "Not run: no browser executable available; Blade rendering and frontend behavior tests passed.",
     "scope": "Subscription listing, personal/technical review and authorization, route integration, chart refresh, and preservation of the recent technical indicator fixes."
+  },
+  "technical_alignment": {
+    "feature_version": "m2-v2",
+    "single_source_of_truth": "App\\Traits\\Technical",
+    "bcmath": "All new incremental technical primitives use BCMath for decimal arithmetic.",
+    "streaming": "FeatureEngine remains streaming/bounded-state; it does not materialize full candle history.",
+    "parity_tests": "FeatureEngine raw EMA, RSI, Stochastic RSI, CCI and ATRP outputs are asserted equal to the public Technical batch APIs.",
+    "additional_fixes": [
+      "percentage() now divides by the base value",
+      "roc() stays neutral until its requested lag exists and then uses the exact lag candle"
+    ],
+    "migration": null,
+    "scheduler_changes": false
   }
 }

@@ -3,12 +3,15 @@
 namespace App\Domain\Features;
 
 use App\Domain\MarketData\CandleTimeframe;
+use App\Traits\Technical;
 use InvalidArgumentException;
 
 /** Causal, versioned features. Raw decimal OHLCV is never overwritten. */
 final class FeatureEngine
 {
-    public const VERSION = 'm2-v1';
+    use Technical;
+
+    public const VERSION = 'm2-v2';
 
     public const KEYS = [
         'trend.ema_3_12', 'trend.direction', 'return.4', 'return.12',
@@ -37,10 +40,13 @@ final class FeatureEngine
     public function rows(iterable $candles, string $period, int $cutoffMs): \Generator
     {
         $timeframe = new CandleTimeframe;
-        $window = $ema = $gain = $loss = $atr = $rsiHistory = $lag = [];
-        $previous = $previousTime = null;
+        $previousTime = null;
         $count = 0;
         $historyStart = null;
+        $states = $this->freshTechnicalStates();
+        $barCloses = [];
+        $elapsedCloses = [];
+
         foreach ($candles as $raw) {
             $timestamp = $raw['microtimestamp'] ?? null;
             if (! is_numeric($timestamp) || (float) $timestamp != (int) $timestamp || $timestamp < 0) {
@@ -50,115 +56,144 @@ final class FeatureEngine
             if ($previousTime !== null && $timestamp <= $previousTime) {
                 throw new InvalidArgumentException('Candles must have unique ascending timestamps.');
             }
+
             $closeAt = $timeframe->next($timestamp, $period);
             if ($closeAt > $cutoffMs) {
                 break;
             }
+
             foreach (['open', 'high', 'low', 'close', 'volume'] as $key) {
                 if (! isset($raw[$key]) || ! is_numeric($raw[$key]) || ! is_finite((float) $raw[$key]) || $raw[$key] < 0) {
                     throw new InvalidArgumentException('Invalid OHLCV field: '.$key);
                 }
             }
-            $o = (float) $raw['open'];
-            $h = (float) $raw['high'];
-            $l = (float) $raw['low'];
-            $c = (float) $raw['close'];
-            $v = (float) $raw['volume'];
-            if (min($o, $h, $l, $c) <= 0 || $h < max($o, $c, $l) || $l > min($o, $c)) {
+
+            $o = (string) $raw['open'];
+            $h = (string) $raw['high'];
+            $l = (string) $raw['low'];
+            $c = (string) $raw['close'];
+            $v = (string) $raw['volume'];
+            if ((float) min((float) $o, (float) $h, (float) $l, (float) $c) <= 0
+                || (float) $h < max((float) $o, (float) $c, (float) $l)
+                || (float) $l > min((float) $o, (float) $c)) {
                 throw new InvalidArgumentException('Invalid candle price bounds.');
             }
+
             // Missing intervals break indicator continuity; never synthesize candles.
             if ($previousTime !== null && $timestamp !== $timeframe->next($previousTime, $period)) {
-                $window = $ema = $gain = $loss = $atr = $rsiHistory = $lag = [];
-                $previous = null;
+                $states = $this->freshTechnicalStates();
+                $barCloses = [];
+                $elapsedCloses = [];
                 $count = 0;
                 $historyStart = null;
             }
+
             $historyStart ??= $timestamp;
             $count++;
-            $window[] = ['close' => $c, 'tp' => ($h + $l + $c) / 3, 'volume' => $v];
-            if (count($window) > 20) {
-                array_shift($window);
-            }
             $indicators = [];
             $features = array_fill_keys(self::KEYS, null);
-            foreach ([3, 12] as $p) {
-                if ($count === $p) {
-                    $ema[$p] = array_sum(array_column(array_slice($window, -$p), 'close')) / $p;
-                } elseif ($count > $p) {
-                    $ema[$p] += 2 / ($p + 1) * ($c - $ema[$p]);
-                }
-                $indicators["ema($p,close)"] = $count >= $p ? $ema[$p] : null;
-            }
+
+            // All OHLCV-derived mathematics comes from App\Traits\Technical.
+            $ema3 = $this->technical_ema_next($states['ema'][3], $c, 3);
+            $ema12 = $this->technical_ema_next($states['ema'][12], $c, 12);
+            $indicators['ema(3,close)'] = $count >= 3 ? $ema3 : null;
+            $indicators['ema(12,close)'] = $count >= 12 ? $ema12 : null;
             if ($count >= 12) {
-                $features['trend.ema_3_12'] = self::bounded(($ema[3] - $ema[12]) / $c, 0.05);
-                $features['trend.direction'] = $ema[3] <=> $ema[12];
+                $trend = $this->technical_normalized_difference_value($ema3, $ema12, $c);
+                $features['trend.ema_3_12'] = self::bounded($trend === null ? null : (float) $trend, 0.05);
+                $features['trend.direction'] = $this->technical_compare_value($ema3, $ema12);
             }
+
             foreach ([4, 12] as $p) {
-                $old = $window[count($window) - $p - 1]['close'] ?? null;
-                $indicators["return($p,close)"] = $old === null ? null : $c / $old - 1;
-                $features["return.$p"] = self::bounded($indicators["return($p,close)"], 0.1);
+                $old = $barCloses[count($barCloses) - $p] ?? null;
+                $change = $old === null ? null : $this->technical_relative_change_value($c, $old);
+                $indicators["return($p,close)"] = $change;
+                $features["return.$p"] = self::bounded($change === null ? null : (float) $change, 0.1);
             }
-            foreach ([3, 14] as $p) {
-                $delta = $previous === null ? null : $c - $previous;
-                if ($delta !== null) {
-                    if ($count <= $p + 1) {
-                        $gain[$p] = ($gain[$p] ?? 0) + max(0, $delta) / $p;
-                        $loss[$p] = ($loss[$p] ?? 0) + max(0, -$delta) / $p;
-                    } else {
-                        $gain[$p] = ($gain[$p] * ($p - 1) + max(0, $delta)) / $p;
-                        $loss[$p] = ($loss[$p] * ($p - 1) + max(0, -$delta)) / $p;
-                    }
-                }
-                $rsi = $count <= $p ? null : ($gain[$p] + $loss[$p] == 0 ? 50.0 : 100 * $gain[$p] / ($gain[$p] + $loss[$p]));
-                $indicators["rsi($p)"] = $rsi;
-                $features["momentum.rsi_$p"] = $rsi === null ? null : $rsi / 100;
-                $tr = $previous === null ? $h - $l : max($h - $l, abs($h - $previous), abs($l - $previous));
-                $atr[$p] = $count <= $p ? ($atr[$p] ?? 0) + $tr / $p : ($atr[$p] * ($p - 1) + $tr) / $p;
-                $indicators["atrp($p)"] = $count < $p ? null : 100 * $atr[$p] / $c;
-                $features["volatility.atrp_$p"] = $count < $p ? null : min(1.0, $atr[$p] / $c / 0.1);
+            $barCloses[] = $c;
+            if (count($barCloses) > 12) {
+                array_shift($barCloses);
             }
-            if ($features['momentum.rsi_14'] !== null) {
-                $rsiHistory[] = $features['momentum.rsi_14'];
-                if (count($rsiHistory) > 14) {
-                    array_shift($rsiHistory);
-                }
-                if (count($rsiHistory) === 14) {
-                    $span = max($rsiHistory) - min($rsiHistory);
-                    $features['momentum.stoch_rsi_14'] = $span == 0 ? 0.5 : (end($rsiHistory) - min($rsiHistory)) / $span;
+
+            $rsi3 = $this->technical_rsi_next($states['rsi'][3], $c, 3);
+            $rsi14 = $this->technical_rsi_next($states['rsi'][14], $c, 14);
+            foreach ([3 => $rsi3, 14 => $rsi14] as $p => $rsi) {
+                $indicators["rsi($p)"] = $rsi['mature'] ? $rsi['value'] : null;
+                $features["momentum.rsi_$p"] = $rsi['mature']
+                    ? (float) bcdiv($rsi['value'], '100', EXCHANGE_ROUND_DECIMALS * 2)
+                    : null;
+            }
+
+            $atrp3 = $this->technical_atrp_next($states['atrp'][3], $h, $l, $c, 3);
+            $atrp14 = $this->technical_atrp_next($states['atrp'][14], $h, $l, $c, 14);
+            foreach ([3 => $atrp3, 14 => $atrp14] as $p => $atrp) {
+                $indicators["atrp($p)"] = $atrp['mature'] ? $atrp['value'] : null;
+                if ($atrp['mature']) {
+                    $scaled = bcdiv($atrp['value'], '10', EXCHANGE_ROUND_DECIMALS * 2);
+                    $features["volatility.atrp_$p"] = bccomp($scaled, '1', EXCHANGE_ROUND_DECIMALS * 2) > 0
+                        ? 1.0
+                        : (float) $scaled;
                 }
             }
-            $indicators['stoch_rsi(14,14)'] = $features['momentum.stoch_rsi_14'];
-            $indicators['cci(20)'] = null;
-            if ($count >= 20) {
-                $tp = array_column($window, 'tp');
-                $mean = array_sum($tp) / 20;
-                $mad = array_sum(array_map(fn ($x) => abs($x - $mean), $tp)) / 20;
-                $indicators['cci(20)'] = $mad == 0 ? 0.0 : (end($tp) - $mean) / (0.015 * $mad);
-                $features['momentum.cci_20'] = self::bounded($indicators['cci(20)'], 200);
-                $volumeMean = array_sum(array_column($window, 'volume')) / 20;
-                $features['volume.activity_20'] = $volumeMean == 0 ? 0.5 : self::bounded($v / $volumeMean - 1, 2);
-            }
-            $range = $h - $l;
-            $features['candle.body'] = $range == 0 ? 0.0 : abs($c - $o) / $range;
-            $features['candle.upper_wick'] = $range == 0 ? 0.0 : ($h - max($o, $c)) / $range;
-            $features['candle.lower_wick'] = $range == 0 ? 0.0 : (min($o, $c) - $l) / $range;
-            $features['candle.direction'] = $c <=> $o;
+
+            $stochRsi = $this->technical_stoch_rsi_next(
+                $states['stoch_rsi_14'],
+                $rsi14['value'],
+                $rsi14['mature'],
+                14
+            );
+            $indicators['stoch_rsi(14,14)'] = $stochRsi['mature'] ? $stochRsi['value'] : null;
+            $features['momentum.stoch_rsi_14'] = $stochRsi['mature']
+                ? (float) bcdiv($stochRsi['value'], '100', EXCHANGE_ROUND_DECIMALS * 2)
+                : null;
+
+            $cci = $this->technical_cci_next($states['cci_20'], $h, $l, $c, 20);
+            $indicators['cci(20)'] = $cci['mature'] ? $cci['value'] : null;
+            $features['momentum.cci_20'] = $cci['mature'] ? self::bounded((float) $cci['value'], 200) : null;
+
+            $volume = $this->technical_volume_activity_next($states['volume_20'], $v, 20);
+            $features['volume.activity_20'] = $volume['mature'] ? self::bounded((float) $volume['value'], 2) : null;
+
+            $geometry = $this->technical_candle_geometry($o, $h, $l, $c);
+            $features['candle.body'] = (float) $geometry['body'];
+            $features['candle.upper_wick'] = (float) $geometry['upper_wick'];
+            $features['candle.lower_wick'] = (float) $geometry['lower_wick'];
+            $features['candle.direction'] = $geometry['direction'];
+
             // Exact elapsed-time anchors, not N bars disguised as a day. 30d is not a calendar month.
-            $lag[$timestamp] = $c;
+            $elapsedCloses[$timestamp] = $c;
             foreach (['24h' => 86400000, '7d' => 604800000, '30d' => 2592000000] as $name => $ms) {
-                $old = $lag[$timestamp - $ms] ?? null;
-                $indicators["return($name)"] = $old === null ? null : $c / $old - 1;
-                $features['return.'.$name] = self::bounded($indicators["return($name)"], 0.1);
+                $old = $elapsedCloses[$timestamp - $ms] ?? null;
+                $change = $old === null ? null : $this->technical_relative_change_value($c, $old);
+                $indicators["return($name)"] = $change;
+                $features['return.'.$name] = self::bounded($change === null ? null : (float) $change, 0.1);
             }
-            while (array_key_first($lag) < $timestamp - 2592000000) {
-                unset($lag[array_key_first($lag)]);
+            while ($elapsedCloses !== [] && array_key_first($elapsedCloses) < $timestamp - 2592000000) {
+                unset($elapsedCloses[array_key_first($elapsedCloses)]);
             }
-            $previous = $c;
+
             $previousTime = $timestamp;
-            yield ['close' => $c, 'microtimestamp' => $timestamp, 'available_at_ms' => $closeAt, 'history_start_ms' => $historyStart,
-                'indicators' => $indicators, 'features' => $features,
-                'technical_ready' => $count >= 28];
+            yield [
+                'close' => (float) $c,
+                'microtimestamp' => $timestamp,
+                'available_at_ms' => $closeAt,
+                'history_start_ms' => $historyStart,
+                'indicators' => $indicators,
+                'features' => $features,
+                'technical_ready' => $count >= 28,
+            ];
         }
+    }
+
+    private function freshTechnicalStates(): array
+    {
+        return [
+            'ema' => [3 => [], 12 => []],
+            'rsi' => [3 => [], 14 => []],
+            'atrp' => [3 => [], 14 => []],
+            'stoch_rsi_14' => [],
+            'cci_20' => [],
+            'volume_20' => [],
+        ];
     }
 }

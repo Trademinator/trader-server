@@ -60,10 +60,11 @@ Endpoints and authentication are based on the official CoinGecko API endpoints a
 
 Each feature payload contains:
 
-- `version`: `m2-v1`, identifying formulas, ordering, and normalization.
+- `version`: `m2-v2`, identifying the trait-backed formulas, ordering, and normalization.
+- Existing `m2-v1` rows may coexist in `market_features`; M2/M3 queries select `FeatureEngine::VERSION`, so rebuilding creates the new `m2-v2` rows without rewriting the historical v1 contract.
 - `microtimestamp`: candle opening time in milliseconds; `available_at_ms`: candle closing time.
 - `history_start_ms`: beginning of the uninterrupted candle segment used to seed calculations.
-- `indicators`: named raw indicator values, with `null` during warm-up.
+- `indicators`: named raw technical indicator values, with `null` during warm-up. Trait-backed decimal results are stored as decimal strings so BCMath precision is not lost before normalization.
 - `features`: ordered named normalized features; `keys` and `vector` provide a matching KNN schema.
 - `missing`: names of null features; `technical_ready`: core technical warm-up completed; `context_ready`: every context field present; `ready`: no feature is missing.
 - `context_snapshot_id`: exact observed snapshot, or null.
@@ -98,7 +99,7 @@ Signed bounded normalization is `B(x,s) = 0.5 + 0.5*tanh(x/s)`. Zero change is 0
 | `context.circulating_fraction` | Circulating supply / max supply; unknown/uncapped max supply stays null |
 | `context.volume_share` | Coin volume / global volume in the same currency; liquidity/activity proxy, not order-book depth |
 
-Ratios representing fractions are clamped to `[0,1]`. Legacy `Technical` trait functions remain available and unchanged; the M2 engine uses its own explicitly versioned warm-up and smoothing contract to avoid inheriting partially seeded legacy values.
+Ratios representing fractions are clamped to `[0,1]`. The `Technical` trait is the single source of truth for OHLCV-derived mathematics. FeatureEngine uses the same incremental BCMath primitives as the public batch indicator APIs, so the Server and future Trademinator Client package cannot silently diverge in EMA, RSI, Stochastic RSI, CCI, ATRP, returns, volume activity or candle geometry. FeatureEngine only applies the versioned ML normalization after trait calculations.
 
 ## Time integrity and limitations
 

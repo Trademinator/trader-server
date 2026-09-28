@@ -1,5 +1,11 @@
 # M3 — Labels, frozen datasets and walk-forward backtesting
 
+## Technical feature alignment — 2026-09-28
+
+Before M4, the M2 feature engine was aligned with `App\Traits\Technical`, which is intended to become the shared Composer package used by both Trademinator Server and Client. `FeatureEngine` now uses the trait directly and consumes incremental BCMath primitives for EMA, RSI, Stochastic RSI, CCI, ATRP, returns, volume activity and candle geometry while retaining bounded streaming state. The feature contract is versioned as `m2-v2`; older `m2-v1` rows remain historical and are not silently reinterpreted.
+
+The public trait also corrects percentage change to use the original/base value as the denominator and keeps ROC neutral until the requested lag candle exists. No migration, scheduler or queue change is introduced by this alignment.
+
 ## M3 final interface update — 2026-09-28
 
 - Market subscriptions have one card per exchange, with a shared logo/header and divided market rows.
