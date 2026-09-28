@@ -8,25 +8,7 @@ if (! defined('EXCHANGE_ROUND_DECIMALS')) {
 
 trait Technical
 {
-    use Bc;
-
-    public function delete_key(&$tickers, ...$keys)	// TODO: fix performance
-    {foreach ($tickers as &$h) {
-        foreach ($keys as &$key) {
-            unset($h[$key]);
-        }
-    }
-    }
-
-    public function clone_key(&$tickers, $oldkey, $newkey)
-    {
-        reset($tickers);
-        foreach ($tickers as &$h) {
-            $h[$newkey] = $h[$oldkey];
-        }
-
-        return $tickers;
-    }
+    use Bc, TickerManipulation;
 
     public function normalize(&$tickers, $key = 'close', $index = 'close')
     {
