@@ -7,6 +7,7 @@ use App\Models\MarketFeed;
 use App\Models\MarketSubscription;
 use App\Models\User;
 use App\Repositories\ExchangeRepository;
+use Dom\HTMLDocument;
 
 it('requires sign in and restricts unsubscribe to the subscription owner', function () {
     $owner = User::factory()->create();
@@ -45,14 +46,14 @@ it('lets a signed-in user subscribe once to a configured market', function () {
         ->and(bccomp((string) Market::query()->first()->tick_size, '0.01', 18))->toBe(0);
 });
 
-it('groups subscriptions by exchange name with small logos and sorts pairs', function () {
+it('groups subscriptions in independent collapsible exchanges and links each pair to its review', function () {
     $user = User::factory()->create();
     $zeta = Exchange::query()->create(['name' => 'Zeta ID', 'class' => 'coinbase', 'config' => '{}']);
     $alpha = Exchange::query()->create(['name' => 'Alpha ID', 'class' => 'kraken', 'config' => '{}']);
     foreach ([[$zeta, 'ETH/USD', '1m'], [$alpha, 'BTC/USD', '15m'], [$alpha, 'ADA/USD', '1m']] as [$exchange, $symbol, $period]) {
         $market = Market::query()->create(['exchange_id' => $exchange->exchange_id, 'symbol' => $symbol, 'tick_size' => '0.01']);
         MarketFeed::query()->create(['market_id' => $market->market_id, 'selected_period' => $period]);
-        MarketSubscription::query()->create(['user_id' => $user->user_id, 'market_id' => $market->market_id, 'active' => true]);
+        MarketSubscription::query()->create(['user_id' => $user->user_id, 'market_id' => $market->market_id, 'active' => $symbol !== 'ADA/USD']);
     }
     $metadata = Mockery::mock(ExchangeMetadata::class);
     $metadata->shouldReceive('all')->once()->andReturn([
@@ -63,11 +64,25 @@ it('groups subscriptions by exchange name with small logos and sorts pairs', fun
 
     $response = $this->actingAs($user)->get(route('markets.index'))->assertOk();
     $list = explode('<h2>Your markets</h2>', $response->getContent(), 2)[1];
-    expect($list)->toContain('width="32" height="32"')
-        ->toContain('https://example.com/alpha.png')->toContain('https://example.com/zeta.png');
+    expect($list)->toContain('https://example.com/alpha.png')->toContain('https://example.com/zeta.png');
     expect(strpos($list, 'Alpha Exchange'))->toBeLessThan(strpos($list, 'ADA/USD'));
     expect(strpos($list, 'ADA/USD'))->toBeLessThan(strpos($list, 'BTC/USD'));
     expect(strpos($list, 'BTC/USD'))->toBeLessThan(strpos($list, 'Zeta Exchange'));
     expect(strpos($list, 'Zeta Exchange'))->toBeLessThan(strpos($list, 'ETH/USD'));
     expect($list)->toContain('BTC/USD · 15m');
+    $response->assertSee('/markets/suggestions/review?exchange=kraken&amp;symbol=ADA%2FUSD', false)
+        ->assertSee('/markets/suggestions/review?exchange=kraken&amp;symbol=BTC%2FUSD', false)
+        ->assertSee('/markets/suggestions/review?exchange=coinbase&amp;symbol=ETH%2FUSD', false);
+
+    $document = HTMLDocument::createFromString($response->getContent(), LIBXML_NOERROR);
+    foreach ([[$alpha, 2], [$zeta, 1]] as [$exchange, $count]) {
+        $id = 'exchange-markets-'.$exchange->exchange_id;
+        $panel = $document->getElementById($id);
+        $toggle = $document->querySelector('button[data-bs-target="#'.$id.'"]');
+        expect($panel->querySelectorAll('.market-row'))->toHaveCount($count);
+        expect($panel->classList->contains('show'))->toBeFalse();
+        expect($panel->hasAttribute('data-bs-parent'))->toBeFalse();
+        expect($toggle->getAttribute('aria-controls'))->toBe($id);
+        expect($toggle->getAttribute('aria-expanded'))->toBe('false');
+    }
 });

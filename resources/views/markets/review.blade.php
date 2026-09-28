@@ -1,36 +1,6 @@
 <x-layouts.app :title="$item ? 'Review '.$item['symbol'] : 'Pair review'">
     @include('markets.guide-styles')
-    <style>
-        .pair-review { min-width:0; width:100%; }
-        .pair-review .review-topline { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
-        .pair-review .review-eyebrow { font-size:.85rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
-        .pair-review .review-title { font-size:2.3rem; letter-spacing:-.025em; }
-        .pair-review .review-score { font-size:2.7rem; font-weight:750; line-height:1.2; white-space:nowrap; }
-        .pair-review .review-score small { font-size:1rem; font-weight:500; }
-        .pair-review .review-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:18px 0; }
-        .pair-review .review-metric { padding:16px; border-radius:10px; background:#edf3fb; color:#172033; }
-        .dark .pair-review .review-metric { background:#24334b; color:#f1f5f9; }
-        .pair-review .review-metric strong { display:block; font-size:1.65rem; margin:5px 0; }
-        .pair-review .review-table-wrap { overflow-x:auto; }
-        .pair-review table { width:100%; border-collapse:collapse; font-size:.95rem; }
-        .pair-review th, .pair-review td { text-align:left; vertical-align:top; border-bottom:1px solid #b8c4d2; padding:12px 10px; }
-        .dark .pair-review th, .dark .pair-review td { border-color:#52647d; }
-        .pair-review th { font-weight:700; }
-        .pair-review .review-points { white-space:nowrap; font-weight:750; }
-        .pair-review .review-formula { padding:14px; border-radius:8px; background:#edf3fb; color:#172033; font-family:ui-monospace,monospace; overflow-wrap:anywhere; }
-        .dark .pair-review .review-formula { background:#24334b; color:#f1f5f9; }
-        .pair-review dl { display:grid; grid-template-columns:minmax(120px,1fr) minmax(0,2fr); gap:12px; }
-        .pair-review dt { font-weight:650; }
-        .pair-review dd { overflow-wrap:anywhere; }
-        .pair-review .review-chart { height:390px; width:100%; min-width:0; margin:14px 0; }
-        .pair-review .review-chart[hidden] { display:none; }
-        .pair-review .review-control { border:1px solid #7c8da3; padding:7px 12px; border-radius:7px; font-weight:650; cursor:pointer; }
-        .pair-review button:disabled { opacity:.55; cursor:wait; }
-        .pair-review .review-legend { min-height:1.6em; font-size:.9rem; font-variant-numeric:tabular-nums; }
-        .pair-review .review-subscribe { border-top:4px solid #0756b9; }
-        .pair-review .review-subscribe form { margin:14px 0; }
-        @media(max-width:650px) { .pair-review .review-metrics { grid-template-columns:1fr; } .pair-review .review-chart { height:300px; } .pair-review .review-title { font-size:1.9rem; } }
-    </style>
+    @include('markets.review-styles')
     <section class="pair-guide pair-review">
         <nav class="review-topline" aria-label="Pair review navigation">
             <a href="{{ route('markets.suggestions', ['show' => 1]) }}">← Back to suggestions</a>
@@ -110,41 +80,7 @@
                 </details>
             </section>
 
-            <section class="guide-panel" aria-labelledby="history-heading">
-                <div class="review-topline"><h2 id="history-heading">Closed-candle price history</h2><span class="guide-badge">{{ $evidence['period'] ?? 'Awaiting data' }}</span></div>
-                <p>Price in {{ $item['quote'] }} per {{ $item['base'] }}. Times are UTC. Only completed candles are shown.</p>
-                <div data-review-chart data-url="{{ $reviewUrl }}" data-evidence="{{ json_encode($evidence, JSON_THROW_ON_ERROR) }}" data-tick-size="{{ $market['tick_size'] }}" data-quote="{{ $item['quote'] }}" data-symbol="{{ $item['symbol'] }}">
-                    <div class="guide-inline">
-                        <button type="button" class="review-control" data-chart-refresh disabled>Refresh chart</button>
-                        <button type="button" class="review-control" data-chart-fit disabled>Fit all candles</button>
-                        <label class="guide-check"><input type="checkbox" data-chart-auto checked>Refresh every 60 seconds</label>
-                    </div>
-                    <p class="guide-help" role="status" aria-live="polite" data-chart-status>Loading chart…</p>
-                    <p class="guide-notice" data-chart-evidence>{{ $evidence['message'] }}</p>
-                    <p class="review-legend" data-chart-legend>Move over a candle to inspect its open, high, low, close and volume.</p>
-                    <div class="review-chart" data-chart-canvas role="img" aria-label="{{ $exchange->name }} {{ $item['symbol'] }} closed candlesticks and volume" hidden></div>
-                    <p class="guide-help" data-chart-freshness>
-                        @if ($evidence['candles'])
-                            {{ $evidence['candles'] }} closed candles · {{ $evidence['from'] }}–{{ $evidence['through'] }} UTC
-                            @if ($evidence['stale']) · Stale history @endif
-                        @else
-                            No closed candles available yet. @if (! $item['subscribed']) Subscribe above to start collection. @else Collection may still be pending. @endif
-                        @endif
-                    </p>
-                    <noscript><p>The interactive chart requires JavaScript. The historical evidence and candle table below remain available.</p></noscript>
-                </div>
-                <p class="guide-help">Updates read candles already collected by Trademinator, rather than streaming trades from the exchange. A refresh does not start collection. New data arrives through the existing scheduled collector.</p>
-                <p class="guide-help">TradingView Lightweight Charts™ · Copyright (с) 2025 TradingView, Inc. · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts™</a>. TradingView is the chart library provider; the market data comes from Trademinator.</p>
-                <details><summary>Recent candle values at page load</summary>
-                    <div class="review-table-wrap"><table>
-                        <caption class="guide-help">Latest {{ min(10, count($evidence['series'])) }} closed candles. OHLC prices in {{ $item['quote'] }}; volume as reported by the exchange.</caption>
-                        <thead><tr><th scope="col">Open time (UTC)</th><th scope="col">Open</th><th scope="col">High</th><th scope="col">Low</th><th scope="col">Close</th><th scope="col">Volume</th></tr></thead>
-                        <tbody>@forelse (array_reverse(array_slice($evidence['series'], -10)) as $candle)
-                            <tr><th scope="row">{{ gmdate('Y-m-d H:i', $candle['time']) }}</th><td>{{ $number($candle['open']) }}</td><td>{{ $number($candle['high']) }}</td><td>{{ $number($candle['low']) }}</td><td>{{ $number($candle['close']) }}</td><td>{{ $number($candle['volume']) }}</td></tr>
-                        @empty<tr><td colspan="6">No valid closed candles are stored for this sample.</td></tr>@endforelse</tbody>
-                    </table></div>
-                </details>
-            </section>
+            @include('markets.review-chart')
 
             <section class="guide-panel" aria-labelledby="risk-heading">
                 <h2 id="risk-heading">Historical risk screen</h2>

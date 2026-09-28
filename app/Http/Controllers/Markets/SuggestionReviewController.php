@@ -4,11 +4,14 @@ namespace App\Http\Controllers\Markets;
 
 use App\Domain\MarketData\MarketCatalog;
 use App\Domain\MarketData\MarketCatalogException;
+use App\Domain\MarketSuggestions\CandleEvidence;
 use App\Domain\MarketSuggestions\PairSuggestions;
 use App\Domain\MarketSuggestions\Questionnaire;
 use App\Http\Controllers\Controller;
 use App\Models\Exchange;
 use App\Models\MarketPreferenceProfile;
+use App\Models\MarketSubscription;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -17,19 +20,33 @@ use Throwable;
 
 final class SuggestionReviewController extends Controller
 {
-    public function show(Request $request, MarketCatalog $catalog, PairSuggestions $suggestions): Response|JsonResponse|RedirectResponse
+    public function show(Request $request, MarketCatalog $catalog, PairSuggestions $suggestions, CandleEvidence $evidence): Response|JsonResponse|RedirectResponse
     {
         $input = $request->validate([
             'exchange' => ['required', 'string', 'max:64', 'regex:/^[a-z0-9_]+$/D'],
             'symbol' => ['required', 'string', 'max:32', 'regex:/^[A-Z0-9._-]+\/[A-Z0-9._-]+$/D'],
         ]);
+        $subscription = MarketSubscription::query()->with('market.exchange', 'market.feed')
+            ->where('user_id', $request->user()->user_id)
+            ->whereHas('market', fn (Builder $query) => $query->where('symbol', $input['symbol'])
+                ->whereHas('exchange', fn (Builder $query) => $query->where('class', $input['exchange'])))
+            ->first();
         $profile = MarketPreferenceProfile::query()->find($request->user()->user_id);
         if (! $profile) {
+            if ($subscription !== null) {
+                return $this->subscriptionReview($request, $subscription, $evidence, $input,
+                    'No saved preferences are available for a personal match assessment.');
+            }
+
             return $request->expectsJson()
                 ? response()->json(['message' => 'Your saved preferences are no longer available. Return to pair suggestions.'], 409)->header('Cache-Control', 'private, no-store')
                 : redirect()->route('markets.suggestions')->with('status', 'Save your preferences to review a suggested pair.');
         }
         $answers = array_replace(Questionnaire::defaults(), $profile->answers);
+        if ($input['exchange'] !== $answers['exchange'] && $subscription !== null) {
+            return $this->subscriptionReview($request, $subscription, $evidence, $input,
+                'Your saved preferences describe a different exchange. Holdings and access confirmation from that exchange are not applied here.');
+        }
         abort_unless($input['exchange'] === $answers['exchange'], 404);
         $exchange = null;
         $results = null;
@@ -56,9 +73,14 @@ final class SuggestionReviewController extends Controller
             $failure = $error['message'].' Reference: '.$error['reference'];
             $status = 503;
         }
+        if ($failure !== null && $status === 409 && $subscription !== null) {
+            return $this->subscriptionReview($request, $subscription, $evidence, $input,
+                'This subscribed pair is not in your current suggestions. Availability, preferences or screening results may have changed.');
+        }
         if ($request->expectsJson()) {
             return response()->json($failure !== null ? ['message' => $failure] : [
                 'symbol' => $item['symbol'], 'exchange' => $exchange->class,
+                'review_type' => 'preference',
                 'evidence' => $item['evidence'], 'checked_at' => now()->utc()->toIso8601String(),
             ], $status)->header('Cache-Control', 'private, no-store');
         }
@@ -68,5 +90,29 @@ final class SuggestionReviewController extends Controller
             'exchange' => $exchange, 'results' => $results, 'item' => $item, 'failure' => $failure,
             'reviewUrl' => route('markets.suggestions.review', $input),
         ], $status)->header('Cache-Control', 'private, no-store');
+    }
+
+    /** @param array{exchange: string, symbol: string} $input */
+    private function subscriptionReview(Request $request, MarketSubscription $subscription, CandleEvidence $inspector, array $input, string $notice): Response|JsonResponse
+    {
+        $market = $subscription->market;
+        $evidence = $inspector->inspect($input['exchange'], $input['symbol'], $market->feed?->selected_period,
+            'unsure', includeSeries: true);
+        if ($request->expectsJson()) {
+            return response()->json([
+                'symbol' => $input['symbol'], 'exchange' => $input['exchange'],
+                'review_type' => 'technical',
+                'evidence' => $evidence, 'checked_at' => now()->utc()->toIso8601String(),
+            ])->header('Cache-Control', 'private, no-store');
+        }
+
+        [$base, $quote] = explode('/', $input['symbol']);
+
+        return response()->view('markets.subscription-review', [
+            'subscription' => $subscription, 'exchange' => $market->exchange, 'notice' => $notice,
+            'evidence' => $evidence, 'reviewUrl' => route('markets.suggestions.review', $input),
+            'item' => ['symbol' => $input['symbol'], 'base' => $base, 'quote' => $quote, 'subscribed' => $subscription->active],
+            'market' => ['tick_size' => $market->tick_size],
+        ])->header('Cache-Control', 'private, no-store');
     }
 }

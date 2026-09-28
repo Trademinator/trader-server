@@ -1,10 +1,10 @@
 {
-  "release": "Trademinator M3 R7",
-  "date": "2026-09-26",
+  "release": "Trademinator M3 Final R2",
+  "date": "2026-09-28",
   "source_repository": "https://github.com/Trademinator/trader-server",
-  "source_commit": "9140440cadc99bda1ec1029510a89e3e1234b5e8",
+  "source_commit": "7eb5447da325a1d453f55dbaeb94f95c1883d575",
   "delivery": "Full source snapshot plus compiled frontend assets",
-  "entrypoint_guide": "docs/M3-R7-ROUTE-RECOVERY.md",
+  "entrypoint_guide": "docs/M3-README.md",
   "cli_reference": "docs/CLI.md",
   "cron_reference": "docs/CRONTABS.md",
   "new_commands": [
@@ -18,19 +18,21 @@
   "validation": {
     "php": "8.4.26",
     "database": "SQLite in-memory",
-    "tests_passed": 41,
-    "assertions": 209,
-    "test_entrypoint": "php artisan test --compact --filter='MarketSuggestionRoutesTest|MarketRouteCacheTest|MarketSubscriptionsWebTest|MarketSuggestionsTest'",
-    "frontend_script_tests": 4,
+    "tests_passed": 3,
+    "assertions": 39,
+    "test_entrypoint": "php artisan test --compact tests/Feature/MarketSubscriptionsWebTest.php",
+    "frontend_script_tests": 10,
+    "frontend_test_entrypoint": "node --test tests/Frontend/*.test.mjs",
     "frontend_build": "npm run build passed",
     "git_diff_check": "passed",
-    "pint": "passed for new PHP regression files",
-    "route_cache_regression": "Old compiled route table reproduces the exception; guarded page stays available. An isolated stale on-disk cache is loaded, cleared and rebuilt; all three feature routes and auth are restored. No deployment caches touched.",
-    "scope": "Market UI guard and route-cache recovery; core collectors and data models unchanged."
+    "pint": "passed for changed PHP files",
+    "browser_visual_check": "Not run: no browser executable available; rendered panel/control wiring verified with the real Blade response.",
+    "scope": "Independent collapsed exchange panels, correctly targeted controls, subscription links, existing market form and chart scripts."
   },
   "not_exercised": [
     "MariaDB integration/concurrent-node runtime",
-    "Live exchange/CoinGecko APIs and the user server regional reachability"
+    "Live exchange/CoinGecko APIs and the user server regional reachability",
+    "Full application test suite; targeted suites listed in validation were run."
   ],
   "excluded": [
     ".git",
@@ -169,5 +171,53 @@
     "browser_visual_check": "Not run: Chromium executable unavailable; Blade rendering and frontend script tests passed",
     "live_exchange_checks": "Not performed; deterministic exchange fixtures used"
   },
-  "r7_new_migration": null
+  "r7_new_migration": null,
+  "source_note": "Full snapshot of source_commit plus the market subscription review and layout changes in this archive.",
+  "previous_validation": {
+    "php": "8.4.26",
+    "database": "SQLite in-memory",
+    "tests_passed": 41,
+    "assertions": 209,
+    "test_entrypoint": "php artisan test --compact --filter='MarketSuggestionRoutesTest|MarketRouteCacheTest|MarketSubscriptionsWebTest|MarketSuggestionsTest'",
+    "frontend_script_tests": 4,
+    "frontend_build": "npm run build passed",
+    "git_diff_check": "passed",
+    "pint": "passed for new PHP regression files",
+    "route_cache_regression": "Old compiled route table reproduces the exception; guarded page stays available. An isolated stale on-disk cache is loaded, cleared and rebuilt; all three feature routes and auth are restored. No deployment caches touched.",
+    "scope": "Market UI guard and route-cache recovery; core collectors and data models unchanged."
+  },
+  "milestone_status": "M3 requested interface work complete; M4 remains separate.",
+  "final_update": {
+    "new_migration": null,
+    "dependency_changes": [
+      "bootstrap 5.3.8",
+      "@popperjs/core 2.11.8 (Bootstrap peer dependency; not imported by Collapse)"
+    ],
+    "scheduler_changes": false,
+    "changes": [
+      "One container per exchange with divided market rows and market count.",
+      "Review pair links on active and inactive subscriptions.",
+      "Owned subscriptions outside current preference matches have a private, read-only technical review using existing closed-candle evidence.",
+      "Review type changes stop chart refresh and disable stale subscription controls until page reload.",
+      "CCXT logo aspect ratios preserved in an 88 by 40 header area with an initial fallback.",
+      "Logo container and image background made transparent, border removed; initial fallback hidden behind successfully loaded transparent logos.",
+      "Bootstrap Collapse makes each exchange group independently expandable, initially closed, with accessible button state, chevron, market count, and reduced-motion support."
+    ],
+    "retained": "Recent BCMath and technical indicator fixes from the source repository.",
+    "package": "Complete application source plus compiled frontend assets; no vendor, node_modules, .env, database or runtime storage data."
+  },
+  "previous_final_validation": {
+    "php": "8.4.26",
+    "database": "SQLite in-memory",
+    "tests_passed": 73,
+    "assertions": 434,
+    "test_entrypoint": "php artisan test --compact tests/Feature/MarketSubscriptionsWebTest.php tests/Feature/MarketSuggestionsTest.php tests/Feature/MarketSuggestionRoutesTest.php tests/Unit/TechnicalIndicatorsTest.php",
+    "frontend_script_tests": 6,
+    "frontend_test_entrypoint": "node --test tests/Frontend/market-review-chart.test.mjs",
+    "frontend_build": "npm run build passed",
+    "git_diff_check": "passed",
+    "pint": "passed for changed PHP files",
+    "browser_visual_check": "Not run: no browser executable available; Blade rendering and frontend behavior tests passed.",
+    "scope": "Subscription listing, personal/technical review and authorization, route integration, chart refresh, and preservation of the recent technical indicator fixes."
+  }
 }

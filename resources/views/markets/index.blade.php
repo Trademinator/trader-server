@@ -9,11 +9,11 @@
         }
         .market-hero h1 { font-size: 1.7rem; font-weight: 750; line-height: 1.2; }
         .market-hero p { margin-top: 8px; color: #fff; }
-        .market-panel, .market-card {
+        .market-panel, .market-group {
             border: 1px solid #ced4da; border-radius: 16px; background: #fff;
             color: #212529; box-shadow: 0 4px 16px rgba(33, 37, 41, .06);
         }
-        .dark .market-panel, .dark .market-card {
+        .dark .market-panel, .dark .market-group {
             background: #111827; color: #f8f9fa; border-color: #5c6672;
         }
         .market-panel { padding: 22px; }
@@ -31,7 +31,7 @@
             background: #fff; color: #212529; font-size: .94rem; font-weight: 600;
         }
         .market-control:disabled { background: #e9ecef; color: #495057; opacity: 1; cursor: not-allowed; }
-        .market-control:focus-visible, .market-subscribe:focus-visible, .market-unsubscribe:focus-visible {
+        .market-control:focus-visible, .market-subscribe:focus-visible, .market-unsubscribe:focus-visible, .market-review:focus-visible {
             outline: 3px solid #ffc107; outline-offset: 2px; border-color: #0d6efd;
         }
         .market-output { color: #084298; font-variant-numeric: tabular-nums; }
@@ -59,18 +59,48 @@
         .market-errors { padding: 12px 15px; border-radius: 10px; background: #f8d7da; color: #842029; }
         .market-flash { border-radius: 10px; padding: 12px 15px; background: #d1e7dd; color: #0f5132; font-weight: 650; }
         .market-list h2 { margin-bottom: 12px; }
-        .market-group { margin-top: 20px; }
-        .market-group-heading { display: flex; align-items: center; gap: 11px; margin-bottom: 10px; font-size: 1.02rem; font-weight: 750; }
+        .market-group { margin-top: 20px; overflow: hidden; }
+        .market-group-heading { margin: 0; background: #f1f5f9; font-size: 1.02rem; font-weight: 750; }
+        .market-group-toggle {
+            display: flex; flex-wrap: wrap; align-items: center; gap: 11px;
+            width: 100%; padding: 16px 19px; background: transparent; color: inherit;
+            text-align: left; cursor: pointer;
+        }
+        .dark .market-group-heading { background: #1f2937; }
+        .market-group-toggle:hover { background: rgba(13, 110, 253, .08); }
+        .market-group-toggle:focus-visible { outline: 3px solid #ffc107; outline-offset: -3px; }
+        .market-group-count { margin-left: auto; font-size: .83rem; font-weight: 600; color: #495057; }
+        .dark .market-group-count { color: #dbe4ef; }
+        .market-group-chevron {
+            flex: none; width: 9px; height: 9px; margin: 0 3px 4px;
+            border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+            transform: rotate(45deg); transition: transform .35s ease;
+        }
+        .market-group-toggle[aria-expanded="true"] .market-group-chevron { transform: rotate(225deg); margin-bottom: -4px; }
+        .market-group > .collapse, .market-group > .collapsing { visibility: visible; }
+        .market-group > .collapse:not(.show) { display: none; }
+        .market-group > .collapsing { height: 0; overflow: hidden; transition: height .35s ease; }
+        @media (prefers-reduced-motion: reduce) {
+            .market-group > .collapsing, .market-group-chevron { transition: none; }
+        }
         .market-logo {
             position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center;
-            width: 32px; height: 32px; border: 1px solid #adb5bd; border-radius: 9px;
-            background: #cfe2ff; color: #084298; font-size: .9rem; overflow: hidden;
+            width: 32px; height: 32px; border: 0; background: transparent;
+            color: inherit; font-size: .9rem; overflow: hidden;
         }
-        .market-logo img { position: absolute; inset: 0; width: 32px; height: 32px; object-fit: contain; background: #fff; }
-        .market-group-items { display: grid; gap: 10px; }
-        .market-card { padding: 16px 19px; border-left: 4px solid #0d6efd; }
-        .market-card.is-active { border-left-color: #198754; }
-        .market-card-title { font-weight: 750; }
+        .market-logo.has-image { width: 88px; height: 40px; }
+        .market-logo.has-image .market-logo-initial { visibility: hidden; }
+        .market-logo img { position: absolute; inset: 0; width: 100%; height: 100%; padding: 4px; object-fit: contain; background: transparent; }
+        .market-group-items { margin: 0; padding: 0; list-style: none; }
+        .market-row {
+            display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px;
+            padding: 16px 19px; border-top: 1px solid #dee2e6;
+        }
+        .dark .market-row { border-top-color: #374151; }
+        .market-row-title { font-weight: 750; overflow-wrap: anywhere; }
+        .market-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        .market-review { border-radius: 9px; padding: 8px 12px; background: #0b5ed7; color: #fff; font-weight: 700; }
+        .market-review:hover { background: #084298; }
         .market-meta { margin-top: 4px; font-size: .87rem; color: #495057; }
         .dark .market-meta { color: #dbe4ef; }
         .market-badge { margin-right: 6px; border-radius: 999px; padding: 3px 9px; background: #fff3cd; color: #664d03; font-weight: 750; }
@@ -143,35 +173,49 @@
 
         <div class="market-list space-y-3">
             <h2>Your markets</h2>
+            @if ($subscriptionGroups->isNotEmpty())
+                <p class="market-meta">Select an exchange to show or hide its markets.</p>
+            @endif
             @forelse ($subscriptionGroups as $group)
                 <section class="market-group" aria-label="{{ $group['name'] }} markets">
                     <h3 class="market-group-heading">
-                        <span class="market-logo" aria-hidden="true">
-                            {{ mb_strtoupper(mb_substr($group['name'], 0, 1)) }}
+                        <button type="button" class="market-group-toggle collapsed" data-bs-toggle="collapse"
+                            data-bs-target="#exchange-markets-{{ $group['exchange_id'] }}"
+                            aria-expanded="false" aria-controls="exchange-markets-{{ $group['exchange_id'] }}">
+                        <span class="market-logo {{ $group['logo_url'] ? 'has-image' : '' }}" aria-hidden="true">
+                            <span class="market-logo-initial">{{ mb_strtoupper(mb_substr($group['name'], 0, 1)) }}</span>
                             @if ($group['logo_url'])
-                                <img src="{{ $group['logo_url'] }}" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">
+                                <img src="{{ $group['logo_url'] }}" width="88" height="40" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">
                             @endif
                         </span>
                         {{ $group['name'] }}
+                        <span class="market-group-count">{{ $group['subscriptions']->count() }} {{ $group['subscriptions']->count() === 1 ? 'market' : 'markets' }}</span>
+                        <span class="market-group-chevron" aria-hidden="true"></span>
+                        </button>
                     </h3>
-                    <div class="market-group-items">
+                    <div class="collapse" id="exchange-markets-{{ $group['exchange_id'] }}">
+                    <ul class="market-group-items">
                         @foreach ($group['subscriptions'] as $subscription)
-                        <div class="market-card flex flex-wrap items-center justify-between gap-3 {{ $subscription->active ? 'is-active' : '' }}">
+                        <li class="market-row">
                             <div>
-                                <strong class="market-card-title">{{ $subscription->market->symbol }}{{ $subscription->market->feed?->selected_period ? ' · '.$subscription->market->feed->selected_period : '' }}</strong>
+                                <strong class="market-row-title">{{ $subscription->market->symbol }}{{ $subscription->market->feed?->selected_period ? ' · '.$subscription->market->feed->selected_period : '' }}</strong>
                                 <p class="market-meta">
                                     <span class="market-badge {{ $subscription->active ? 'is-active' : '' }}">{{ $subscription->active ? 'Active' : 'Inactive' }}</span>
                                     Feed: {{ $subscription->market->feed->status ?? 'pending' }}{{ $subscription->market->feed?->selected_period ? '' : ' · Period: selecting' }}
                                 </p>
                             </div>
-                            @if ($subscription->active)
-                                <form method="POST" action="{{ route('markets.destroy', $subscription->market_subscription_id) }}">
-                                    @csrf @method('DELETE')
-                                    <button type="submit" class="market-unsubscribe">Unsubscribe</button>
-                                </form>
-                            @endif
-                        </div>
+                            <div class="market-actions">
+                                <a href="{{ route('markets.suggestions.review', ['exchange' => $subscription->market->exchange->class, 'symbol' => $subscription->market->symbol]) }}" class="market-review" aria-label="Review {{ $subscription->market->symbol }} on {{ $group['name'] }}">Review pair</a>
+                                @if ($subscription->active)
+                                    <form method="POST" action="{{ route('markets.destroy', $subscription->market_subscription_id) }}">
+                                        @csrf @method('DELETE')
+                                        <button type="submit" class="market-unsubscribe">Unsubscribe</button>
+                                    </form>
+                                @endif
+                            </div>
+                        </li>
                         @endforeach
+                    </ul>
                     </div>
                 </section>
             @empty
@@ -183,8 +227,12 @@
     <script>
         (() => {
             document.querySelectorAll('.market-logo img').forEach(image => {
-                image.addEventListener('error', () => image.remove());
-                if (image.complete && !image.naturalWidth) image.remove();
+                const showInitial = () => {
+                    image.parentElement?.classList.remove('has-image');
+                    image.remove();
+                };
+                image.addEventListener('error', showInitial);
+                if (image.complete && !image.naturalWidth) showInitial();
             });
             const exchange = document.getElementById('market-exchange');
             const symbol = document.getElementById('market-symbol');

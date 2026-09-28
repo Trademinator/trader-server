@@ -1,5 +1,18 @@
 # M3 — Labels, frozen datasets and walk-forward backtesting
 
+## M3 final interface update — 2026-09-28
+
+- Market subscriptions have one card per exchange, with a shared logo/header and divided market rows.
+- Exchange headers use Bootstrap Collapse. Groups start closed, show their market count, and open independently using the mouse or keyboard. Reduced-motion preferences are respected.
+- Every active or inactive subscription links to its pair review. Current shortlist matches retain their detailed preference explanation. Owned subscriptions without matching preferences or outside the shortlist show a technical review with stored closed candles instead, without claiming a current preference match or changing saved answers.
+- Chart refresh stops and requests a page reload if the review changes between a preference assessment and a technical review.
+- CCXT 4.5.57 provides `urls['logo']`, not a separate standard square-icon field. The exchange header preserves the logo's proportions in an 88 × 40 transparent area with no border or background square; unavailable images fall back to the exchange initial. A background embedded in an exchange's image remains part of that source image.
+- This full source archive includes the production frontend build and the earlier BCMath fixes. Bootstrap 5.3.8 is added for its Collapse JavaScript component, with scoped transition styles that preserve the existing Tailwind design. It adds no database migration, scheduler or queue change. `docs/CRONTABS.md` remains the canonical cron guide.
+
+For an existing installation, extract the archive into a staging directory and copy its `trader-server/` contents over the application while preserving `.env`, `storage/`, the database and installed dependencies. Run `composer install --no-dev --prefer-dist --optimize-autoloader` and `php artisan view:clear`. The included `public/build/` is ready to deploy; use `npm ci && npm run build` only when rebuilding assets yourself.
+
+The requested M3 interface work is complete in this release. M4 model training and prediction remain separate.
+
 **M3 R2 fixes pair loading and catalogue memory use.** For an existing M3/R1 deployment, follow [M3-R2-MARKETS.md](M3-R2-MARKETS.md); the repair adds no migration and preserves R1's database safeguards.
 
 **M3 R1 corrects an unsafe test configuration in the original M3 package.** Install the complete R1 safety files before running tests. If users/exchanges disappeared after installation, start with [M3-R1-RECOVERY.md](M3-R1-RECOVERY.md). Normal M3 migrations do not reset application data.

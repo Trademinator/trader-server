@@ -82,7 +82,7 @@ export async function mountReviewChart(root) {
         showCandle(evidence.series.at(-1));
         freshness.textContent = evidence.last_closed_at
             ? `${evidence.candles} closed ${evidence.period} candles · ${evidence.from}–${evidence.through} UTC · Last candle closed ${evidence.last_closed_at} · ${formatPrice(evidence.age_seconds / 60, 1)} minutes ago${evidence.stale ? ' · STALE HISTORY' : ''}${evidence.continuous === false ? ' · GAPS IN HISTORY; missing intervals are not filled' : ''}`
-            : 'No closed candles available yet. Subscribe to enable collection, then allow the scheduled collector to run.';
+            : 'No closed candles available yet. Collection may still be pending or inactive.';
     };
     const stopForChangedReview = () => {
         stopped = true;
@@ -116,6 +116,10 @@ export async function mountReviewChart(root) {
             if (response.status === 429) throw new Error('Refresh limit reached. Wait a minute before retrying.');
             if (!response.ok) throw new Error('Market data could not be refreshed. Showing the last successful sample.');
             const data = await response.json();
+            if (data.review_type !== root.dataset.reviewType) {
+                stopForChangedReview();
+                throw new Error('The preference assessment has changed. Reload the full review to see the current explanation.');
+            }
             if (data.symbol !== root.dataset.symbol || !Array.isArray(data.evidence?.series)) {
                 throw new Error('Unexpected chart response. Reload the full review.');
             }

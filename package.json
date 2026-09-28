@@ -10,6 +10,7 @@
         "@tailwindcss/vite": "^4.0.7",
         "alpinejs": "^3.14.8",
         "autoprefixer": "^10.4.20",
+        "bootstrap": "5.3.8",
         "concurrently": "^9.0.1",
         "instant.page": "^5.2.0",
         "laravel-vite-plugin": "^1.0",

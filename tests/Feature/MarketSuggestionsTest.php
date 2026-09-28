@@ -334,6 +334,7 @@ it('returns only the reviewed pairs valid closed candles and rechecks fresh hist
 
     $response = $this->actingAs($user)->getJson($url)->assertOk()->assertHeader('Cache-Control', 'no-store, private')
         ->assertJsonPath('symbol', 'BTC/CAD')->assertJsonPath('evidence.known', true)
+        ->assertJsonPath('review_type', 'preference')
         ->assertJsonCount(60, 'evidence.series')->assertJsonMissingPath('answers');
 
     $series = $response->json('evidence.series');
@@ -435,4 +436,43 @@ it('escapes exchange names and never renders saved answers as executable markup'
 
     $this->actingAs($user)->get(route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD']))
         ->assertOk()->assertSee('&lt;script&gt;alert(42)&lt;/script&gt;', false)->assertDontSee('<script>alert(42)</script>', false);
+});
+
+it('opens a technical review for an owned subscription when a preference match is unavailable', function (?array $answers, bool $active, string $notice) {
+    $this->freezeTime();
+    $exchange = suggestionExchange();
+    suggestionHistory();
+    $user = User::factory()->create();
+    if ($answers !== null) {
+        saveSuggestionAnswers($user, $answers);
+    }
+    $market = Market::query()->create(['exchange_id' => $exchange->exchange_id, 'symbol' => 'BTC/CAD', 'tick_size' => '0.01']);
+    MarketFeed::query()->create(['market_id' => $market->market_id, 'selected_period' => '1d']);
+    $subscription = MarketSubscription::query()->create(['user_id' => $user->user_id, 'market_id' => $market->market_id, 'active' => $active]);
+    $url = route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD']);
+
+    $this->actingAs($user)->get($url)->assertOk()->assertHeader('Cache-Control', 'no-store, private')
+        ->assertSee('Technical review')->assertSee($notice)->assertSee('Closed-candle price history')
+        ->assertDontSee('fits your preferences')->assertDontSee('data-review-subscribe', false);
+    $this->getJson($url)->assertOk()->assertJsonPath('symbol', 'BTC/CAD')->assertJsonPath('exchange', 'kraken')
+        ->assertJsonPath('review_type', 'technical')->assertJsonCount(60, 'evidence.series')->assertJsonMissingPath('answers');
+    expect($subscription->fresh()->active)->toBe($active);
+    expect(MarketPreferenceProfile::query()->find($user->user_id)?->answers)->toBe($answers === null ? null : suggestionAnswers($answers));
+})->with([
+    'no preferences' => [null, true, 'No saved preferences'],
+    'different exchange' => [['exchange' => 'bitso'], true, 'different exchange'],
+    'removed from shortlist' => [['excluded_assets' => 'BTC'], true, 'not in your current suggestions'],
+    'inactive subscription' => [null, false, 'No saved preferences'],
+]);
+
+it('does not use another users subscription to grant a technical review', function () {
+    $exchange = suggestionExchange();
+    $owner = User::factory()->create();
+    $other = User::factory()->create();
+    saveSuggestionAnswers($other, ['exchange' => 'bitso']);
+    $market = Market::query()->create(['exchange_id' => $exchange->exchange_id, 'symbol' => 'BTC/CAD', 'tick_size' => '0.01']);
+    MarketSubscription::query()->create(['user_id' => $owner->user_id, 'market_id' => $market->market_id, 'active' => true]);
+    $url = route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD', 'user_id' => $owner->user_id]);
+
+    $this->actingAs($other)->getJson($url)->assertNotFound()->assertJsonMissingPath('evidence');
 });

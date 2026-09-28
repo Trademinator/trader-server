@@ -39,7 +39,7 @@ async function chartHarness(series = []) {
         addEventListener(name, callback) { this.listeners[name] = callback; },
         removeEventListener(name) { delete this.listeners[name]; },
     });
-    const root = { dataset: { tickSize: '0.01', quote: 'CAD', symbol: 'BTC/CAD', url: '/review', evidence: JSON.stringify({
+    const root = { dataset: { reviewType: 'preference', tickSize: '0.01', quote: 'CAD', symbol: 'BTC/CAD', url: '/review', evidence: JSON.stringify({
         series, period: '1d', candles: series.length, message: 'Sample status', age_seconds: 120,
         last_closed_at: series.length ? '2026-09-27T00:00:00Z' : null,
         from: '2026-09-01', through: '2026-09-27',
@@ -50,7 +50,7 @@ async function chartHarness(series = []) {
         panes: () => [{}, { setHeight() {} }], subscribeCrosshairMove() {}, applyOptions() {}, remove() {},
         timeScale: () => ({ fitContent() {}, getVisibleLogicalRange() { return null; }, setVisibleLogicalRange() {} }),
     };
-    let response = { ok: true, json: async () => ({ symbol: 'BTC/CAD', checked_at: '2026-09-27T00:03:00Z', evidence: JSON.parse(root.dataset.evidence) }) };
+    let response = { ok: true, json: async () => ({ review_type: 'preference', symbol: 'BTC/CAD', checked_at: '2026-09-27T00:03:00Z', evidence: JSON.parse(root.dataset.evidence) }) };
     let scheduled = 0;
     const context = {
         Intl, Math, Number, JSON, Date, Array, Error, AbortController,
@@ -100,5 +100,16 @@ test('refreshes data, keeps the last sample on an outage, and stops when prefere
     const scheduled = harness.scheduled();
     await harness.refresh();
     assert.equal(harness.scheduled(), scheduled);
+    harness.dispose();
+});
+
+test('stops an old preference review when refresh now returns a technical review', async () => {
+    const harness = await chartHarness();
+    harness.setResponse({ ok: true, json: async () => ({ review_type: 'technical', symbol: 'BTC/CAD', evidence: { series: [] } }) });
+    await harness.refresh();
+    assert.equal(harness.subscribe.disabled, true);
+    assert.equal(harness.elements.get('[data-chart-refresh]').disabled, true);
+    assert.equal(harness.elements.get('[data-chart-auto]').checked, false);
+    assert.match(harness.elements.get('[data-chart-status]').textContent, /preference assessment has changed/);
     harness.dispose();
 });
