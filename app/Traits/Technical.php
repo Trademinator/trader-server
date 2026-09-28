@@ -83,12 +83,7 @@ trait Technical
         return bcdiv(bcsub((string) $a, (string) $b, $scale), $denominator, $scale);
     }
 
-    public function technical_compare_value(mixed $a, mixed $b): int
-    {
-        return bccomp((string) $a, (string) $b, EXCHANGE_ROUND_DECIMALS * 2);
-    }
-
-    /** Candle geometry fractions and direction, calculated entirely with BCMath. */
+    /** Candle geometry fractions, calculated entirely with BCMath. */
     public function technical_candle_geometry(mixed $open, mixed $high, mixed $low, mixed $close): array
     {
         $scale = EXCHANGE_ROUND_DECIMALS * 2;
@@ -103,7 +98,6 @@ trait Technical
                 'body' => bcadd('0', '0', $scale),
                 'upper_wick' => bcadd('0', '0', $scale),
                 'lower_wick' => bcadd('0', '0', $scale),
-                'direction' => $this->technical_compare_value($close, $open),
             ];
         }
 
@@ -114,7 +108,6 @@ trait Technical
             'body' => bcdiv($this->bcabs(bcsub($close, $open, $scale)), $range, $scale),
             'upper_wick' => bcdiv(bcsub($high, $upperBody, $scale), $range, $scale),
             'lower_wick' => bcdiv(bcsub($lowerBody, $low, $scale), $range, $scale),
-            'direction' => $this->technical_compare_value($close, $open),
         ];
     }
 
@@ -660,8 +653,12 @@ trait Technical
         return [$fast, $smooth, $slow];
     }
 
-    public function compare(&$tickers, $index = 'close', $compare = 'open', $digits = (EXCHANGE_ROUND_DECIMALS * 2))
-    {
+    public function compare(
+        array &$tickers,
+        string $index = 'close',
+        string $compare = 'open',
+        int $digits = EXCHANGE_ROUND_DECIMALS * 2
+    ): string {
         global $debug;
 
         if ($debug) {
@@ -669,13 +666,16 @@ trait Technical
         }
 
         $key = 'compare('.$index.','.$compare.')';
-        $t = end($tickers);
-        if (! array_key_exists($key, $t)) {
-            reset($tickers);
-            foreach ($tickers as &$h) {      // Last element is the most rescent
-                $h[$key] = bccomp($this->bcconv($h[$index]), $this->bcconv($h[$compare]), $digits);
+        foreach ($tickers as &$ticker) {
+            if (! $this->ticker_cached($ticker, $key)) {
+                $ticker[$key] = bccomp(
+                    $this->bcconv($ticker[$index]),
+                    $this->bcconv($ticker[$compare]),
+                    $digits
+                );
             }
         }
+        unset($ticker);
 
         return $key;
     }
@@ -1447,11 +1447,14 @@ trait Technical
     public function candle_geometry(array &$tickers): array
     {
         $keys = ['body', 'upper_wick', 'lower_wick', 'direction'];
+        $directionKey = $this->compare($tickers, 'close', 'open', EXCHANGE_ROUND_DECIMALS * 2);
+
         foreach ($tickers as &$ticker) {
             $geometry = $this->technical_candle_geometry($ticker['open'], $ticker['high'], $ticker['low'], $ticker['close']);
             foreach ($geometry as $name => $value) {
                 $ticker['candle.'.$name] = $value;
             }
+            $ticker['candle.direction'] = $ticker[$directionKey];
         }
         unset($ticker);
 

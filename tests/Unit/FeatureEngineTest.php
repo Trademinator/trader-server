@@ -114,6 +114,9 @@ it('uses Technical as the single source of truth for technical indicator math', 
     $cci20 = $technical->cci($traitCandles, 20);
     $atrp3 = $technical->atrp($traitCandles, 3);
     $atrp14 = $technical->atrp($traitCandles, 14);
+    $trendDirection = $technical->compare($traitCandles, $ema3, $ema12);
+    $candleGeometry = $technical->candle_geometry($traitCandles);
+    $candleDirection = $candleGeometry[3];
 
     $rows = iterator_to_array((new FeatureEngine)->rows($source, '1m', PHP_INT_MAX));
     foreach ([27, 39, 79] as $i) {
@@ -124,7 +127,9 @@ it('uses Technical as the single source of truth for technical indicator math', 
             ->and($rows[$i]['indicators']['stoch_rsi(14,14)'])->toBe($traitCandles[$i][$stochRsi14])
             ->and($rows[$i]['indicators']['cci(20)'])->toBe($traitCandles[$i][$cci20])
             ->and($rows[$i]['indicators']['atrp(3)'])->toBe($traitCandles[$i][$atrp3])
-            ->and($rows[$i]['indicators']['atrp(14)'])->toBe($traitCandles[$i][$atrp14]);
+            ->and($rows[$i]['indicators']['atrp(14)'])->toBe($traitCandles[$i][$atrp14])
+            ->and($rows[$i]['features']['trend.direction'])->toBe($traitCandles[$i][$trendDirection])
+            ->and($rows[$i]['features']['candle.direction'])->toBe($traitCandles[$i][$candleDirection]);
     }
 });
 

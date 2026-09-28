@@ -226,6 +226,28 @@ it('maps a flat mature stochastic RSI window to neutral 50', function () {
     expect(end($candles)[$fastK])->toBe('50.0000000000000000');
 });
 
+it('uses compare as the canonical candle direction calculation', function () {
+    $candles = [
+        ['open' => '100', 'high' => '111', 'low' => '99', 'close' => '110', 'volume' => '1'],
+        ['open' => '100', 'high' => '101', 'low' => '99', 'close' => '100', 'volume' => '1'],
+        ['open' => '100', 'high' => '101', 'low' => '89', 'close' => '90', 'volume' => '1'],
+    ];
+    $technical = m0Technical();
+
+    $compareKey = $technical->compare($candles, 'close', 'open');
+    $geometryKeys = $technical->candle_geometry($candles);
+
+    expect($compareKey)->toBe('compare(close,open)')
+        ->and(array_column($candles, $compareKey))->toBe([1, 0, -1])
+        ->and(array_column($candles, 'candle.direction'))->toBe([1, 0, -1])
+        ->and($geometryKeys)->toBe([
+            'candle.body',
+            'candle.upper_wick',
+            'candle.lower_wick',
+            'candle.direction',
+        ]);
+});
+
 it('calculates percentage change relative to the base value with BCMath', function () {
     $candles = [
         ['open' => '100.00000000', 'close' => '110.00000000'],

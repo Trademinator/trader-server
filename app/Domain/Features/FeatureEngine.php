@@ -66,7 +66,7 @@ final class FeatureEngine
             if ($count >= 12) {
                 $trend = $this->technical_normalized_difference_value($candle['ema(3,close)'], $candle['ema(12,close)'], $close);
                 $features['trend.ema_3_12'] = self::bounded($trend === null ? null : (float) $trend, 0.05);
-                $features['trend.direction'] = $this->technical_compare_value($candle['ema(3,close)'], $candle['ema(12,close)']);
+                $features['trend.direction'] = $candle['compare(ema(3,close),ema(12,close))'];
             }
             foreach ([4, 12] as $p) {
                 $change = $count > $p ? bcdiv($candle["roc($p,close)"], '100', $scale) : null;
@@ -124,6 +124,7 @@ final class FeatureEngine
     {
         $this->ema($slice, 3, 'close');
         $this->ema($slice, 12, 'close');
+        $this->compare($slice, 'ema(3,close)', 'ema(12,close)');
         $this->roc($slice, 4, 'close');
         $this->roc($slice, 12, 'close');
         $this->rsi($slice, 3);

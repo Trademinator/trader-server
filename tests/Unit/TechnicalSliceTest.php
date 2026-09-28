@@ -15,6 +15,7 @@ function calculateSliceIndicators(object $technical, array &$slice): void
 {
     $technical->ema($slice, 24);
     $technical->ema($slice, 12);
+    $technical->compare($slice, 'ema(24,close)', 'ema(12,close)');
     $technical->sma($slice, 20);
     $technical->smma($slice, 14);
     $technical->rsi($slice, 3);
@@ -135,4 +136,5 @@ it('has no alternative single-candle indicator API', function () {
     foreach ($trait->getMethods() as $method) {
         expect(str_ends_with($method->name, '_next'))->toBeFalse();
     }
+    expect($trait->hasMethod('technical_compare_value'))->toBeFalse();
 });
