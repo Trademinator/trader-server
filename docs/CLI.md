@@ -133,6 +133,9 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 
 ## Command index
 
+- [`trademinator:dispatch-market-signals`](#trademinatordispatch-market-signals) — Record current shared-market observations
+- [`trademinator:refresh-market-discovery`](#trademinatorrefresh-market-discovery) — Refresh optional dashboard market context and discovery
+
 - [`trademinator:prune-access-statistics`](#trademinatorprune-access-statistics) — Apply access-report retention
 
 - [`trademinator:backfill-ohlcv`](#trademinatorbackfill-ohlcv) — Progressively collect older candles for shared subscribed markets
@@ -811,3 +814,40 @@ php artisan queue:failed
 ```
 
 This dispatcher reevaluates the complete downstream model so current lead/lag coefficients are never silently swapped into a KNN trained with different features. The existing weekly schedule remains, including for markets without matching peers. Daily rebuilds retain new dataset/model artifacts; monitor private storage usage.
+
+## trademinator:dispatch-market-signals
+
+Description: Queue current signal recording once per actively subscribed market
+
+Signature: `trademinator:dispatch-market-signals`
+
+No arguments or command-specific options. Scheduled every minute with shared scheduler locks. Requires the M4.2 migration, a persistent database/Redis queue, shared atomic-lock-capable cache, shared model storage, an active market subscription and a selected feed period. `sync` and `null` queue connections fail. `DASHBOARD_SIGNALS_ENABLED=false` or `INTELLIGENCE_ENABLED=false` makes dispatch and already queued recorder jobs idle.
+
+Queues a unique `RecordMarketSignal` job per shared market on `INTELLIGENCE_QUEUE` (default `intelligence`), regardless of subscriber count. The job allows two attempts, a 120-second timeout and a 60-second retry delay; the existing intelligence worker and `retry_after >= 720` remain sufficient. Uniqueness lasts up to five minutes; a per-market recording lock and observation deduplication also protect repeated delivery. A queued job rechecks that an active subscriber still exists and reads the current selected period. Queue backlog can delay observations; the command does not backfill missed decisions.
+
+Side effects: appends the current model/source/action/reason/evidence to `market_signals` with its actual recording time. Repeated consecutive observations reuse the saved record; a later source candle or an intervening-state recovery creates a new record. Missing or unusable intelligence records waiting evidence, not a fabricated BUY/SELL. Existing observations are never recomputed with a newer model. This command performs inference only; it does not train, subscribe, allocate funds or send orders. Client execution remains Unknown.
+
+```bash
+php artisan trademinator:dispatch-market-signals
+php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --timeout=600 --memory=512 --tries=3
+```
+
+Install the existing [intelligence cron worker](CRONTABS.md#m4-intelligence-workers); no additional system cron or permanent daemon is required. The [M plan](M-PLAN.md) describes marker timing, access and the future Client reporting contract.
+
+## trademinator:refresh-market-discovery
+
+Description: Refresh bounded CoinGecko discovery and market conditions without subscribing or trading
+
+Signature: `trademinator:refresh-market-discovery`
+
+No arguments or command-specific options. Scheduled hourly at minute 10 in the application timezone, in the background so network latency does not hold up subsequent scheduler commands. A shared 15-minute refresh lock also prevents concurrent manual runs. Requires the configured shared cache, outbound HTTPS and `COINGECKO_API_KEY`. `DASHBOARD_DISCOVERY_ENABLED=false` or `COINGECKO_ENABLED=false` skips all HTTP work successfully. Missing credentials, invalid/stale source data or HTTP errors fail with a generic console message and diagnostic application logging.
+
+Reads `/global`, one `/coins/markets` page of at most 100 assets ordered by volume, up to `dashboard.discovery_limit` exact-symbol `/search` checks (default 12, hard maximum 20), and `/coins/categories`. Thus a default refresh makes at most 15 requests and the maximum configured refresh makes 23. Each uses the existing CoinGecko client's 10-second connection and 30-second request timeouts. Exact-symbol duplicates and mismatched coin IDs are excluded; known ambiguous/conflicting exchange-market mappings cannot receive an activity boost. Finite positive market caps, nonnegative volumes and source timestamps are required. Discovery is optional and remains subject to the CoinGecko account's quotas.
+
+Side effects: atomically replaces one shared cached discovery snapshot after successful validation. Keeps up to 12 resolved assets by default, global conditions and up to five category movements. Context expires no later than two hours after any included source timestamp. An outage preserves existing context only until its source expiry; preference screens continue without activity after that. No market, feed, subscription, candle, training-context snapshot or trade is created. Ranking uses coin-wide volume/market-cap activity only to break ties between preference matches; it does not establish pair liquidity or imply trading authorization.
+
+```bash
+php artisan trademinator:refresh-market-discovery
+```
+
+This is separate from `trademinator:collect-market-context`, whose subscription-driven, timestamped snapshots remain the only CoinGecko context eligible for M2 training. See [M4.2 operating notes](CRONTABS.md#m42-dashboard-recording-and-discovery).

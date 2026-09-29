@@ -3,16 +3,18 @@
 namespace App\Domain\MarketSuggestions;
 
 use App\Domain\MarketData\MarketCatalog;
+use App\Models\CoinGeckoMarketMapping;
 use App\Models\Exchange;
 use App\Models\Market;
 use App\Models\MarketSubscription;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 
 final class PairSuggestions
 {
-    public function __construct(private MarketCatalog $catalog, private RegionalAccess $access, private CandleEvidence $evidence) {}
+    public function __construct(private MarketCatalog $catalog, private RegionalAccess $access, private CandleEvidence $evidence, private MarketDiscovery $discovery) {}
 
-    public function suggest(User $user, array $answers, Exchange $exchange, ?string $reviewSymbol = null): array
+    public function suggest(User $user, array $answers, Exchange $exchange, ?string $reviewSymbol = null, bool $discoveryOnly = false): array
     {
         $access = $this->access->check($answers);
         $result = ['items' => [], 'excluded' => [], 'notes' => [], 'access' => $access, 'considered' => 0,
@@ -33,6 +35,16 @@ final class PairSuggestions
             return $result;
         }
         $options = $this->catalog->forExchange($exchange);
+        $discovery = $this->discovery->snapshot();
+        $mappings = CoinGeckoMarketMapping::query()->with('market:market_id,symbol')
+            ->whereHas('market', fn ($query) => $query->where('exchange_id', $exchange->exchange_id))
+            ->get()->keyBy(fn ($mapping) => $mapping->market->symbol);
+        $hidden = $discoveryOnly ? DB::table('market_suggestion_dismissals')->where('user_id', $user->user_id)
+            ->where('exchange', $exchange->class)->where('dismissed_at', '>=', now()->subDays(30))->pluck('symbol')->all() : [];
+        if ($discoveryOnly) {
+            $hidden = array_merge($hidden, Market::query()->where('exchange_id', $exchange->exchange_id)
+                ->whereHas('subscriptions', fn ($query) => $query->where('user_id', $user->user_id)->where('active', true))->pluck('symbol')->all());
+        }
         $result['catalogue_count'] = count($options['symbols']);
         $holdings = array_column($answers['holdings'], 'band', 'asset');
         $held = array_keys($holdings);
@@ -60,6 +72,9 @@ final class PairSuggestions
         $candidates = [];
         foreach ($options['symbols'] as $option) {
             $symbol = $option['value'];
+            if (in_array($symbol, $hidden, true)) {
+                continue;
+            }
             [$base, $quote] = explode('/', $symbol);
             $reason = null;
             if (array_intersect([$base, $quote], $excluded)) {
@@ -91,10 +106,16 @@ final class PairSuggestions
                 ['label' => 'Goal currency match', 'points' => $quote === $target ? 30 : ($base === $target ? 20 : 0), 'maximum' => 30,
                     'rule' => '30 points if the quote is '.$target.'; otherwise 20 if the base is '.$target.'; otherwise 0.'],
             ];
+            $activity = $discovery['coins'][$base] ?? null;
+            $mapping = $mappings->get($symbol);
+            if ($mapping !== null && ($mapping->status !== 'resolved' || $mapping->coin_id !== ($activity['coin_id'] ?? null))) {
+                $activity = null;
+            }
             $candidates[] = $option + ['base' => $base, 'quote' => $quote, 'score' => array_sum(array_column($breakdown, 'points')),
-                'score_breakdown' => $breakdown, 'direct' => $direct];
+                'score_breakdown' => $breakdown, 'direct' => $direct, 'activity' => $activity];
         }
-        usort($candidates, fn ($a, $b) => ($b['score'] <=> $a['score']) ?: strcmp($a['value'], $b['value']));
+        usort($candidates, fn ($a, $b) => ($b['score'] <=> $a['score'])
+            ?: (($b['activity']['activity_ratio'] ?? -1) <=> ($a['activity']['activity_ratio'] ?? -1)) ?: strcmp($a['value'], $b['value']));
         $limit = max(1, min(50, (int) config('market_suggestions.candidate_limit', 24)));
         if (count($candidates) > $limit) {
             $result['notes'][] = 'Detailed history checks cover the '.$limit.' closest funding and goal matches. This is a bounded shortlist, not a scan of every market’s profitability.';
@@ -110,6 +131,7 @@ final class PairSuggestions
             $base = $candidate['base'];
             $quote = $candidate['quote'];
             $market = $markets->get($symbol);
+            $activity = $candidate['activity'];
             $evidence = $this->evidence->inspect($exchange->class, $symbol, $market?->feed?->selected_period,
                 $answers['horizon'], $target === $base, $symbol === $reviewSymbol);
             $riskLimit = (float) config('market_suggestions.risk_limits.'.$answers['risk'], 0.10);
@@ -204,6 +226,7 @@ final class PairSuggestions
             }
             $explore = $explorationReasons !== [];
             $result['items'][] = ['symbol' => $symbol, 'base' => $base, 'quote' => $quote, 'reasons' => $reasons,
+                'activity' => $activity, 'activity_observed_at_ms' => $activity === null ? null : $discovery['observed_at_ms'],
                 'cautions' => $cautions, 'evidence' => $evidence, 'explore' => $explore,
                 'score' => $candidate['score'], 'risk_currency' => $target === $base ? $base : $quote,
                 'score_breakdown' => $candidate['score_breakdown'], 'exploration_reasons' => $explorationReasons,
@@ -214,7 +237,8 @@ final class PairSuggestions
                     'affordability_checked' => $quote === $answers['reference_currency'] && $allocationMax !== null && $minCost !== null],
                 'subscribed' => $market !== null && in_array($market->market_id, $subscribed, true)];
         }
-        usort($result['items'], fn ($a, $b) => ($a['explore'] <=> $b['explore']) ?: ($b['score'] <=> $a['score']) ?: strcmp($a['symbol'], $b['symbol']));
+        usort($result['items'], fn ($a, $b) => ($a['explore'] <=> $b['explore']) ?: ($b['score'] <=> $a['score'])
+            ?: (($b['activity']['activity_ratio'] ?? -1) <=> ($a['activity']['activity_ratio'] ?? -1)) ?: strcmp($a['symbol'], $b['symbol']));
         // Cap duplicate base exposure. This is not a claim of measured diversification.
         $seen = [];
         $result['items'] = array_values(array_filter($result['items'], function ($item) use (&$seen) {

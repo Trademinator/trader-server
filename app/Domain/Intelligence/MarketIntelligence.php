@@ -86,6 +86,7 @@ final class MarketIntelligence
         $asOfMs = min($asOfMs ?? now()->getTimestampMs(), now()->getTimestampMs());
         $model = $this->models->current($exchange, $symbol, $period);
         $context = ['exchange' => $exchange, 'symbol' => $symbol, 'period' => $period,
+            'horizon_candles' => $model['label_definition']['horizon'] ?? null,
             'model_id' => $model['model_id'] ?? null, 'regime' => 'neutral', 'lead_lag' => [], 'patterns' => [], 'patterns_evaluated' => false];
         if ($model === null) {
             return [...WeightedKnn::abstain('no_model'), ...$context];

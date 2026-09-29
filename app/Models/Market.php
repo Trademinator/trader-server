@@ -39,4 +39,10 @@ class Market extends Model
     {
         return $this->hasOne(CoinGeckoMarketMapping::class, 'market_id', 'market_id');
     }
+
+    public function latestSignal(): HasOne
+    {
+        return $this->hasOne(MarketSignal::class, 'market_id', 'market_id')
+            ->ofMany(['recorded_at_ms' => 'max', 'market_signal_id' => 'max']);
+    }
 }

@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\Markets\DashboardSuggestionController;
 use App\Http\Controllers\Markets\IntelligenceController;
 use App\Http\Controllers\Markets\SubscriptionController;
 use App\Http\Controllers\Markets\SuggestionController;
@@ -13,9 +15,17 @@ Route::get('/', function () {
     return view('welcome');
 })->name('home');
 
-Route::view('dashboard', 'dashboard')
-    ->middleware(['auth', 'verified'])
-    ->name('dashboard');
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('dashboard/markets/{subscription}/chart', [DashboardController::class, 'chart'])
+        ->middleware('throttle:30,1')->name('dashboard.chart');
+    Route::get('dashboard/suggestions', [DashboardSuggestionController::class, 'index'])
+        ->middleware('throttle:12,1')->name('dashboard.suggestions');
+    Route::post('dashboard/suggestions/dismiss', [DashboardSuggestionController::class, 'store'])
+        ->middleware('throttle:12,1')->name('dashboard.suggestions.dismiss');
+    Route::delete('dashboard/suggestions/dismiss', [DashboardSuggestionController::class, 'destroy'])
+        ->name('dashboard.suggestions.restore');
+});
 
 Route::middleware(['auth'])->group(function () {
     Route::get('markets', [SubscriptionController::class, 'index'])->name('markets.index');

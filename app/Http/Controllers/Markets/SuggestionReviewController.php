@@ -25,6 +25,7 @@ final class SuggestionReviewController extends Controller
         $input = $request->validate([
             'exchange' => ['required', 'string', 'max:64', 'regex:/^[a-z0-9_]+$/D'],
             'symbol' => ['required', 'string', 'max:32', 'regex:/^[A-Z0-9._-]+\/[A-Z0-9._-]+$/D'],
+            'discovery' => ['sometimes', 'boolean'],
         ]);
         $subscription = MarketSubscription::query()->with('market.exchange', 'market.feed')
             ->where('user_id', $request->user()->user_id)
@@ -59,7 +60,7 @@ final class SuggestionReviewController extends Controller
                 $failure = 'Your saved exchange is no longer available. Return to suggestions and choose another exchange.';
             } else {
                 $exchange = $matches->first();
-                $results = $suggestions->suggest($request->user(), $answers, $exchange, $input['symbol']);
+                $results = $suggestions->suggest($request->user(), $answers, $exchange, $input['symbol'], $request->boolean('discovery'));
                 $item = collect($results['items'])->firstWhere('symbol', $input['symbol']);
                 if ($item === null) {
                     $failure = 'This pair is no longer in your current shortlist. Your answers, market availability or stored evidence may have changed. Return to suggestions to review the latest matches.';

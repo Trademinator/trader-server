@@ -38,3 +38,15 @@ if (reviewChart) {
         reviewChart.querySelector('[data-chart-status]').textContent = 'The chart could not load. The review and candle table remain available.'
     })
 }
+
+const dashboardChart = document.querySelector('[data-dashboard-chart]')
+const dashboardSuggestions = document.querySelector('[data-dashboard-suggestions]')
+if (dashboardChart || dashboardSuggestions) {
+    import('./components/dashboard').then(({ mountDashboardChart, loadDashboardSuggestions }) => {
+        if (dashboardChart) mountDashboardChart(dashboardChart)
+        if (dashboardSuggestions) loadDashboardSuggestions(dashboardSuggestions)
+    }).catch(() => {
+        if (dashboardChart) dashboardChart.querySelector('[data-status]').textContent = 'The chart could not load. Candle values and the signal journal remain available.'
+        if (dashboardSuggestions) dashboardSuggestions.querySelector('[role="status"]').textContent = 'Open pair suggestions to see your matches.'
+    })
+}

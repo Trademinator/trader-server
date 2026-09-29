@@ -2,6 +2,8 @@
 
 use App\Domain\Intelligence\IntelligenceTrainer;
 use App\Domain\Intelligence\SignalJournal;
+use App\Domain\Operations\ActionContext;
+use App\Domain\Operations\ActionLog;
 use App\Jobs\RecordMarketSignal;
 use App\Models\MarketFeed;
 use App\Models\MarketSignal;
@@ -10,6 +12,8 @@ use App\Models\User;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger;
 use Tests\Support\IntelligenceFixtures;
 
 it('records waiting once for shared subscribers and stops recording after the last unsubscribe', function () {
@@ -55,6 +59,8 @@ it('records the original model evidence, preserves its time and distinguishes su
     try {
         $manifest = IntelligenceFixtures::snapshot();
         $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+        $handler = new TestHandler;
+        app()->instance(ActionLog::class, new ActionLog(new Logger('test-actions', [$handler]), app(ActionContext::class)));
         IntelligenceFixtures::feature(243, 0.5);
         IntelligenceFixtures::feature(244, 0.5);
         $first = app(SignalJournal::class)->record($market);
@@ -66,6 +72,11 @@ it('records the original model evidence, preserves its time and distinguishes su
         expect($second->reason)->toBe('stale_features')->and($second->is_change)->toBeTrue();
         expect($first->fresh()->payload)->toBe($first->payload);
         $this->assertDatabaseCount('market_signals', 2);
+        $predictions = collect($handler->getRecords())->map(fn ($record) => json_decode($record->message, true))
+            ->where('event', 'intelligence.predicted')->values();
+        expect($predictions)->toHaveCount(2);
+        expect($predictions[0])->toMatchArray(['model_id' => $first->model_id, 'action' => 'hodl', 'reason' => 'supported']);
+        expect($predictions[1])->toMatchArray(['model_id' => $second->model_id, 'reason' => 'stale_features']);
     } finally {
         File::deleteDirectory($path);
     }

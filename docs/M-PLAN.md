@@ -2,6 +2,8 @@
 
 Updated 2026-09-29. This plan follows the current Server implementation and preserves the M0–M4.1 foundations. M4.2 delivers the subscribed-market dashboard; Client execution reporting and paper trading remain M5 work.
 
+The M4.2 integration is based on GitHub `main` at `a2c7d8f2e67cf5e1bb7c68db448ced359274f781`. It preserves the owner administration, account suspension, access statistics, syslog, local GeoIP and compression changes already present there. Dashboard routes, model relationships, frontend loading and scheduled recording/discovery are integrated alongside those features.
+
 ## Product and responsibility contract
 
 A **market subscription** means the user follows one exact exchange + spot symbol. It enables access to that market's intelligence and contributes to shared Server collection. Subscribing does **not** mean the user holds the asset, allocates funds, enables a strategy, or places an order.
@@ -48,11 +50,11 @@ The subscription access requirement is enforced for the Server dashboard/chart/i
 4. Add paper trading with position state, costs, drawdown and an appropriate passive benchmark over matching periods. Keep paper, historical backtest and reported live results separate; show sample size, observation window and costs. Do not derive a portfolio return from a stream of classification labels.
 5. Add optional, authenticated and idempotent Client reports linked to the immutable Server signal ID: acted, skipped with reason, rejected/failed, pending and fills (including partial fills). Scope all reports and balances to their owner. No report means Unknown. A Server HOLD or abstention is not a Client skip.
 6. Extend charts with separately styled, timestamped Client decisions and actual fill prices only when supported by those reports. Show decision latency, execution differences and outcomes with their provenance. Preserve the original signal if a model later changes.
-7. Add user-selected alerts and digest preferences after the event/reporting contract is established. Owner operations monitoring should expose worker/collection/model failures through restricted administration, without leaking raw worker errors or private account data onto user dashboards.
+7. Add user-selected alerts and digest preferences after the event/reporting contract is established. Extend the existing restricted owner reports and syslog monitoring with actionable worker/collection/model failure alerts. Preserve their access controls and keep raw worker errors and private account data off user dashboards. See [existing owner administration and operations](CLI.md#owner-administration-syslog-and-local-geoip).
 
 ## Deployment and verification
 
-M4.2 adds one migration for the journal, dismissals and visit timestamp; no new Composer or npm dependencies. Build frontend assets and apply the migration before serving the new dashboard or schedules:
+The dashboard migration for the journal, dismissals and visit timestamp is already included in GitHub `main`. This integration adds no further migrations or Composer/npm dependencies; use the current lockfiles, including the existing GeoIP dependency. Build frontend assets and apply any pending migrations before serving the new dashboard or schedules:
 
 ```bash
 composer install --no-dev --optimize-autoloader
@@ -70,10 +72,10 @@ Use the existing persistent queue, shared atomic-lock-capable cache and cron-dri
 
 See [CLI.md](CLI.md#trademinatordispatch-market-signals) for immediate dispatch and [CRONTABS.md](CRONTABS.md#m42-dashboard-recording-and-discovery) for deployment requirements. Existing M0–M4.1 data and model artifacts are preserved. A new model build is optional to populate `horizon_candles` when using an older artifact without its label definition; unknown horizon is displayed honestly.
 
-Targeted verification:
+Integration verification includes the owner/access/syslog features together with the dashboard. The full PHP suite uses SQLite `:memory:` only:
 
 ```bash
-php artisan test --compact tests/Feature/DashboardTest.php tests/Feature/DashboardSignalsTest.php tests/Feature/DashboardSuggestionsTest.php tests/Feature/MarketDiscoveryTest.php tests/Feature/MarketSuggestionsTest.php tests/Feature/IntelligencePageTest.php tests/Feature/IntelligenceReadinessTest.php tests/Feature/MarketSuggestionRoutesTest.php tests/Feature/TrademinatorCliDocumentationTest.php tests/Feature/MarketSubscriptionsWebTest.php tests/Feature/IntelligenceWorkflowTest.php tests/Unit/MarketRouteCacheTest.php
+php artisan test --compact
 node --test tests/Frontend/*.test.mjs
 npm run build
 ```

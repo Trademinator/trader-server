@@ -202,6 +202,7 @@ final class IntelligenceReadiness
             'stale_model', 'model_version_mismatch' => 'Rebuild the model from current features.',
             'missing_features', 'stale_features', 'missing_selected_features', 'source_feature_mismatch' => 'Check collection and rebuild the selected M2 features. Then rebuild the model if needed.',
             'no_post_training_candle' => 'Wait for the next genuinely closed candle and its feature build.',
+            'awaiting_recording' => 'A validated model is available. Wait for the next signal recording and intelligence queue run; an older observation is not a current signal.',
             'no_similar_history', 'insufficient_effective_neighbors', 'tied_votes', 'weak_consensus' => 'The model is available but this market state lacks sufficient evidence. More time does not guarantee a directional signal.',
             'supported' => 'The model passed validation and evaluated the current candle. HOLD can also be a supported model decision.',
             default => 'Check the intelligence worker logs, failed jobs and shared model storage, then rebuild the model.',

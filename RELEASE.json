@@ -1,41 +1,37 @@
 {
-  "release": "Trademinator owner administration, syslog and local GeoIP",
-  "revision": 1,
+  "release": "Trademinator M4.2 dashboard integrated with owner administration, syslog, GeoIP and compression",
+  "revision": 2,
   "date": "2026-09-29",
   "source_repository": "https://github.com/Trademinator/trader-server",
-  "base_commit": "f09e402f9977453065c9215852ba5a38661d9325",
-  "delivery": "Full application source and compiled frontend assets; preserve deployment data.",
-  "entrypoint_guide": "docs/CLI.md#owner-administration-syslog-and-local-geoip",
+  "base_commit": "a2c7d8f2e67cf5e1bb7c68db448ced359274f781",
+  "delivery": "Full application source and compiled frontend assets, plus an incremental source patch against the base commit; preserve deployment data.",
+  "entrypoint_guide": "docs/M-PLAN.md",
   "cli_reference": "docs/CLI.md",
   "cron_reference": "docs/CRONTABS.md",
-  "new_commands": [
-    "trademinator:prune-access-statistics"
+  "new_commands_relative_to_base": [],
+  "new_migrations_relative_to_base": [],
+  "dependencies_changed_relative_to_base": false,
+  "restored_schedules": [
+    "trademinator:dispatch-market-signals",
+    "trademinator:refresh-market-discovery"
   ],
-  "new_migrations": [
-    "2026_09_29_110605_add_owner_controls_to_users",
-    "2026_09_29_110606_create_access_statistics_tables"
-  ],
-  "added_dependency": {
-    "maxmind-db/reader": "1.14.0"
-  },
   "validation": {
     "php": "8.4.26",
     "laravel": "13.33.0",
-    "php_tests_passed": 404,
-    "php_assertions": 9768,
-    "php_test_startup_memory_limit": "128M",
+    "php_tests_passed": 417,
+    "php_assertions": 9929,
     "php_test_memory_limit": "512M (existing phpunit.xml)",
-    "frontend_tests_passed": 10,
+    "frontend_tests_passed": 13,
     "pint": "passed",
     "git_diff_check": "passed",
-    "composer_validate": "passed",
-    "composer_platform_requirements": "passed",
+    "composer_install": "passed with the existing lockfile",
     "database": "SQLite :memory: with repository safety guards",
     "frontend_build": "npm run build passed",
     "blade_compile": "passed"
   },
   "not_exercised": [
-    "Production MariaDB and multi-node concurrency",
+    "Production MariaDB, page-compression operations and multi-node concurrency",
+    "Live exchange or CoinGecko API calls",
     "Host syslog/journald delivery or retention",
     "Browser visual validation",
     "A licensed production GeoIP database"
@@ -52,12 +48,15 @@
     "licensed production GeoIP data"
   ],
   "notes": [
-    "Single-line JSON action events use an isolated syslog logger with an explicit field allowlist.",
-    "OWNER_UUID authorizes one authenticated, email-verified account; suspension stops its subscriptions and revokes its API key.",
-    "The operator supplies and updates a City MMDB; lookups stay local. Only explicitly trusted proxies can forward the client IP.",
-    "Access records use aggregates and date-scoped HMAC visitor fingerprints, with daily retention cleanup.",
-    "Model decisions are unchanged. No Client trading, M5 API or billing implementation is introduced."
+    "Restores dashboard routes, signal relationships, signal horizon, frontend loading, private discovery, schedules and their CLI documentation.",
+    "Preserves all owner, suspension, trace, syslog, access-statistics and local GeoIP functionality from current GitHub main.",
+    "Preserves the compression migration in database/migrations from GitHub commit a2c7d8f without modifying it.",
+    "An active subscription to the exact exchange and market is required for Client trading; subscribing never enables trading.",
+    "Server observations are not orders or fills. Client execution stays Unknown until authenticated M5 reporting exists.",
+    "Client trading, Client API, paper trading and billing remain future milestones.",
+    "The full source package includes rebuilt owner and dashboard assets. Rebuild assets when applying the source patch.",
+    "Install the current locked dependencies and apply pending migrations using the deployment steps in docs/M-PLAN.md."
   ],
   "compiled_frontend_assets": true,
-  "file_checksums": "docs/OWNER-SYSLOG-GEOIP-FILES.sha256"
+  "file_checksums": "docs/M4.2-FILES.sha256"
 }
