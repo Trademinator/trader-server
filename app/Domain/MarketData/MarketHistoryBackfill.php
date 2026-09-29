@@ -2,6 +2,7 @@
 
 namespace App\Domain\MarketData;
 
+use App\Domain\Operations\ActionLog;
 use App\Jobs\BackfillMarketHistory;
 use App\Models\MarketFeed;
 use ccxt\AuthenticationError;
@@ -77,10 +78,15 @@ final class MarketHistoryBackfill
 
     public function release(string $id, string $token, array $changes = [], int $delay = 60): void
     {
-        $this->owned($id, $token)->update(array_merge([
+        $updated = $this->owned($id, $token)->update(array_merge([
             'lease_token' => null, 'lease_until' => null, 'next_attempt_at' => now()->addSeconds($delay),
             'status' => 'active', 'updated_at' => now(),
         ], $changes));
+        if ($updated) {
+            app(ActionLog::class)->write('history.updated', ['subject_id' => $id,
+                'status' => $changes['status'] ?? 'active', 'reason' => $changes['reason'] ?? null,
+                'rows' => $changes['window_rows'] ?? 0, 'outcome' => 'completed']);
+        }
     }
 
     public function failure(string $id, string $token, Throwable $error): void
@@ -89,6 +95,9 @@ final class MarketHistoryBackfill
         if ($row === null) {
             return;
         }
+        $log = app(ActionLog::class);
+        $log->write('history.failed', ['subject_id' => $id, 'market_id' => $row->market_id,
+            'outcome' => 'failed', ...$log->exception($error)]);
         $failures = min(100, $row->failures + 1);
         $permanent = $error instanceof NotSupported || $error instanceof BadSymbol
             || $error instanceof AuthenticationError || $error instanceof PermissionDenied

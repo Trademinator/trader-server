@@ -7,6 +7,7 @@ use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\MarketData\ExchangeMetadata;
 use App\Domain\MarketData\MarketCatalogException;
 use App\Domain\MarketData\MarketDataSynchronizer;
+use App\Domain\Operations\ActionLog;
 use App\Models\MarketFeed;
 use App\Repositories\ExchangeRepository;
 use App\Repositories\TickerRepository;
@@ -114,10 +115,14 @@ final class CollectMarketFeed implements ShouldQueue
 
     private function finish(string $status, mixed $next, ?string $error = null, bool $pulled = false): void
     {
-        DB::table('market_feeds')->where('market_id', $this->marketId)->where('lease_token', $this->leaseToken)
+        $updated = DB::table('market_feeds')->where('market_id', $this->marketId)->where('lease_token', $this->leaseToken)
             ->update(['status' => $status, 'next_pull_at' => $next,
                 'last_pulled_at' => $pulled ? now() : DB::raw('last_pulled_at'),
                 'last_error' => $error === null ? null : mb_substr($error, 0, 1000),
                 'lease_until' => null, 'lease_token' => null, 'updated_at' => now()]);
+        if ($updated) {
+            app(ActionLog::class)->write('feed.updated', ['market_id' => $this->marketId,
+                'status' => $status, 'outcome' => $status === 'error' ? 'failed' : 'completed']);
+        }
     }
 }

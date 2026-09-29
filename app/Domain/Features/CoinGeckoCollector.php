@@ -2,6 +2,7 @@
 
 namespace App\Domain\Features;
 
+use App\Domain\Operations\ActionLog;
 use App\Models\CoinGeckoMarketMapping;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -136,6 +137,8 @@ final class CoinGeckoCollector
                 }
             }
         }
+
+        app(ActionLog::class)->write('context.collected', ['rows' => $saved, 'outcome' => 'completed']);
 
         return $saved;
     }

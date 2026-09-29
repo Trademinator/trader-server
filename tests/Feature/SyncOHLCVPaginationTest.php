@@ -3,6 +3,7 @@
 use App\Domain\MarketData\CandleGaps;
 use App\Domain\MarketData\CandleSyncPages;
 use App\Domain\MarketData\MarketDataSynchronizer;
+use App\Domain\Operations\ActionLog;
 use App\Jobs\SyncMarketCandles;
 use App\Models\Exchange;
 use App\Repositories\ExchangeRepository;
@@ -25,7 +26,7 @@ it('syncs a long interval in bounded overlapping windows', function () {
     }
 
     app()->instance(TickerRepository::class, $tickers);
-    app()->instance(MarketDataSynchronizer::class, new MarketDataSynchronizer($repository, $tickers, new CandleGaps));
+    app()->instance(MarketDataSynchronizer::class, new MarketDataSynchronizer($repository, $tickers, new CandleGaps, app(ActionLog::class)));
 
     $status = Artisan::call('trademinator:sync-ohlcv', [
         'exchange' => 'kraken', 'symbol' => 'BTC/USD', 'period' => '1m',
@@ -46,14 +47,13 @@ it('queues the next bounded page only after the current page succeeds', function
     $repository->shouldReceive('markets')->once()->andReturn(['BTC/USD' => []]);
     $repository->shouldReceive('fetch')->once()->with('BTC/USD', '1m', 0, 599, 10)->andReturn([]);
     $tickers->shouldReceive('timestamps')->once()->with('kraken', 'BTC/USD', '1m', 0, 599_000)->andReturn([]);
-    $synchronizer = new MarketDataSynchronizer($repository, $tickers, new CandleGaps);
+    $synchronizer = new MarketDataSynchronizer($repository, $tickers, new CandleGaps, app(ActionLog::class));
 
     Bus::fake();
     (new SyncMarketCandles('kraken', 'BTC/USD', '1m', 0, 1200, false, false, 10))
         ->handle($synchronizer, $tickers, new CandleSyncPages);
 
-    Bus::assertDispatched(SyncMarketCandles::class, fn (SyncMarketCandles $job): bool =>
-        $job->from === 420 && $job->to === 1200 && $job->pageSize === 10);
+    Bus::assertDispatched(SyncMarketCandles::class, fn (SyncMarketCandles $job): bool => $job->from === 420 && $job->to === 1200 && $job->pageSize === 10);
 });
 
 it('queues only the first job and refuses an inline queue connection', function () {
@@ -71,6 +71,5 @@ it('queues only the first job and refuses an inline queue connection', function 
     config(['queue.default' => 'database']);
     expect(Artisan::call('trademinator:sync-ohlcv', $arguments))->toBe(0);
     Bus::assertDispatchedTimes(SyncMarketCandles::class, 1);
-    Bus::assertDispatched(SyncMarketCandles::class, fn (SyncMarketCandles $job): bool =>
-        $job->from === 0 && $job->to === 1200 && $job->pageSize === 10);
+    Bus::assertDispatched(SyncMarketCandles::class, fn (SyncMarketCandles $job): bool => $job->from === 0 && $job->to === 1200 && $job->pageSize === 10);
 });

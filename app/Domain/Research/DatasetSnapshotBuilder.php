@@ -5,6 +5,7 @@ namespace App\Domain\Research;
 use App\Domain\Features\FeatureEngine;
 use App\Domain\Intelligence\PatternCatalog;
 use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\Operations\ActionLog;
 use App\Models\MarketFeature;
 use App\Models\Ticker;
 use Illuminate\Support\Facades\Cache;
@@ -218,6 +219,10 @@ final class DatasetSnapshotBuilder
 
                 return $manifest;
             });
+
+            app(ActionLog::class)->write('dataset.saved', ['dataset_id' => $id,
+                'exchange' => $exchange, 'symbol' => $symbol, 'period' => $period,
+                'rows' => $manifest['rows'], 'outcome' => 'completed']);
 
             return $manifest;
         } catch (Throwable $error) {

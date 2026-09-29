@@ -22,6 +22,13 @@
                         {{ __('Markets') }}
                     </x-navlist.item>
                 </x-navlist.group>
+                @can('manage-server')
+                    <x-navlist.group :heading="__('Server owner')">
+                        <x-navlist.item before="phosphor-gear-fine" :href="route('owner.overview')" :current="request()->routeIs('owner.*')">
+                            {{ __('Server administration') }}
+                        </x-navlist.item>
+                    </x-navlist.group>
+                @endcan
             </x-navlist>
 
             <x-spacer />

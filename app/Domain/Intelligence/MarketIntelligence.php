@@ -4,6 +4,7 @@ namespace App\Domain\Intelligence;
 
 use App\Domain\Features\FeatureEngine;
 use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\Operations\ActionLog;
 use App\Domain\Research\DatasetSnapshotBuilder;
 use App\Domain\Research\DatasetStore;
 use App\Domain\Research\FeatureSchema;
@@ -70,6 +71,17 @@ final class MarketIntelligence
     }
 
     public function predict(string $exchange, string $symbol, string $period, ?int $asOfMs = null): array
+    {
+        $result = $this->evaluate($exchange, $symbol, $period, $asOfMs);
+        app(ActionLog::class)->write('intelligence.predicted', [
+            'exchange' => $exchange, 'symbol' => $symbol, 'period' => $period, 'model_id' => $result['model_id'] ?? null,
+            'action' => $result['action'], 'reason' => $result['reason'], 'confidence' => $result['confidence'],
+            'effective_neighbors' => $result['effective_neighbors'], 'outcome' => 'completed']);
+
+        return $result;
+    }
+
+    private function evaluate(string $exchange, string $symbol, string $period, ?int $asOfMs): array
     {
         $asOfMs = min($asOfMs ?? now()->getTimestampMs(), now()->getTimestampMs());
         $model = $this->models->current($exchange, $symbol, $period);

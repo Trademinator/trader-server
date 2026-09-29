@@ -34,3 +34,6 @@ Schedule::command('trademinator:dispatch-market-intelligence')
 // Refit empirical cross-exchange evidence and its downstream model together.
 Schedule::command('trademinator:dispatch-lead-lag')
     ->dailyAt('03:45')->onOneServer()->withoutOverlapping(10);
+
+Schedule::command('trademinator:prune-access-statistics')
+    ->dailyAt('02:40')->onOneServer()->withoutOverlapping(60);

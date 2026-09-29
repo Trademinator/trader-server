@@ -1,0 +1,48 @@
+.owner-page { color: #182230; max-width: 1480px; margin-inline: auto; }
+.owner-hero { background: #10345a; color: #fff; padding: 26px; border-radius: 16px; }
+.owner-hero h1 { font-size: 1.85rem; font-weight: 750; margin: 6px 0 8px; }
+.owner-eyebrow { font-size: .73rem; font-weight: 700; letter-spacing: .13em; color: #bfe3ff; }
+.owner-hero > p:last-child { font-size: .92rem; color: #dbeafe; }
+.owner-nav { display: flex; flex-wrap: wrap; gap: 6px; padding: 16px 0; }
+.owner-nav a { padding: 10px 15px; border-radius: 9px; color: inherit; font-weight: 650; }
+.owner-nav a[aria-current], .owner-nav a:hover { background: #dceafb; color: #10345a; }
+.owner-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.owner-panel, .owner-stat { background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+.owner-grid .owner-stat { margin-bottom: 0; }
+.owner-stat > strong { display: block; font-size: 1.9rem; font-weight: 750; }
+.owner-stat > span, .owner-muted { color: #526176; font-size: .87rem; }
+.owner-page h2 { font-size: 1.16rem; font-weight: 750; margin-bottom: 12px; }
+.owner-page h3 { font-weight: 700; margin: 16px 0 8px; }
+.owner-page a:not(.owner-nav a) { color: #075baf; text-decoration: underline; text-underline-offset: 3px; }
+.owner-scroll { overflow-x: auto; }
+.owner-table { width: 100%; text-align: left; border-collapse: collapse; font-size: .91rem; }
+.owner-table th { color: #465770; background: #f3f6fa; font-size: .79rem; font-weight: 750; }
+.owner-table th, .owner-table td { padding: 12px; border-bottom: 1px solid #dce3eb; vertical-align: top; }
+.owner-table small { display: block; color: #526176; margin-top: 3px; }
+.owner-table caption { text-align: left; padding-bottom: 12px; }
+.owner-badge { display: inline-block; padding: 3px 8px; border-radius: 6px; background: #e7edf5; font-size: .8rem; font-weight: 700; }
+.owner-notice { border-left: 4px solid #18764e; background: #e8f5ee; color: #165335; border-radius: 8px; padding: 14px 18px; margin-bottom: 18px; }
+.owner-warning { border-color: #a36808; background: #fff3d6; color: #714300; }
+.owner-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
+.owner-page label { display: block; font-size: .87rem; font-weight: 650; }
+.owner-page input, .owner-page select { display: block; padding: 9px 12px; background: #fff; color: #182230; border: 1px solid #91a0b4; border-radius: 7px; margin-top: 6px; max-width: 100%; }
+.owner-page button { padding: 10px 16px; border-radius: 8px; background: #155bb0; color: #fff; font-weight: 700; cursor: pointer; }
+.owner-page button.owner-danger { background: #9f2930; }
+.owner-page button:disabled { background: #637082; cursor: not-allowed; }
+.owner-page :is(a, button, input, select):focus-visible { outline: 3px solid #e6a21c; outline-offset: 3px; }
+.owner-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.owner-details { display: grid; grid-template-columns: minmax(140px, 1fr) 3fr; gap: 9px 16px; font-size: .91rem; }
+.owner-details dt { font-weight: 700; }.owner-details dd { overflow-wrap: anywhere; }
+.owner-page pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; border-radius: 8px; background: #edf2f7; color: #182230; font-size: .8rem; }
+.owner-page code { color: inherit; overflow-wrap: anywhere; }
+.owner-page progress { accent-color: #286bbc; width: 100%; min-width: 90px; height: 12px; }
+.dark .owner-page { color: #edf3fb; }
+.dark .owner-panel, .dark .owner-stat { background: #131e30; border-color: #4b5b72; }
+.dark .owner-stat > span, .dark .owner-muted, .dark .owner-table small { color: #b7c6da; }
+.dark .owner-table th { background: #243249; color: #dbe6f4; }
+.dark .owner-table td, .dark .owner-table th { border-color: #43536b; }
+.dark .owner-page a:not(.owner-nav a) { color: #9accff; }
+.dark .owner-badge { background: #344660; }
+.dark .owner-nav a[aria-current], .dark .owner-nav a:hover { background: #25476e; color: #e2f0ff; }
+.dark .owner-page input, .dark .owner-page select, .dark .owner-page pre { background: #233248; color: #f1f5fb; }
+@media (max-width: 600px) { .owner-details { grid-template-columns: 1fr; }.owner-hero { padding: 20px; }.owner-panel { padding: 14px; } }

@@ -13,6 +13,104 @@ If the exchange selector is empty after data loss, use the read-only `trademinat
 
 For pair-loading errors, CCXT memory use and Alpaca credentials, see [M3 R2 markets repair](M3-R2-MARKETS.md). R3 extends that tool with source-bound access reviews and daily refresh. See [R3 access registry](M3-R3-ACCESS.md) and the [complete classification matrix](CCXT-OHLCV-CLASSIFICATION.md).
 
+## Owner administration, syslog and local GeoIP
+
+This update starts from GitHub `main` commit `f09e402f9977453065c9215852ba5a38661d9325` (M4.1). It adds server administration and operational logging; it does not introduce Client trading or change model decisions.
+
+Preserve the production `.env`, `APP_KEY`, databases, private model/research artifacts and writable storage. Install the updated source and compiled assets, then run:
+
+```bash
+composer install --no-dev --prefer-dist --optimize-autoloader
+php artisan migrate --force
+php artisan optimize:clear
+```
+
+The two new migrations add account suspension/activity timestamps and access-statistics tables. Do not use `migrate:fresh`. No training rebuild is required specifically for this update. Refresh configuration after editing `.env`:
+
+```dotenv
+OWNER_UUID=your-existing-user-uuid
+ACTION_SYSLOG_ENABLED=true
+ACTION_SYSLOG_IDENT=trademinator
+ACTION_SYSLOG_FACILITY=local0
+ACCESS_STATISTICS_ENABLED=true
+ACCESS_STATISTICS_RETENTION_DAYS=90
+GEOIP_DATABASE_PATH=/usr/share/GeoIP/GeoLite2-City.mmdb
+TRUSTED_PROXIES=
+```
+
+```bash
+php artisan config:cache
+php artisan view:cache
+php artisan schedule:list
+```
+
+Allow already-running cron workers to finish and start with the new source/configuration; do not interrupt a model build. These settings apply to all application nodes.
+
+### Choosing the owner
+
+`OWNER_UUID` must be the `users.user_id` of an existing account, not an API key. To find it locally:
+
+```bash
+php artisan tinker --execute='dump(App\Models\User::where("email", "you@example.com")->value("user_id"));'
+```
+
+Sign in with that account and verify its email. The sidebar now exposes **Server administration**, at `/owner`. An empty, malformed or nonmatching UUID grants no privilege. A UUID is an account identifier, not a password or authentication bypass; normal sign-in remains mandatory. Owner configuration cannot be changed from request data, account profile fields or an administration form. Rebuild the configuration cache after changing the owner.
+
+The owner area provides:
+
+- Global user totals, search, account details, verification status, last sign-in and last activity; profile editing, suspension/restoration and API-key revocation.
+- Global subscriptions, active users/shared markets by exchange, subscriber lists and collector/backfill status per market.
+- Current and historical model reports, model/dataset UUIDs, knowledge rows, selected K, reasons for abstention, chronological/holdout validation, pattern and lead/lag reports. Viewing reports does not deserialize training artifacts or run training.
+- Daily application requests, authenticated requests, errors, response times, route totals, countries and cities, and approximate daily IP-visitor counts.
+- Recent successful collection/model times, overdue feeds and the default database queue backlog/failure identifiers. Alternative queue drivers require their own queue monitoring.
+
+Suspension immediately marks active subscriptions inactive, revokes the API key and remember-me token, and blocks new logins. Existing sessions are rejected on their next application request. Shared feeds remain active for other subscribed users. Restoring access does not reactivate subscriptions or recreate a revoked key. The configured owner cannot suspend themself through administration. Changing another user's email resets verification; the account must verify the new address through the existing workflow. Destructive user deletion and impersonation are deliberately not part of these management controls.
+
+Reports begin accumulating after deployment. Last sign-in/activity timestamps and geographic request counts cannot be recovered retroactively.
+
+### Syslog and trace IDs
+
+The isolated action logger writes one JSON line per event directly to the local syslog socket with identifier `trademinator` by default. It does not forward the general Laravel log into syslog. Commands and job attempts have separate started/completed events so an unfinished operation is visible. HTTP requests have a completion event with the final response status; responses expose `X-Trademinator-Trace`. Jobs carry their originating trace as `parent_trace_id`, and each attempt gets its own trace. A completed worker invocation alone does not prove its market is healthy: inspect `feed.updated` status, `history.failed`, model status/reason, and numeric row counts.
+
+Coverage includes HTTP requests (including rejected requests), authentication events, all normally bootstrapped Artisan command executions, queued/dispatched jobs and attempts/timeouts, committed user/exchange/market/subscription/preference/mapping model changes, public OHLCV fetches, candle synchronization, historical-backfill transitions, context collection, feature generation, dataset/model publication and intelligence decisions. Business-record events run after commit; batch operations have their own summaries. Utility scripts that do not boot Laravel and process failures before application boot remain the responsibility of OS/PHP logs.
+
+Fields are explicitly restricted to fixed event/route/command/job labels, safe identifiers, public market names, counts, timings and outcomes. Error records contain the exception class and an application source filename/line, never the exception message, stack arguments, SQL bindings, request body, raw URL, query string, email, IP address, authentication token or job payload. Normal Laravel diagnostic files retain their existing behavior; do not add them to the action channel. The dedicated logger cannot inherit Laravel's shared log context.
+
+```bash
+journalctl -t trademinator --since "1 hour ago" -o cat
+journalctl -t trademinator -f -o cat
+journalctl -t trademinator -o cat | jq 'select(.trace_id == "trace-uuid" or .parent_trace_id == "trace-uuid")'
+journalctl -t trademinator -o cat | jq 'select(.outcome == "failed" or .outcome == "error" or .outcome == "timeout")'
+```
+
+The host must have a working syslog/journald service, an accessible syslog socket for both CLI PHP and the web process, and retention/rate limits appropriate to its traffic. A chroot/container may need the socket exposed by its operator. Depending on the distribution, rsyslog may also write these events to `/var/log/syslog` or `/var/log/messages`. Running `php artisan list trademinator` should generate command lifecycle entries; verify them from your host. If the logger throws a transport error, the safe JSON record is sent to PHP's error log with `syslog_transport_failed`. Syslog itself may drop/rate-limit records without acknowledging delivery. These are operational diagnostics, not independently tamper-proof evidence.
+
+### Local GeoIP database
+
+`maxmind-db/reader` reads the configured **City MMDB file locally** for IPv4 and IPv6; it performs no remote geolocation request. Obtain a GeoLite2 City or GeoIP2 City database through your own MaxMind account/license and set `GEOIP_DATABASE_PATH` to its readable absolute path. Keep it outside the public web directory. The licensed production database is not included in this source package.
+
+Use MaxMind's `geoipupdate` utility to keep the file fresh if it is installed on your server. Its `/etc/GeoIP.conf` contains `AccountID`, `LicenseKey`, `EditionIDs GeoLite2-City` (or your licensed City edition), and `DatabaseDirectory /usr/share/GeoIP`. Keep that configuration readable only by the account running updates. Neither MaxMind credentials nor download links belong in application logs. See the [official database-update instructions](https://dev.maxmind.com/geoip/updating-databases/) and [City database documentation](https://dev.maxmind.com/geoip/docs/databases/city-and-country/).
+
+The dashboard shows database availability and its build date. Missing, unreadable, incompatible or corrupt files, unmapped addresses and private/reserved IPs yield **Unknown**; total request counting continues. It never infers city from a submitted header. City locations are estimates of IP networks and may reflect a VPN/proxy exit or mobile carrier rather than the visitor's residence.
+
+When behind HAProxy or another proxy, list only its actual IPs/CIDRs in `TRUSTED_PROXIES`, comma-separated, and configure it to set a trustworthy `X-Forwarded-For` chain. Leave this empty when directly exposed. Never use `*` for a public server. Only the forwarding chain from trusted proxies influences the client IP; a direct request's forged forwarding/geography headers are ignored.
+
+Access reports keep aggregates and daily HMAC IP fingerprints, never raw IPs, user-agent strings or request values. Hashes rotate by UTC date and are keyed by `APP_KEY`. “Daily IP visitors, summed” counts an IP once per UTC day; it is not a count of unique people across the whole reporting period. NAT/VPN use affects it. Health checks and static assets are excluded, while bots hitting application routes are included. Retention applies to aggregates and fingerprints; it does not alter OS log retention or Laravel's normal session storage. The scheduler prunes at 02:40 daily; see [CRONTABS.md](CRONTABS.md).
+
+The tiny `tests/Fixtures/geoip/GeoIP2-City-Test.mmdb` file is a test-only fixture from [MaxMind-DB](https://github.com/maxmind/MaxMind-DB), with its upstream MIT/Apache licenses. It is never a production database or a fallback.
+
+## trademinator:prune-access-statistics
+
+Signature: `trademinator:prune-access-statistics`
+
+Description: Delete access statistics older than the configured retention period
+
+Arguments/options: none beyond standard Artisan options. `ACCESS_STATISTICS_RETENTION_DAYS` defaults to 90, with a minimum of 1. Keeps today and the preceding N−1 UTC dates. Deletes expired request aggregates and daily visitor hashes in bounded batches; it does not delete users, subscriptions, market data, models or system logs. Requires the access-statistics migrations and database write access. Returns 0 on completion; database errors fail the command. Runs daily at 02:40 in the application timezone, with shared scheduler locking. No queue worker or additional daemon is needed.
+
+```bash
+php artisan trademinator:prune-access-statistics
+```
+
 ## Offline exchange metadata
 
 Invocation: `php scripts/build-exchange-metadata.php [--runtime|EXCHANGE_ID]`
@@ -34,6 +132,8 @@ Names use lowercase kebab-case. Argument values retain their required case: `BTC
 In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is boolean, and `{--option=value}` supplies a default. These are Laravel signature declarations, not literal shell braces. Commands also support Laravel's standard help, verbosity, environment, and non-interactive options; see `--help` for the runtime's complete list.
 
 ## Command index
+
+- [`trademinator:prune-access-statistics`](#trademinatorprune-access-statistics) — Apply access-report retention
 
 - [`trademinator:backfill-ohlcv`](#trademinatorbackfill-ohlcv) — Progressively collect older candles for shared subscribed markets
 

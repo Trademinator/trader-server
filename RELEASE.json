@@ -1,34 +1,30 @@
 {
-  "release": "Trademinator M4 completion and M4.1 cross-exchange lead/lag R1",
+  "release": "Trademinator owner administration, syslog and local GeoIP",
   "revision": 1,
-  "revision_summary": "Configure the complete test suite's 512 MiB memory budget so a 128 MiB CLI default does not cause a database fetch fatal.",
   "date": "2026-09-29",
   "source_repository": "https://github.com/Trademinator/trader-server",
-  "base_commit": "31e727185457550118657617659a9503a2d55e63",
-  "delivery": "Full application source with compiled frontend assets; preserves existing deployment data.",
-  "entrypoint_guide": "docs/CLI.md#m41-cross-exchange-leadlag-and-m4-completion",
+  "base_commit": "f09e402f9977453065c9215852ba5a38661d9325",
+  "delivery": "Full application source and compiled frontend assets; preserve deployment data.",
+  "entrypoint_guide": "docs/CLI.md#owner-administration-syslog-and-local-geoip",
   "cli_reference": "docs/CLI.md",
   "cron_reference": "docs/CRONTABS.md",
-  "validation_version": "m4.1-chronological-v2",
   "new_commands": [
-    "trademinator:dispatch-lead-lag"
+    "trademinator:prune-access-statistics"
   ],
-  "changed_commands": [
-    "trademinator:exchange (--timezone)",
-    "trademinator:refresh-exchanges (country priors)",
-    "trademinator:knn-build (integrated M4.1)",
-    "trademinator:signal (regimes and evidence)"
+  "new_migrations": [
+    "2026_09_29_110605_add_owner_controls_to_users",
+    "2026_09_29_110606_create_access_statistics_tables"
   ],
-  "new_migration": "2026_09_29_043907_add_intelligence_timezone_to_exchanges",
+  "added_dependency": {
+    "maxmind-db/reader": "1.14.0"
+  },
   "validation": {
     "php": "8.4.26",
     "laravel": "13.33.0",
-    "rubix_ml": "2.6.0",
-    "php_tests_passed": 365,
-    "php_assertions": 9555,
+    "php_tests_passed": 404,
+    "php_assertions": 9768,
     "php_test_startup_memory_limit": "128M",
-    "php_test_memory_limit": "512M (phpunit.xml)",
-    "market_catalog_regression_memory_limit": "128M (separate child process)",
+    "php_test_memory_limit": "512M (existing phpunit.xml)",
     "frontend_tests_passed": 10,
     "pint": "passed",
     "git_diff_check": "passed",
@@ -39,31 +35,29 @@
     "blade_compile": "passed"
   },
   "not_exercised": [
-    "Live exchange data or real-market predictive performance",
-    "MariaDB production migration and multi-host execution",
-    "Visual browser validation"
+    "Production MariaDB and multi-node concurrency",
+    "Host syslog/journald delivery or retention",
+    "Browser visual validation",
+    "A licensed production GeoIP database"
   ],
   "excluded": [
     ".git",
     "vendor",
     "node_modules",
     ".env",
-    "actual database files",
-    "runtime storage contents and caches",
-    "duplicate root checksum files",
+    "databases",
+    "runtime storage and caches",
+    "root checksum duplicates",
     "obsolete lowercase docs/crontabs.md",
-    "queue lock files"
+    "licensed production GeoIP data"
   ],
   "notes": [
-    "Rebuild M4 models after migration: the corrected pattern validation protocol invalidates old signal models, while retaining their reports.",
-    "Preserves M4 readiness and automatic successful-backfill feature/model rebuilds from main 31e7271.",
-    "Daily lead/lag dispatch uses the existing intelligence queue; no additional system cron or daemon.",
-    "Matching spot symbols, quote currencies and selected fixed periods only; no sub-candle timing claims.",
-    "Country metadata is context, not proof of trader geography; ambiguous timezone priors use UTC/unknown until an operator override.",
-    "New lead/lag relationships must pass chronological selection, final validation, direction and persistence gates before affecting KNN.",
-    "No dependencies changed. No client trading, M5 API or billing changes."
+    "Single-line JSON action events use an isolated syslog logger with an explicit field allowlist.",
+    "OWNER_UUID authorizes one authenticated, email-verified account; suspension stops its subscriptions and revokes its API key.",
+    "The operator supplies and updates a City MMDB; lookups stay local. Only explicitly trusted proxies can forward the client IP.",
+    "Access records use aggregates and date-scoped HMAC visitor fingerprints, with daily retention cleanup.",
+    "Model decisions are unchanged. No Client trading, M5 API or billing implementation is introduced."
   ],
   "compiled_frontend_assets": true,
-  "file_checksums": "docs/M4.1-FILES.sha256",
-  "implementation_commit": "0df9bb4a3a894541e45f52d03c5b8629894fc995"
+  "file_checksums": "docs/OWNER-SYSLOG-GEOIP-FILES.sha256"
 }

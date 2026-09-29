@@ -2,6 +2,7 @@
 
 namespace App\Repositories;
 
+use App\Domain\Operations\ActionLog;
 use App\Models\Ticker;
 use App\Traits\TickerManipulation;
 use ccxt\Exchange;
@@ -29,8 +30,19 @@ class TickerRepository extends BaseRepository
 
     public function fetch(string $symbol, string $period, int $startFetching, int $records, array $params): array
     {
-        $myTickers = $this->ccxtExchange->fetch_ohlcv($symbol, $period, $startFetching, $records, $params);
-        $this->normalize_ticker($myTickers, true);
+        $log = app(ActionLog::class);
+        $started = hrtime(true);
+        $fields = ['exchange' => $this->ccxtExchange?->id, 'symbol' => $symbol, 'period' => $period];
+        try {
+            $myTickers = $this->ccxtExchange->fetch_ohlcv($symbol, $period, $startFetching, $records, $params);
+            $this->normalize_ticker($myTickers, true);
+        } catch (\Throwable $error) {
+            $log->write('exchange.ohlcv_fetched', [...$fields, 'outcome' => 'failed',
+                'duration_ms' => (int) ((hrtime(true) - $started) / 1_000_000), ...$log->exception($error)]);
+            throw $error;
+        }
+        $log->write('exchange.ohlcv_fetched', [...$fields, 'outcome' => 'completed', 'rows' => count($myTickers),
+            'duration_ms' => (int) ((hrtime(true) - $started) / 1_000_000)]);
 
         if (App::hasDebugModeEnabled()) {
             Log::debug('myTickers: '.print_r($myTickers, true));

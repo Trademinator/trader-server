@@ -2,6 +2,7 @@
 
 namespace App\Domain\Features;
 
+use App\Domain\Operations\ActionLog;
 use App\Models\CoinGeckoMarketMapping;
 use App\Models\Ticker;
 use Illuminate\Support\Facades\Cache;
@@ -103,6 +104,9 @@ final class FeatureBuilder
             if ($pending) {
                 $this->save($pending);
             }
+
+            app(ActionLog::class)->write('features.built', ['exchange' => $exchange,
+                'symbol' => $symbol, 'period' => $period, 'rows' => $count, 'outcome' => 'completed']);
 
             return $count;
         } finally {

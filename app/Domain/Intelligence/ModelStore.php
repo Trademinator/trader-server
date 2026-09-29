@@ -2,6 +2,7 @@
 
 namespace App\Domain\Intelligence;
 
+use App\Domain\Operations\ActionLog;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -66,6 +67,11 @@ final class ModelStore
             }
             throw $error;
         }
+
+        app(ActionLog::class)->write('intelligence.model_saved', [
+            'model_id' => $id, 'dataset_id' => $artifact['dataset_id'], 'exchange' => $artifact['exchange'],
+            'symbol' => $artifact['symbol'], 'period' => $artifact['period'], 'status' => $artifact['status'],
+            'reason' => $artifact['reason'] ?? null, 'knowledge_rows' => $artifact['knowledge_rows'] ?? 0, 'outcome' => 'completed']);
 
         return $report;
     }

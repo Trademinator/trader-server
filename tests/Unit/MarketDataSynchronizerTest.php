@@ -2,10 +2,13 @@
 
 use App\Domain\MarketData\CandleGaps;
 use App\Domain\MarketData\MarketDataSynchronizer;
+use App\Domain\Operations\ActionContext;
+use App\Domain\Operations\ActionLog;
 use App\Models\Exchange;
 use App\Repositories\ExchangeRepository;
 use App\Repositories\TickerRepository;
 use Illuminate\Database\Eloquent\Collection;
+use Psr\Log\NullLogger;
 
 it('revisits the last candle and reports an observed gap', function () {
     $exchange = new Exchange(['name' => 'Demo', 'class' => 'kraken']);
@@ -19,7 +22,7 @@ it('revisits the last candle and reports an observed gap', function () {
     $exchanges->shouldReceive('fetch')->once()->with('BTC/USD', '1m', 60, 180, 100)->andReturn([['microtimestamp' => 60_000]]);
     $tickers->shouldReceive('timestamps')->once()->with('kraken', 'BTC/USD', '1m', 0, 180_000)->andReturn([0, 60_000, 180_000]);
 
-    $result = (new MarketDataSynchronizer($exchanges, $tickers, new CandleGaps))
+    $result = (new MarketDataSynchronizer($exchanges, $tickers, new CandleGaps, new ActionLog(new NullLogger, new ActionContext)))
         ->sync('kraken', 'BTC/USD', '1m', 0, 180, true);
 
     expect($result)->toBe(['fetched' => 1, 'repaired' => 0, 'missing_ranges' => 1]);

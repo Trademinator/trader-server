@@ -2,6 +2,7 @@
 
 namespace App\Domain\MarketData;
 
+use App\Domain\Operations\ActionLog;
 use App\Repositories\ExchangeRepository;
 use App\Repositories\TickerRepository;
 use InvalidArgumentException;
@@ -12,6 +13,7 @@ final class MarketDataSynchronizer
         private readonly ExchangeRepository $exchanges,
         private readonly TickerRepository $tickers,
         private readonly CandleGaps $gaps,
+        private readonly ActionLog $log,
     ) {}
 
     /** @return array{fetched: int, repaired: int, missing_ranges: int} */
@@ -58,6 +60,10 @@ final class MarketDataSynchronizer
             $missing = $this->gaps->between($timestamps, $period);
         }
 
-        return ['fetched' => $fetched, 'repaired' => $repaired, 'missing_ranges' => count($missing)];
+        $result = ['fetched' => $fetched, 'repaired' => $repaired, 'missing_ranges' => count($missing)];
+        $this->log->write('candles.synchronized',
+            ['exchange' => $exchange, 'symbol' => $symbol, 'period' => $period, 'outcome' => 'completed', ...$result]);
+
+        return $result;
     }
 }

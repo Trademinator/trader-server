@@ -4,6 +4,8 @@ use App\Http\Controllers\Markets\IntelligenceController;
 use App\Http\Controllers\Markets\SubscriptionController;
 use App\Http\Controllers\Markets\SuggestionController;
 use App\Http\Controllers\Markets\SuggestionReviewController;
+use App\Http\Controllers\Owner\ReportController;
+use App\Http\Controllers\Owner\UserController;
 use App\Http\Controllers\Settings;
 use Illuminate\Support\Facades\Route;
 
@@ -40,3 +42,15 @@ Route::middleware(['auth'])->group(function () {
 });
 
 require __DIR__.'/auth.php';
+
+Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-owner', 'throttle:60,1'])->group(function () {
+    Route::get('/', [ReportController::class, 'index'])->name('overview');
+    Route::get('users', [UserController::class, 'index'])->name('users');
+    Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
+    Route::put('users/{user}', [UserController::class, 'update'])->middleware('throttle:12,1')->name('users.update');
+    Route::get('subscriptions', [ReportController::class, 'subscriptions'])->name('subscriptions');
+    Route::get('markets/{market}', [ReportController::class, 'market'])->name('markets.show');
+    Route::get('intelligence', [ReportController::class, 'intelligence'])->name('intelligence');
+    Route::get('intelligence/{model}', [ReportController::class, 'model'])->name('intelligence.show');
+    Route::get('access', [ReportController::class, 'access'])->name('access');
+});
