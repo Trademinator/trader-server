@@ -1,0 +1,143 @@
+<?php
+
+namespace App\Domain\Intelligence;
+
+use App\Domain\Features\FeatureEngine;
+use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\Research\DatasetSnapshotBuilder;
+use App\Domain\Research\DatasetStore;
+use App\Domain\Research\FeatureSchema;
+use App\Domain\Research\SemanticLabels;
+use App\Models\MarketFeature;
+use App\Models\Ticker;
+use Illuminate\Support\Facades\Cache;
+use InvalidArgumentException;
+use RuntimeException;
+
+final class MarketIntelligence
+{
+    public function __construct(
+        private DatasetSnapshotBuilder $datasets,
+        private DatasetStore $datasetStore,
+        private IntelligenceTrainer $trainer,
+        private ModelStore $models,
+        private PatternCatalog $catalog,
+        private PatternTrainer $patterns,
+    ) {}
+
+    public function build(string $exchange, string $symbol, string $period, ?string $dataset = null,
+        string $schema = 'core', ?int $fromMs = null, ?int $toMs = null, ?int $asOfMs = null, ?string $generation = null): array
+    {
+        $deadline = microtime(true) + config('intelligence.max_seconds');
+        $lock = Cache::lock('trademinator:intelligence-build:'.ModelStore::marketKey($exchange, $symbol, $period), 720);
+        if (! $lock->get()) {
+            throw new RuntimeException('A knowledge build is already running for this market and period.');
+        }
+        try {
+            if ($generation !== null && ($existing = $this->models->generation($generation)) !== null) {
+                return $existing;
+            }
+            if ($dataset !== null) {
+                $manifest = $this->datasetStore->manifest($dataset);
+                if ([$manifest['exchange'], $manifest['symbol'], $manifest['period']] !== [$exchange, $symbol, $period]) {
+                    throw new InvalidArgumentException('Dataset market and period do not match the requested model.');
+                }
+            } else {
+                $query = MarketFeature::query()->where('exchange', $exchange)->where('symbol', $symbol)
+                    ->where('period', $period)->where('version', FeatureEngine::VERSION)
+                    ->where('available_at_ms', '<=', now()->getTimestampMs());
+                // Reserve the newest closed feature for inference; training labels must precede it.
+                $latest = (clone $query)->orderByDesc('microtimestamp')->first();
+                if ($latest === null) {
+                    throw new RuntimeException('No current M2 features; run trademinator:build-features first.');
+                }
+                $asOfMs = min($asOfMs ?? $latest->microtimestamp, now()->getTimestampMs());
+                $toMs = min($toMs ?? $asOfMs, $asOfMs);
+                $fromMs ??= (clone $query)->where('available_at_ms', '<=', $toMs)->orderByDesc('microtimestamp')
+                    ->limit(config('intelligence.max_rows'))->pluck('available_at_ms')->last() ?? 0;
+                $definition = new SemanticLabels(config('intelligence.horizon'), config('intelligence.lookback'),
+                    config('intelligence.minimum_move_bps'), config('intelligence.extreme_fraction'));
+                $manifest = $this->datasets->build($exchange, $symbol, $period, $definition, $schema,
+                    fromMs: (int) $fromMs, toMs: $toMs, asOfMs: $asOfMs);
+                $dataset = $manifest['dataset_id'];
+            }
+
+            return $this->trainer->train($dataset, $deadline, $generation);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    public function predict(string $exchange, string $symbol, string $period, ?int $asOfMs = null): array
+    {
+        $asOfMs = min($asOfMs ?? now()->getTimestampMs(), now()->getTimestampMs());
+        $model = $this->models->current($exchange, $symbol, $period);
+        $context = ['exchange' => $exchange, 'symbol' => $symbol, 'period' => $period,
+            'model_id' => $model['model_id'] ?? null, 'patterns' => [], 'patterns_evaluated' => false];
+        if ($model === null) {
+            return [...WeightedKnn::abstain('no_model'), ...$context];
+        }
+        if ($model['feature_version'] !== FeatureEngine::VERSION || $model['normalization'] !== NormalizedVector::VERSION
+            || $model['patterns']['version'] !== PatternCatalog::VERSION) {
+            return [...WeightedKnn::abstain('model_version_mismatch'), ...$context];
+        }
+        if ($model['trained_as_of_ms'] < $asOfMs - config('intelligence.max_model_age_days') * 86400000) {
+            return [...WeightedKnn::abstain('stale_model'), ...$context];
+        }
+        $features = MarketFeature::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+            ->where('version', FeatureEngine::VERSION)->where('available_at_ms', '<=', $asOfMs)
+            ->orderByDesc('microtimestamp')->limit(2)->get()->reverse()->values();
+        if ($features->isEmpty()) {
+            return [...WeightedKnn::abstain('missing_features'), ...$context];
+        }
+        $current = $features->last();
+        $timeframe = new CandleTimeframe;
+        $context['decision_at_ms'] = $current->available_at_ms;
+        $staleAt = $current->available_at_ms;
+        for ($i = 0; $i < config('intelligence.max_signal_age_periods'); $i++) {
+            $staleAt = $timeframe->next($staleAt, $period);
+        }
+        if ($asOfMs >= $staleAt) {
+            return [...WeightedKnn::abstain('stale_features'), ...$context];
+        }
+        if ($current->available_at_ms <= $model['available_at_ms']) {
+            return [...WeightedKnn::abstain('no_post_training_candle'), ...$context];
+        }
+        $tickers = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+            ->whereIn('microtimestamp', $features->pluck('microtimestamp'))->get()->keyBy('microtimestamp');
+        $history = [];
+        foreach ($features as $feature) {
+            $payload = $feature->payload;
+            $ticker = $tickers->get($feature->microtimestamp);
+            $candle = $ticker === null ? null : json_decode($ticker->payload, true, flags: JSON_THROW_ON_ERROR);
+            if ($candle === null || ($payload['version'] ?? null) !== FeatureEngine::VERSION
+                || ($payload['microtimestamp'] ?? null) !== $feature->microtimestamp
+                || ($payload['available_at_ms'] ?? null) !== $timeframe->next($feature->microtimestamp, $period)
+                || $feature->available_at_ms !== $payload['available_at_ms']
+                || (float) ($candle['close'] ?? 0) !== (float) ($payload['close'] ?? -1)) {
+                return [...WeightedKnn::abstain('source_feature_mismatch'), ...$context];
+            }
+            $candle['microtimestamp'] = $feature->microtimestamp;
+            $history[] = ['features' => $payload['features'], 'candle' => $candle];
+        }
+        $vector = FeatureSchema::vector($current->payload, $model['keys']);
+        if ($vector === null) {
+            return [...WeightedKnn::abstain('missing_selected_features'), ...$context];
+        }
+        $vector = NormalizedVector::from($vector, $model['keys']);
+        $context['patterns_evaluated'] = true;
+        $context['patterns'] = $this->patterns->predict($model['patterns'], $vector,
+            $this->catalog->candidates($history, $period), $current->available_at_ms);
+        if ($model['status'] !== 'ready') {
+            return [...WeightedKnn::abstain($model['reason']), ...$context];
+        }
+        if ($model['pattern_keys'] !== []) {
+            $vector = [...$vector, ...$this->patterns->features($model['patterns'], $context['patterns'])];
+        }
+        $settings = $model['settings'];
+        $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
+        $result = $knn->predict($model['knowledge'], $vector, $model['k'], $current->available_at_ms);
+
+        return [...$result, ...$context, 'k' => $model['k']];
+    }
+}

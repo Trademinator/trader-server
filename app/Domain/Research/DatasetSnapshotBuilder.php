@@ -3,6 +3,7 @@
 namespace App\Domain\Research;
 
 use App\Domain\Features\FeatureEngine;
+use App\Domain\Intelligence\PatternCatalog;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Models\MarketFeature;
 use App\Models\Ticker;
@@ -17,7 +18,7 @@ final class DatasetSnapshotBuilder
 {
     public function __construct(private DatasetStore $store) {}
 
-    public function build(string $exchange, string $symbol, string $period, LabelDefinition $definition,
+    public function build(string $exchange, string $symbol, string $period, LabelDefinition|SemanticLabels $definition,
         string $schema = 'core', array $custom = [], ?int $fromMs = null, ?int $toMs = null, ?int $asOfMs = null): array
     {
         $keys = FeatureSchema::keys($schema, $custom);
@@ -62,7 +63,20 @@ final class DatasetSnapshotBuilder
                     ->whereBetween('microtimestamp', [$first->microtimestamp, $asOfMs])->orderBy('microtimestamp')->lazy(500)->getIterator();
                 $candles->rewind();
                 $window = [];
+                $past = $patternHistory = [];
+                $history = null;
+                if ($definition instanceof SemanticLabels) {
+                    $historyStart = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+                        ->where('microtimestamp', '<=', $first->microtimestamp)->orderByDesc('microtimestamp')
+                        ->limit($definition->lookback)->pluck('microtimestamp')->last();
+                    $history = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+                        ->whereBetween('microtimestamp', [$historyStart ?? 0, $asOfMs])->orderBy('microtimestamp')->lazy(500)->getIterator();
+                    $history->rewind();
+                }
                 $counts = array_fill_keys(['missing_features', 'missing_source', 'gaps', 'immature'], 0);
+                if ($definition instanceof SemanticLabels) {
+                    $counts['semantic_warmup'] = 0;
+                }
                 $labels = array_fill_keys(['buy', 'sell', 'hodl'], 0);
                 $hash = hash_init('sha256');
                 $count = 0;
@@ -78,6 +92,31 @@ final class DatasetSnapshotBuilder
                         || ($payload['microtimestamp'] ?? null) !== $timestamp
                         || ($payload['available_at_ms'] ?? null) !== $decision || $feature->available_at_ms !== $decision) {
                         throw new RuntimeException('M2 feature time/version mismatch; rebuild features.');
+                    }
+                    if ($history !== null) {
+                        while ($history->valid() && $history->current()->microtimestamp <= $timestamp) {
+                            $ticker = $history->current();
+                            $bar = json_decode($ticker->payload, true, flags: JSON_THROW_ON_ERROR);
+                            $bar['microtimestamp'] = (int) $ticker->microtimestamp;
+                            $this->validateCandle($bar);
+                            if ($past !== [] && $timeframe->next($past[array_key_last($past)]['microtimestamp'], $period) !== $bar['microtimestamp']) {
+                                $past = [];
+                                $patternHistory = [];
+                            }
+                            $past[] = $bar;
+                            $past = array_slice($past, -$definition->lookback);
+                            $history->next();
+                        }
+                        $current = $past === [] ? null : $past[array_key_last($past)];
+                        if (($current['microtimestamp'] ?? null) === $timestamp) {
+                            $patternHistory[] = ['candle' => $current, 'features' => $payload['features']];
+                            $patternHistory = array_slice($patternHistory, -2);
+                        }
+                        if (count($past) < $definition->lookback) {
+                            $counts['semantic_warmup']++;
+
+                            continue;
+                        }
                     }
                     $vector = FeatureSchema::vector($payload, $keys);
                     if ($vector === null) {
@@ -122,7 +161,9 @@ final class DatasetSnapshotBuilder
                     }
                     $entry = $window[1];
                     $exit = $window[$definition->horizon];
-                    $label = $definition->label((float) $entry['open'], (float) $exit['close']);
+                    $label = $definition instanceof SemanticLabels
+                        ? $definition->label($past, $window)
+                        : $definition->label((float) $entry['open'], (float) $exit['close']);
                     $row = [
                         'microtimestamp' => $timestamp, 'decision_at_ms' => $decision,
                         'entry_at_ms' => $entry['microtimestamp'], 'label_available_at_ms' => $expected,
@@ -135,6 +176,12 @@ final class DatasetSnapshotBuilder
                             'feature_sha256' => hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR)),
                             'candle_window_sha256' => hash('sha256', json_encode($window, JSON_THROW_ON_ERROR))],
                     ];
+                    if ($definition instanceof SemanticLabels) {
+                        $row['source']['semantic_history_sha256'] = hash('sha256', json_encode($past, JSON_THROW_ON_ERROR));
+                        $row['semantic'] = $label['semantic'];
+                        $row['candle'] = $window[0];
+                        $row['patterns'] = (new PatternCatalog)->observations($patternHistory, $window, $period);
+                    }
                     $line = json_encode($row, JSON_THROW_ON_ERROR)."\n";
                     DatasetStore::write($file, $line);
                     hash_update($hash, $line);

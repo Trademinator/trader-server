@@ -1,59 +1,36 @@
 {
-  "release": "Trademinator M3 Final R4 — ordinary trait methods and ticker slices",
+  "release": "Trademinator M4 — KNN and pattern intelligence",
   "date": "2026-09-28",
   "source_repository": "https://github.com/Trademinator/trader-server",
-  "source_commit": "f41a9de8dc338564fed0535fbb16aaa4dee32f05",
-  "delivery": "Full application source with tests and existing compiled frontend assets; not a patcher.",
-  "entrypoint_guide": "docs/M2-README.md",
+  "base_commit": "245f9d4e8df383b602897ad7e9f62af9a6fb9363",
+  "delivery": "Full application source with compiled frontend assets; preserves existing deployment data.",
+  "entrypoint_guide": "docs/CLI.md#m4-intelligence-workflow-and-upgrade",
   "cli_reference": "docs/CLI.md",
   "cron_reference": "docs/CRONTABS.md",
-  "new_commands": [],
-  "new_migration": "2026_09_26_000000_create_research_tables",
-  "compiled_frontend_assets": true,
+  "new_commands": [
+    "trademinator:knn-build",
+    "trademinator:signal",
+    "trademinator:model-info",
+    "trademinator:dispatch-market-intelligence",
+    "trademinator:derive-timeframe"
+  ],
+  "new_migration": "2026_09_28_212440_create_intelligence_tables",
   "validation": {
-    "php": "8.4.23",
-    "php_lint": {
-      "passed": true,
-      "files": 258,
-      "command": "php -l for every PHP source and Blade file"
-    },
-    "json_syntax": {
-      "passed": true,
-      "files": 8
-    },
-    "frontend_syntax": {
-      "passed": true,
-      "files": 5,
-      "command": "node --check"
-    },
-    "frontend_tests": {
-      "passed": 10,
-      "failed": 0,
-      "command": "node --test tests/Frontend/*.test.mjs"
-    },
-    "frontend_build": "Existing compiled assets retained byte-for-byte. npm rebuild was not needed and was not run.",
-    "standalone_unit_bodies": {
-      "passed": 47,
-      "failed": 0,
-      "assertions": 7005,
-      "backend": "PHP 8.4.23 executing project test closures with a standalone expectation harness and GMP-backed BCMath-compatible decimal operations; NOT Pest or native BCMath",
-      "verified_backend_operations_against_python_decimal": 3500,
-      "backend_shipped": false
-    },
-    "native_bcmath": "NOT RUN: extension not installed in the build environment",
-    "pest_laravel": "NOT RUN: Composer and vendor directory unavailable",
-    "repository_integration_regression": "Added tests/Feature/TickerNormalizationTest.php; requires native Laravel/Pest run",
-    "pint": "NOT RUN: vendor/bin/pint unavailable",
+    "php": "8.4.26",
+    "laravel": "13.33.0",
+    "rubix_ml": "2.6.0",
+    "php_tests_passed": 304,
+    "php_assertions": 9049,
+    "frontend_tests_passed": 10,
+    "pint": "passed",
     "git_diff_check": "passed",
-    "scope": "Strict full-batch/sliced output equality, warm-up, gaps, normalization precision and indexing, mutable-row independence, callback key safety and preservation of frontend tests."
+    "database": "SQLite :memory: with repository safety guards",
+    "frontend_build": "npm run build passed"
   },
   "not_exercised": [
-    "Native PHP BCMath and the Composer-installed Pest/Laravel runtime",
-    "New Laravel/Mockery TickerNormalizationTest integration test",
-    "Full application suite, MariaDB integration and concurrent-node runtime",
-    "Live CCXT/CoinGecko responses and regional reachability",
-    "Complete mathematical audit of unrelated legacy indicators",
-    "Browser visual validation"
+    "Live exchange data or real-market predictive performance",
+    "MariaDB production migration and multi-host execution",
+    "Visual browser validation"
   ],
   "excluded": [
     ".git",
@@ -61,260 +38,18 @@
     "node_modules",
     ".env",
     "actual database files",
-    "runtime storage data and locks",
-    "standalone verification decimal backends and local patcher scripts",
-    "stale root checksum duplicates (current manifests are in docs/)",
-    "duplicate lowercase docs/crontabs.md (canonical file is docs/CRONTABS.md)"
+    "runtime storage contents and caches",
+    "duplicate root checksum files",
+    "obsolete lowercase docs/crontabs.md",
+    "tracked empty queue lock"
   ],
   "notes": [
-    "No dependency versions changed. Corrected pre-existing lockfile root platform metadata/content hash to match composer.json; package records unchanged.",
-    "M4 adds KNN training.",
-    "M3 requires no new cron entries or permanent daemon.",
-    "Existing deployment must retain its .env, APP_KEY, database and storage contents.",
-    "R1 replaces unsafe test database configuration in the original M3 package.",
-    "R1 has no new database migration.",
-    "Read docs/M3-R1-RECOVERY.md before recovery; code changes cannot recover deleted records.",
-    "R2 reduces exchange-list and spot pair catalogue memory use without raising the PHP memory limit.",
-    "R2 includes version-checked offline descriptions for all 110 adapters in the locked CCXT release.",
-    "R2 adds no migrations, dependency changes, scheduled tasks or permanent daemon.",
-    "Measured memory results use a synthetic response and are not a bound for arbitrary live responses.",
-    "R3 adds source-bound access reviews for all 110 locked adapters, Composer metadata refresh and daily 03:20 reconciliation through the existing cron.",
-    "Unknown/removed adapters are hidden; existing subscriptions are preserved and automatic collection is blocked pending review.",
-    "R3 does not implement subscriber credential collection.",
-    "R4 replaces the misleading candle-period dropdown with a read-only Automatic display and a separate expandable interval reference. No database, collector, CLI or scheduler changes.",
-    "R5 removes the candle-period form control and retains its explanation box. No database, collector, CLI or scheduler changes.",
-    "R6 adds private encrypted preferences, bounded explained pair suggestions and explicit review through the existing subscription form. One additive table migration; no new daemon, schedule or CLI command. Regional reviews default to unknown, and missing evidence remains exploratory.",
-    "R7 guards the optional suggestions link when any suggestion route is missing, tolerates missing optional prefill values during partial updates, and documents targeted route/view cache recovery. The full source retains all R6 routes. No new migration, dependency, command or schedule."
+    "No dependency or legacy technical trait changes.",
+    "Training remains closed-candle-only; client fees and execution are outside M4.",
+    "Cron-driven intelligence queue worker is documented in docs/CRONTABS.md.",
+    "Derived timeframe training is on demand; automatic dispatch trains selected base periods.",
+    "The M5 Client API is not part of this release."
   ],
-  "repair_changes": [
-    "Isolated SQLite in-memory tests with forced environment, DB_URL removal, deployment-cache bypass and pre-provider guard",
-    "composer test no longer clears deployment configuration cache",
-    "Idempotent exchange seeder preserving existing records and refreshing the catalogue cache",
-    "Clear empty-state message on /markets",
-    "Offline exchange metadata replaces instantiating all adapters in the dropdown",
-    "Spot catalogue avoids full currency and market indexes; Binance normalizes one spot record at a time and suppresses permission sets",
-    "Web subscription POST reuses the validated spot catalogue",
-    "Unsupported spot adapters filtered; authentication, permissions, throttling and network failures displayed with safe log references",
-    "Regression coverage for 128 MiB memory, 5000 simulated pairs, subscription creation, error paths and browser messages",
-    "Offline OHLCV access review distinguishing market discovery from candle authentication",
-    "Matching source fingerprints required before public/authentication-required classification is accepted",
-    "Idempotent refresh adds missing rows without deleting existing data; no live exchange calls",
-    "Metadata/source validation before cached choices/pairs, direct subscription requests and subscriber-feed network access",
-    "Candle-period form control removed; automatic-selection explanation box and actual subscribed feed period retained.",
-    "Optional questionnaire with owner-scoped encrypted answers, edit/delete and private no-store responses",
-    "Explained spot-pair suggestions with funding, regional, budget and historical screens; no automatic subscription or orders",
-    "Compact catalogue adds activity/minimum/fee metadata, excludes explicitly inactive pairs and uses v5 cache keys",
-    "Missing cached suggestion routes no longer crash /markets; regression coverage verifies route-cache recovery and preserved authentication."
-  ],
-  "r1_new_migration": null,
-  "r2_new_migration": null,
-  "classification_report": "docs/CCXT-OHLCV-CLASSIFICATION.md",
-  "r3_new_migration": null,
-  "r4_new_migration": null,
-  "previous_release_validation": {
-    "release": "Trademinator M3 R3",
-    "php": "8.4.26",
-    "database": "SQLite in-memory",
-    "tests_passed": 185,
-    "assertions": 1240,
-    "pint": "passed for all R3 PHP files",
-    "cli_documentation_gate": "passed",
-    "frontend_build": "npm run build passed",
-    "git_diff_check": "passed",
-    "test_entrypoint": "composer test",
-    "database_safety": "Persistent sentinel database/user/checksum and deployment-cache fixture unchanged with inherited production/database URL/cache settings",
-    "frontend_script_tests": 4,
-    "catalogue_memory_limit": "128 MiB",
-    "catalogue_probe": {
-      "configured_exchanges": 110,
-      "synthetic_binance_pairs": 5000,
-      "exchange_list_peak_bytes": 50855936,
-      "complete_probe_peak_bytes": 128622592,
-      "spot_requests": 1,
-      "subscription_created": true
-    },
-    "composer": "validation, platform requirements and post-autoload refresh hook passed",
-    "classification": {
-      "adapters": 110,
-      "public": 89,
-      "authentication_required": 4,
-      "unknown_unsupported": 17,
-      "spot_eligible": 75,
-      "spot_public": 73,
-      "spot_authentication_required": 2
-    }
-  },
-  "r5_new_migration": null,
-  "previous_ui_validation": {
-    "release": "Trademinator M3 R4",
-    "php": "8.4.26",
-    "database": "SQLite in-memory",
-    "test_entrypoint": "php artisan test --filter='MarketCatalog|MarketSubscriptionsWeb'",
-    "tests_passed": 21,
-    "assertions": 186,
-    "frontend_script_tests": 4,
-    "frontend_build": "npm run build passed",
-    "git_diff_check": "passed",
-    "catalogue_memory_limit": "128 MiB",
-    "scope": "Existing market catalogue, subscriptions, safe errors, 5000-pair memory regression and browser script checks; backend unchanged."
-  },
-  "r5_validation": {
-    "php": "8.4.26",
-    "database": "SQLite in-memory",
-    "test_entrypoint": "php artisan test --filter='MarketCatalogTest|MarketSubscriptionsWebTest'",
-    "tests_passed": 6,
-    "assertions": 45,
-    "frontend_script_tests": 4,
-    "frontend_build": "npm run build passed",
-    "git_diff_check": "passed",
-    "scope": "Market-page rendering, options, subscription behavior and browser scripts. Confirmed period control absent and explanation box retained."
-  },
-  "r6_new_migration": "2026_09_26_000001_create_market_preference_profiles",
-  "r6_validation": {
-    "php": "8.4.26",
-    "database": "SQLite in-memory",
-    "test_entrypoint": "php artisan test --compact",
-    "tests_passed": 218,
-    "assertions": 1368,
-    "frontend_script_tests": 4,
-    "frontend_build": "npm run build passed",
-    "git_diff_check": "passed",
-    "pint": "passed for changed PHP files",
-    "cli_documentation_gate": "passed in full suite",
-    "catalogue_memory_limit": "128 MiB",
-    "catalogue_probe": {
-      "configured_exchanges": 110,
-      "synthetic_binance_pairs": 5000,
-      "exchange_list_peak_bytes": 50855936,
-      "complete_probe_peak_bytes": 128622592,
-      "spot_requests": 1,
-      "subscription_created": true,
-      "suggestion_page_rendered": true
-    },
-    "browser_visual_check": "Not run: Chromium executable unavailable; Blade rendering and frontend script tests passed",
-    "live_exchange_checks": "Not performed; deterministic exchange fixtures used"
-  },
-  "r7_new_migration": null,
-  "source_note": "Application, tests, resources, public source assets, routes, configuration, dependency manifests and other tracked source were matched by Git object hashes to the newly pushed source commit before these fixes. Existing production frontend build retained from the previous full archive; frontend source is unchanged.",
-  "previous_validation": {
-    "php": "8.4.26",
-    "database": "SQLite in-memory",
-    "tests_passed": 41,
-    "assertions": 209,
-    "test_entrypoint": "php artisan test --compact --filter='MarketSuggestionRoutesTest|MarketRouteCacheTest|MarketSubscriptionsWebTest|MarketSuggestionsTest'",
-    "frontend_script_tests": 4,
-    "frontend_build": "npm run build passed",
-    "git_diff_check": "passed",
-    "pint": "passed for new PHP regression files",
-    "route_cache_regression": "Old compiled route table reproduces the exception; guarded page stays available. An isolated stale on-disk cache is loaded, cleared and rebuilt; all three feature routes and auth are restored. No deployment caches touched.",
-    "scope": "Market UI guard and route-cache recovery; core collectors and data models unchanged."
-  },
-  "milestone_status": "M3 UI retained; slice-based shared technical calculation implemented before M4.",
-  "final_update": {
-    "new_migration": null,
-    "dependency_changes": [
-      "bootstrap 5.3.8",
-      "@popperjs/core 2.11.8 (Bootstrap peer dependency; not imported by Collapse)"
-    ],
-    "scheduler_changes": false,
-    "changes": [
-      "One container per exchange with divided market rows and market count.",
-      "Review pair links on active and inactive subscriptions.",
-      "Owned subscriptions outside current preference matches have a private, read-only technical review using existing closed-candle evidence.",
-      "Review type changes stop chart refresh and disable stale subscription controls until page reload.",
-      "CCXT logo aspect ratios preserved in an 88 by 40 header area with an initial fallback.",
-      "Logo container and image background made transparent, border removed; initial fallback hidden behind successfully loaded transparent logos.",
-      "Bootstrap Collapse makes each exchange group independently expandable, initially closed, with accessible button state, chevron, market count, and reduced-motion support."
-    ],
-    "retained": "The source commit includes all previously delivered market-review, independent collapse and transparent-logo interface changes. They remain unchanged in this archive.",
-    "package": "Complete application source plus compiled frontend assets; no vendor, node_modules, .env, database or runtime storage data."
-  },
-  "previous_final_validation": {
-    "php": "8.4.26",
-    "database": "SQLite in-memory",
-    "tests_passed": 73,
-    "assertions": 434,
-    "test_entrypoint": "php artisan test --compact tests/Feature/MarketSubscriptionsWebTest.php tests/Feature/MarketSuggestionsTest.php tests/Feature/MarketSuggestionRoutesTest.php tests/Unit/TechnicalIndicatorsTest.php",
-    "frontend_script_tests": 6,
-    "frontend_test_entrypoint": "node --test tests/Frontend/market-review-chart.test.mjs",
-    "frontend_build": "npm run build passed",
-    "git_diff_check": "passed",
-    "pint": "passed for changed PHP files",
-    "browser_visual_check": "Not run: no browser executable available; Blade rendering and frontend behavior tests passed.",
-    "scope": "Subscription listing, personal/technical review and authorization, route integration, chart refresh, and preservation of the recent technical indicator fixes."
-  },
-  "technical_alignment": {
-    "feature_version": "m2-v3",
-    "single_source_of_truth": "App\\Traits\\Technical",
-    "ticker_manipulation": "App\\Traits\\TickerManipulation",
-    "removed_next_methods": 9,
-    "implementation": "FeatureEngine::calculateSlice invokes the ordinary array APIs; ticker_slide/ticker_slice retain calculated overlap and recursive boundary values. No alternative single-candle indicator recurrence API.",
-    "normalization": "normalize_ticker is called directly immediately after the sole production CCXT fetch_ohlcv call. Reindex=true means integer Unix seconds; original integer milliseconds remain in microtimestamp. Explicit milliseconds indexing is supported.",
-    "precision": "Normalized decimal strings never pass through float formatting. Shared technical recurrences use BCMath. Existing final ML/context values and tanh normalization remain floating-point.",
-    "slice_validation": "Batch sizes 1, 7, 48, 72 and 500, including EMA24, have strict decimal-string/all-row parity assertions. Cold raw tail reseeding and insufficient overlap fail visibly.",
-    "indicators": "EMA, SMA, SMMA, RSI, ATR/ATRP, Stochastic RSI, CCI, ROC, volume activity and candle geometry",
-    "additional_fixes": [
-      "Timestamp-key compatibility for position-based Ichimoku/inflexion/slope access",
-      "Mode-qualified alternate ATR/ATRP keys",
-      "Exact SMA working sum with published scale retained",
-      "Decimal/scientific input conversion without narrowing string values"
-    ],
-    "migration": null,
-    "scheduler_changes": false,
-    "dependency_changes": false,
-    "rebuild": "Build new m2-v3 feature rows and datasets when needed; old versions and frozen datasets are not overwritten."
-  },
-  "validation_history": [
-    {
-      "release": "Trademinator M3 Final R3",
-      "validation": {
-        "php": "8.4.26",
-        "database": "SQLite in-memory",
-        "tests_passed": 3,
-        "assertions": 39,
-        "test_entrypoint": "php artisan test --compact tests/Feature/MarketSubscriptionsWebTest.php",
-        "frontend_script_tests": 10,
-        "frontend_test_entrypoint": "node --test tests/Frontend/*.test.mjs",
-        "frontend_build": "npm run build passed",
-        "git_diff_check": "passed",
-        "pint": "passed for changed PHP files",
-        "browser_visual_check": "Not run: no browser executable available; rendered panel/control wiring verified with the real Blade response.",
-        "scope": "Independent collapsed exchange panels, correctly targeted controls, subscription links, existing market form and chart scripts."
-      },
-      "technical_alignment": {
-        "feature_version": "m2-v2",
-        "single_source_of_truth": "App\\Traits\\Technical",
-        "bcmath": "All new incremental technical primitives use BCMath for decimal arithmetic.",
-        "streaming": "FeatureEngine remains streaming/bounded-state; it does not materialize full candle history.",
-        "parity_tests": "FeatureEngine raw EMA, RSI, Stochastic RSI, CCI and ATRP outputs are asserted equal to the public Technical batch APIs.",
-        "additional_fixes": [
-          "percentage() now divides by the base value",
-          "roc() stays neutral until its requested lag exists and then uses the exact lag candle"
-        ],
-        "migration": null,
-        "scheduler_changes": false
-      },
-      "provenance": "Inherited historical metadata, not a validation run for the current archive."
-    }
-  ],
-  "source_commit_title": "new trait",
-  "changed_files": [
-    "RELEASE.json",
-    "app/Domain/Features/FeatureEngine.php",
-    "app/Domain/MarketData/OhlcvNormalizer.php",
-    "app/Repositories/TickerRepository.php",
-    "app/Traits/Bc.php",
-    "app/Traits/Indexing.php",
-    "app/Traits/Technical.php",
-    "app/Traits/TickerManipulation.php",
-    "docs/M2-FILES.sha256",
-    "docs/M2-README.md",
-    "docs/checksums.sha256",
-    "tests/Feature/TickerNormalizationTest.php",
-    "tests/Support/TickerFixtures.php",
-    "tests/Unit/FeatureEngineTest.php",
-    "tests/Unit/OhlcvNormalizerTest.php",
-    "tests/Unit/TechnicalSliceTest.php",
-    "tests/Unit/TickerManipulationTest.php"
-  ]
+  "compiled_frontend_assets": true,
+  "implementation_commit": "4c90aa8"
 }

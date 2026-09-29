@@ -205,6 +205,9 @@
                                 </p>
                             </div>
                             <div class="market-actions">
+                                @if ($subscription->active)
+                                    <a href="{{ route('markets.intelligence', $subscription->getKey()) }}" class="market-review">Intelligence</a>
+                                @endif
                                 <a href="{{ route('markets.suggestions.review', ['exchange' => $subscription->market->exchange->class, 'symbol' => $subscription->market->symbol]) }}" class="market-review" aria-label="Review {{ $subscription->market->symbol }} on {{ $group['name'] }}">Review pair</a>
                                 @if ($subscription->active)
                                     <form method="POST" action="{{ route('markets.destroy', $subscription->market_subscription_id) }}">

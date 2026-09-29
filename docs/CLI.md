@@ -35,6 +35,12 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 
 ## Command index
 
+- [`trademinator:knn-build`](#trademinatorknn-build) — Build and validate M4 intelligence
+- [`trademinator:signal`](#trademinatorsignal) — Explain the latest closed-candle signal
+- [`trademinator:model-info`](#trademinatormodel-info) — Verify and inspect a model
+- [`trademinator:dispatch-market-intelligence`](#trademinatordispatch-market-intelligence) — Queue weekly shared-market training
+- [`trademinator:derive-timeframe`](#trademinatorderive-timeframe) — Derive larger closed candles using the M2 pipeline
+
 - [`trademinator:refresh-exchanges`](#trademinatorrefresh-exchanges) — Refresh installed CCXT access classifications and missing database entries
 
 - [`trademinator:backtest`](#trademinatorbacktest) — Run purged walk-forward baseline evaluation on a frozen M3 dataset
@@ -362,3 +368,121 @@ php artisan trademinator:refresh-exchanges
 ```
 
 Manual refresh is appropriate immediately after deployment. The scheduler provides periodic reconciliation; the Composer hook is the primary reaction to dependency changes. See [cron configuration](CRONTABS.md).
+
+## M4 intelligence workflow and upgrade
+
+M4 implements server-side market intelligence. It does not execute trades or expose the M5 Client API. Existing M3 fee-aware research commands retain their behavior; M4 freezes a new dataset with **cost-free semantic labels**. No exchange keys, fees, account balances or client profitability assumptions enter those labels.
+
+Upgrade an existing M3 installation with the new source, keeping its `.env`, database and writable storage. Run `composer install --no-interaction --prefer-dist` (or add `--no-dev` on production), `php artisan migrate --force`, then `php artisan optimize:clear`. Rebuild any configuration/route caches used by the deployment. No dependencies were added. Never run `migrate:fresh` or replace a production database with an archive copy. Configure the intelligence queue worker in [CRONTABS.md](CRONTABS.md) before enabling scheduled training. The new tables are `intelligence_models` and `intelligence_heads`.
+
+Initial workflow, substituting the actual selected period:
+
+```bash
+php artisan trademinator:build-features kraken BTC/USD 1m
+php -d memory_limit=512M artisan trademinator:knn-build kraken BTC/USD 1m
+php artisan trademinator:signal kraken BTC/USD 1m
+```
+
+Active market subscriptions now have an **Intelligence** link. The page shows the current signal, reasons for abstaining, emerging-pattern probabilities and later-period validation results. It is restricted to the active subscription owner and does not trigger training during a request.
+
+### Knowledge and validation contract
+
+- Only truly closed candles and fully matured future labels enter frozen knowledge. By default the newest closed feature is reserved for inference. Gaps reset trailing history. Missing selected features drop a row; they are never silently replaced with zeros.
+- A bottom is a close in the bottom 20% of the trailing 20 closes; a top is a close in the top 20%. BUY additionally requires a rise greater than 10 basis points by the close 12 subsequent candles later; SELL requires the corresponding fall. Other outcomes are HODL. Flat windows are HODL. These are explicit, versioned training definitions, not claims of universally valid trading rules. See `config/intelligence.php` to change future builds.
+- Existing M2 features are reused in their stored order. `trend.direction` and `candle.direction` map from -1/0/1 to 0/0.5/1 at the model boundary; other features remain within 0–1. M2 artifacts are unchanged. Core is the default schema; `full` includes available CoinGecko context and may drop many rows when context history is incomplete.
+- KNN uses RMS distance on normalized vectors, a maximum distance of 0.25, inverse-distance weights, at least 3 effective neighbors and confidence at least 0.6. Effective count is `(sum(weights)^2)/sum(weights^2)`. Exact matches alone vote when present. Ties, distant evidence and insufficient effective support yield `hodl`, confidence 0 and a reason. UI displays HODL as HOLD. Confidence is agreement times similarity, **not** a calibrated profit probability.
+- Tuning uses rolling chronological folds, default 250 mature training rows and 100 test rows. Outcome endpoints must be strictly before a fold's first decision. `Kmax = min(floor(sqrt(training rows)), k_cap)`; default cap 65. Coarse candidates are refined near the best eligible value. Semantic directional precision ranks first, then confidence, coverage and stability; excessive top/bottom contradictions disqualify a candidate. Defaults require at least 50 validation rows, 5 directional predictions, 55% semantic precision, 1% directional coverage and at most 5% contradictions.
+- The final 20% is reserved for a later evaluation block and never selects K. It must also pass the evidence gates. The published rolling knowledge then contains the most recent 250 mature rows, matching evaluation window size. A rejected build publishes an abstaining head so an older model is not silently presented as newly validated. Historical model artifacts remain available by ID.
+- Default snapshot size is bounded to the most recent 3,000 eligible feature timestamps. Explicit oversized datasets fail instead of truncating silently. Application checks bound training to 480 seconds, with 600-second queue timeout and 720-second locks. Reduce the range or training window when needed. Models expire after 14 days; features older than 2 candle periods cannot issue a signal. Raw source/feature mismatches, changed feature versions, or corrupt artifacts fail closed.
+
+### Pattern prediction and chronological stacking
+
+The first catalogue contains bullish/bearish engulfing and gap-free morning/evening star variants appropriate to continuous crypto candles. An initial long candle has stored normalized body at least 0.5, opposing the predicted completion direction, with compatible stored trend direction. Stars add a small middle candle (body at most 0.3). Engulfing completes when the next candle reverses direction and covers the first body. A star completes when its third candle reverses direction and closes beyond the first body's midpoint. These definitions are versioned in `PatternCatalog`; unfinished legacy trait routines are not enabled.
+
+Candidates contain type, total length, current stage, progress and similarity. Pattern vectors reuse the selected normalized M2 vector plus length/stage/progress/similarity. Only the target test examines future candle geometry; no second technical-indicator implementation is introduced. Both completions and failures are sampled, and a candidate's label becomes available only after its remaining candles close.
+
+The first 40% of a knowledge snapshot supplies pattern samples. For each type, earlier 60% trains Rubix ML Random Forest and weighted KNN; the next 20% fits isotonic probability calibration; the last 20% compares Brier score, log loss and calibration error, with reliability bins. Splits purge outcomes extending into the next block. At least 100 samples, 15 rows per block, and both classes in training/calibration are required by default. A selected model must improve Brier score over the prior completion-rate baseline. Reported comparison metrics describe this historical selection block, not guaranteed future performance. Random Forest is stochastic; persisted artifacts preserve the exact fitted model, but rebuilds can differ.
+
+By default, validated completion probabilities can feed the final KNN alongside a presence flag. Only KNN rows strictly after the pattern model's **entire** evaluation horizon are eligible. This sacrifices history to prevent stacking leakage. No future outcome is fed back as a historical probability. An absent pattern uses probability 0.5 with presence 0; a pattern without a validated model has no probability. No eligible pattern models leaves the original KNN vector unchanged. Set `patterns.as_knn_features` false to expose probabilities separately. Rebuilding preserves the old artifact; it never mutates past snapshots.
+
+Artifacts live under `storage/app/private/intelligence`, with independent database digests verified before decoding. Keep them private and share this directory and `storage/app/private/research` across worker/web nodes. Back up the artifacts and their database records together. There is no upload/import endpoint for arbitrary serialized models. `INTELLIGENCE_ENABLED=false` disables scheduled dispatch; explicit CLI analysis remains available. `INTELLIGENCE_QUEUE` defaults to `intelligence`. Other bounded defaults are in `config/intelligence.php` and apply to new builds; inference uses each model's recorded thresholds.
+
+## trademinator:knn-build
+
+Description: Build closed-candle semantic knowledge and validate KNN and pattern intelligence
+
+Signature: `trademinator:knn-build {exchange} {symbol} {period} {--dataset=} {--schema=core} {--from=} {--to=} {--as-of=}`
+
+Required arguments identify the exact exchange class, symbol and candle period. Requires migrated M2/M3/M4 tables, existing current-version M2 features, a lock-capable cache, and writable private research/model directories. Runs synchronously and offline; use the dedicated queue for scheduled work. Acquires shared per-market locks. Prints the model report as JSON, including model/dataset UUIDs, selected K or null, status, schema, training cutoff, fold reports, held-out metrics and pattern comparisons. Exit 0 includes a completed **abstaining** model; it does not assert a usable trading signal. Invalid data, lock conflicts, corrupt input, compute limits and publication failures exit nonzero.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--dataset` | New snapshot | Train a verified frozen M4 semantic dataset UUID for this exact market. Old M3 fee-aware labels are rejected. Cannot combine with date options or non-default schema. |
+| `--schema` | `core` | `core`, `technical` or `full`; uses the existing FeatureSchema. Custom schemas can be consumed from an explicitly built semantic dataset through the domain service. |
+| `--from` | Bounded recent history | Inclusive decision-time start. |
+| `--to` | Training cutoff | Inclusive decision-time end, clamped to the cutoff. |
+| `--as-of` | Before newest closed feature | Maximum time at which all training outcomes must have become available; capped at now. Explicit values can require waiting for a later candle before inference. |
+
+Dates accept UTC `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM:SSZ` or nonnegative Unix milliseconds. Relative dates are rejected. Labels and tuning parameters come from `config/intelligence.php`. Each manual build creates immutable dataset/model artifacts and updates the market/period head, unless the build has an older training cutoff than the existing head. A failure never replaces the head. Weekly queued builds additionally carry a unique database generation key for retry deduplication. Dataset snapshots are retained even when subsequent training fails, so their IDs can be investigated and reused. No orders or external API calls.
+
+```bash
+php -d memory_limit=512M artisan trademinator:knn-build bitso ADA/USD 1m
+php artisan trademinator:knn-build kraken BTC/USD 1h --schema=full --from=2026-08-01 --as-of=2026-09-28
+php artisan trademinator:knn-build kraken BTC/USD 1m --dataset=DATASET_UUID
+```
+
+## trademinator:signal
+
+Description: Explain the latest closed-candle KNN signal and calibrated pattern probabilities
+
+Signature: `trademinator:signal {exchange} {symbol} {period}`
+
+All three arguments are required and preserve symbol/period case. Reads the current model and latest closed M2 features for that exact series. Requires migrations and, for a directional result, a validated non-stale model plus a later closed feature. Outputs JSON with `action` (`buy`, `hodl`, `sell`), confidence, evidence counts, similarity, votes, reason, decision time, model ID and emerging patterns. Missing/weak/stale evidence is a successful zero-confidence HODL result; corrupt artifacts or invalid periods exit nonzero. Read-only: no training, orders, queue dispatch or writes. No scheduled entry; CLI and the Intelligence page request inference on demand.
+
+```bash
+php artisan trademinator:signal bitso ADA/USD 1m
+```
+
+## trademinator:model-info
+
+Description: Verify an intelligence artifact and show its schema, cutoffs and validation report
+
+Signature: `trademinator:model-info {model}`
+
+`model` is a model UUID, not a path. Requires the database record and private artifact. Verifies the SHA-256 digest and supported format, then prints the saved report without serializing the training matrix or estimator internals. Read-only; no options or schedule. Unknown IDs, unsafe paths and damaged/missing artifacts fail nonzero.
+
+```bash
+php artisan trademinator:model-info MODEL_UUID
+```
+
+## trademinator:dispatch-market-intelligence
+
+Description: Queue weekly KNN and pattern training once per subscribed market and selected period
+
+Signature: `trademinator:dispatch-market-intelligence`
+
+No arguments/options. Queues one `TrainMarketIntelligence` job per shared market feed with a selected period and active subscriptions, regardless of subscriber count. Runs Mondays at 04:00 in the application timezone via `onOneServer()` and overlap protection. `INTELLIGENCE_ENABLED=false` returns successfully without dispatching. Requires a persistent queue backend; `sync`/`null` fail. Jobs go to `INTELLIGENCE_QUEUE` (default `intelligence`) and use shared unique locks, a per-market build lock and a durable unique weekly generation key. Successful abstaining builds also complete the week's generation. Queue retries or duplicate delivery cannot create another model for that completed generation, even if its completion cache entry was lost. Failure before publication remains retryable.
+
+Prints the number of eligible dispatch attempts (a unique-job lock may suppress a duplicate). Side effects are queue records and locks; workers later create snapshots/models. It does not refresh exchange data/features itself. Prerequisites and cron-only queue workers are in [CRONTABS.md](CRONTABS.md). New subscriptions may be trained immediately by a manual dispatch; a completed weekly generation is reused. Use `knn-build` for an explicit rebuild during the same week.
+
+```bash
+php artisan trademinator:dispatch-market-intelligence
+```
+
+## trademinator:derive-timeframe
+
+Description: Derive complete larger candles from the selected base period and reuse the M2 feature pipeline
+
+Signature: `trademinator:derive-timeframe {exchange} {symbol} {base} {period} {--from=} {--as-of=}`
+
+Arguments identify exchange, symbol, the feed's selected reliable base period, and a larger supported period. The target must be an exact fixed-duration multiple using minutes, hours or days. Calendar months/years and weeks are rejected rather than approximated. Requires a configured shared feed whose selected period equals `base`, stored base candles, migrated tables, shared cache and writable storage. `--from` defaults to a bounded recent range (3,000 plus 60 target candles); `--as-of` defaults to now and is capped at now. Both use the explicit UTC/millisecond syntax above. The starting bucket is rounded forward to a complete UTC boundary.
+
+Generates only contiguous complete buckets whose final base candle is closed, using exact decimal volume sums. It records `derived_from`/derivation version in candle payloads, replaces derived buckets in the requested interval, removes previously derived buckets now known to contain gaps, invalidates affected target features and rebuilds them with the **same** FeatureBuilder/FeatureEngine/traits used by M2. It refuses to overwrite any existing target-series exchange candle or a different derivation. Do not run exchange fetching into a series reserved for derivation. Derived history can be recreated from retained base candles. No base candles are changed. Invalid input and size/time limits fail; no independent technical feature system is created.
+
+Prints JSON with candle/feature counts, source/target periods and range. On demand only: no added fetch stream, schedule or permanent worker. Train and inspect timeframe-specific intelligence with the ordinary M4 commands after derivation; automatic weekly dispatch continues to use the feed's selected base period. Derived models remain separate per timeframe and are not silently blended into a single recommendation.
+
+```bash
+php artisan trademinator:derive-timeframe kraken BTC/USD 1m 5m --from=2026-09-20
+php artisan trademinator:knn-build kraken BTC/USD 5m
+php artisan trademinator:signal kraken BTC/USD 5m
+```

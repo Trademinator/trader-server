@@ -22,3 +22,7 @@ Schedule::command('trademinator:dispatch-market-features')
 // Every node has its own installed source and runtime metadata file. The command
 // uses a local file lock and a shared cache lock around database synchronization.
 Schedule::command('trademinator:refresh-exchanges')->dailyAt('03:20');
+
+// CPU-heavy training is drained on the intelligence queue by cron workers.
+Schedule::command('trademinator:dispatch-market-intelligence')
+    ->weeklyOn(1, '04:00')->onOneServer()->withoutOverlapping(10);

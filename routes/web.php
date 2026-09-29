@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Markets\IntelligenceController;
 use App\Http\Controllers\Markets\SubscriptionController;
 use App\Http\Controllers\Markets\SuggestionController;
 use App\Http\Controllers\Markets\SuggestionReviewController;
@@ -22,6 +23,8 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('markets/preferences', [SuggestionController::class, 'destroy'])->name('markets.preferences.destroy');
     Route::get('markets/options/{exchange}', [SubscriptionController::class, 'options'])
         ->middleware('throttle:30,1')->name('markets.options');
+    Route::get('markets/{subscription}/intelligence', [IntelligenceController::class, 'show'])
+        ->middleware('throttle:30,1')->name('markets.intelligence');
     Route::post('markets', [SubscriptionController::class, 'store'])->name('markets.store');
     Route::delete('markets/{subscription}', [SubscriptionController::class, 'destroy'])->name('markets.destroy');
     Route::redirect('settings', 'settings/profile');
