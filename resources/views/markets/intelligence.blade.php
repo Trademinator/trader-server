@@ -1,6 +1,7 @@
 <x-layouts.app :title="'Intelligence · '.$item->market->symbol">
     @include('markets.guide-styles')
     @include('markets.review-styles')
+    @include('markets.intelligence-styles')
     <section class="pair-guide pair-review">
         <nav class="review-topline" aria-label="Intelligence navigation">
             <a href="{{ route('markets.index') }}">← Your markets</a>
@@ -23,7 +24,13 @@
                 <p>Closed-candle decision time: {{ \Carbon\CarbonImmutable::createFromTimestampMs($signal['decision_at_ms'])->utc()->format('Y-m-d H:i:s') }} UTC</p>
             @endif
             <p class="guide-help">Confidence describes weighted historical agreement and similarity. It is not a calibrated probability of profit. The client applies trading fees, balances and execution rules.</p>
+            @if ($progress['evidence_evaluated'])
+                <x-intelligence-progress label="Effective neighbors required" :value="$signal['effective_neighbors']" :target="$progress['settings']['min_effective_neighbors']" :decimals="1" />
+                <x-intelligence-progress label="Weighted agreement × similarity required" :value="max($signal['votes']) * $signal['similarity'] * 100" :target="$progress['settings']['min_confidence'] * 100" :decimals="1" suffix="%" />
+                <p class="guide-help">These evidence meters can rise or fall with each market state. They are not training progress. Published confidence remains zero while the model abstains.</p>
+            @endif
         </section>
+        @include('markets.intelligence-readiness')
         <section class="guide-panel">
             <h2>Emerging patterns</h2>
             @if ($signal['patterns'] === [])
@@ -36,7 +43,7 @@
                         @foreach ($signal['patterns'] as $pattern)
                             <tr>
                                 <td>{{ ucwords(str_replace('_', ' ', $pattern['type'])) }}</td>
-                                <td>{{ $pattern['stage'] }} of {{ $pattern['length'] }} candles</td>
+                                <td><x-intelligence-progress label="Pattern candles" :value="$pattern['stage']" :target="$pattern['length']" /></td>
                                 <td>{{ $pattern['completion_probability'] === null ? 'Insufficient validated history' : number_format($pattern['completion_probability'] * 100, 1).'%' }}</td>
                             </tr>
                         @endforeach
@@ -52,7 +59,7 @@
                 <dl>
                     <dt>Status</dt><dd>{{ $report['status'] === 'ready' ? 'Validated' : 'Abstaining' }}</dd>
                     <dt>Selected K</dt><dd>{{ $report['k'] ?? 'No eligible value' }}</dd>
-                    <dt>Knowledge rows</dt><dd>{{ number_format($report['knowledge_rows']) }}</dd>
+                    <dt>Knowledge rows</dt><dd>{{ number_format($report['knowledge_rows']) }} out of {{ number_format($progress['settings']['train_size']) }} retained neighbors</dd>
                     <dt>Training cutoff</dt><dd>{{ \Carbon\CarbonImmutable::createFromTimestampMs($report['trained_as_of_ms'])->utc()->format('Y-m-d H:i:s') }} UTC</dd>
                     @if ($report['holdout'])
                         <dt>Later-period precision</dt><dd>{{ number_format($report['holdout']['semantic_precision'] * 100, 1) }}%</dd>
@@ -60,6 +67,57 @@
                         <dt>Top/bottom contradictions</dt><dd>{{ number_format($report['holdout']['contradiction_rate'] * 100, 1) }}%</dd>
                     @endif
                 </dl>
+                <x-intelligence-progress label="Retained knowledge pool" :value="$report['knowledge_rows']" :target="$progress['settings']['train_size']" />
+                <p class="guide-help">This is the model's retained neighbor pool, not the total history required to validate it.</p>
+                @if ($progress['source'])
+                    <p>Dataset schema: <strong>{{ $progress['source']['schema'] }}</strong>. Labeled source rows: <strong>{{ isset($progress['source']['source_rows']) ? number_format($progress['source']['source_rows']) : 'Not recorded' }}</strong>.</p>
+                    @if (isset($progress['source']['usable_rows']))
+                        <x-intelligence-progress label="Usable KNN history at last training" :value="$progress['source']['usable_rows']" :target="$progress['minimum']" native />
+                    @else
+                        <p>Usable history after pattern exclusions was not recorded by this older model. Rebuild once to see the exact count.</p>
+                    @endif
+                    @if (($progress['source']['pattern_excluded_rows'] ?? 0) > 0)
+                        <p>{{ number_format($progress['source']['pattern_excluded_rows']) }} earlier rows were excluded to keep pattern predictions chronological.</p>
+                    @endif
+                    <p class="guide-help">With these model settings, {{ number_format($progress['minimum']) }} contiguous, complete, usable rows permit the minimum validation sample; {{ number_format($progress['full_fold_minimum']) }} permit a full tuning block. These estimates include label purging and the separate 20% holdout. Validation must still pass.</p>
+                    @if (array_sum($progress['source']['skipped'] ?? []) > 0)
+                        <details><summary>Rows excluded from the last dataset</summary>
+                            <ul class="intelligence-issues">
+                                @foreach ($progress['source']['skipped'] as $reason => $count)
+                                    @if ($count > 0)
+                                        <li>{{ ucwords(str_replace('_', ' ', $reason)) }}: {{ number_format($count) }}</li>
+                                    @endif
+                                @endforeach
+                            </ul>
+                        </details>
+                    @endif
+                @endif
+                <h3>K selection requirements</h3>
+                @if ($progress['tuning'])
+                    <p>{{ $report['k'] === null ? 'Closest candidate by number of passed checks' : 'Selected candidate' }}: K = {{ $progress['tuning']['k'] }}. All checks must pass for the same candidate.</p>
+                    @include('markets.intelligence-gates', ['gates' => $progress['tuning']['gates']])
+                @else
+                    <p>No tuning results are available yet.</p>
+                @endif
+                <h3>Separate later-period validation</h3>
+                @if ($progress['holdout'])
+                    @include('markets.intelligence-gates', ['gates' => $progress['holdout']])
+                @else
+                    <p>Not evaluated: K selection must pass first.</p>
+                @endif
+                @if (($report['patterns'] ?? []) !== [])
+                    <h3>Pattern training history</h3>
+                    @foreach ($report['patterns'] as $type => $patternReport)
+                        <x-intelligence-progress :label="ucwords(str_replace('_', ' ', $type)).' samples'" :value="$patternReport['samples']" :target="$progress['pattern_minimum']" />
+                        <p class="guide-help">{{ match ($patternReport['status']) {
+                            'validated' => 'Validated. A calibrated pattern model is available.',
+                            'insufficient_samples' => 'More examples of this pattern are needed. Their occurrence has no predictable ETA.',
+                            'insufficient_chronological_classes' => 'The chronological blocks need enough rows and both completed and failed examples.',
+                            'no_improvement_over_prior' => 'Validation did not improve on the prior baseline. More samples do not guarantee a passing model.',
+                            default => 'Pattern validation is pending.',
+                        } }}</p>
+                    @endforeach
+                @endif
                 <p class="guide-help">K is tuned on earlier chronological folds. These later-period results come from a separate held-out block. Models retrain weekly.</p>
             </section>
         @endif

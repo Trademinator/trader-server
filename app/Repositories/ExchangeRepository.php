@@ -136,6 +136,27 @@ class ExchangeRepository extends BaseRepository
         return $ohlcv;
     }
 
+    /** One bounded CCXT page, without persistence; history checkpoints own the transaction. */
+    public function fetchHistoryPage(string $symbol, string $period, int $fromMs, int $untilMs, int $limit): array
+    {
+        if ($fromMs < 0 || $fromMs >= $untilMs || $limit < 1 || $limit > 100
+            || ! in_array($period, CandleTimeframe::SUPPORTED, true)) {
+            throw new \InvalidArgumentException('Invalid historical candle page.');
+        }
+
+        $params = match ($this->exchange->class) {
+            'coinbase' => ['until' => $untilMs],
+            'bitso' => ['end' => $untilMs],
+            default => [],
+        };
+        $this->ccxtExchange->options['paginate'] = false;
+        if (is_array($this->ccxtExchange->options['fetchOHLCV'] ?? null)) {
+            $this->ccxtExchange->options['fetchOHLCV']['paginate'] = false;
+        }
+
+        return $this->tickerRepository->fetch($symbol, $period, $fromMs, $limit, $params);
+    }
+
     public function findById(string $exchange_id): ?Collection
     {
         $exchange_q = Exchange::where('exchange_id', $exchange_id);

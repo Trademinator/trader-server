@@ -14,6 +14,8 @@ final class TrainMarketIntelligence implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
 
+    public const CRON = '0 4 * * 1';
+
     public int $tries = 3;
 
     public int $timeout = 600;

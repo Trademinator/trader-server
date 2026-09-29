@@ -35,6 +35,8 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 
 ## Command index
 
+- [`trademinator:backfill-ohlcv`](#trademinatorbackfill-ohlcv) — Progressively collect older candles for shared subscribed markets
+
 - [`trademinator:knn-build`](#trademinatorknn-build) — Build and validate M4 intelligence
 - [`trademinator:signal`](#trademinatorsignal) — Explain the latest closed-candle signal
 - [`trademinator:model-info`](#trademinatormodel-info) — Verify and inspect a model
@@ -58,6 +60,76 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 - [`trademinator:market-subscription`](#trademinatormarket-subscription) — Manage user subscriptions that drive shared market collection
 - [`trademinator:select-candle-period`](#trademinatorselect-candle-period) — Select the shortest sufficiently informative candle period
 - [`trademinator:sync-ohlcv`](#trademinatorsync-ohlcv) — Fetch and upsert exchange candles, optionally inspect and repair missing ranges
+
+## trademinator:backfill-ohlcv
+
+Description: Queue resumable older OHLCV history for subscribed markets, or inspect and resume paused backfills
+
+Signature: `trademinator:backfill-ohlcv {--exchange=} {--symbol=} {--period=} {--status} {--resume}`
+
+Scheduled every minute. Queues at most 100 due shared markets per invocation on the `history` queue (`HISTORY_BACKFILL_QUEUE`). Requires the history migration, a persistent database/Redis queue, the same shared atomic-lock-capable cache on every scheduler/worker node, an active subscription, a selected candle period and existing closed candles from the normal collector. The worker preserves the exchange access review and credential checks. No user argument is needed: subscribers share one history cursor per market and period. The command also recovers pending feature/KNN rebuilds on the existing intelligence queue (at most 100 rebuild steps per invocation).
+
+Options:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--exchange=` | All | Filter by configured CCXT exchange class, such as `bitso`. |
+| `--symbol=` | All | Filter by the exact exchange symbol, such as `ADA/USD`. |
+| `--period=` | All selected periods | Filter by the feed's selected period; values are case-sensitive (`1m` and `1M` differ). |
+| `--status` | Off | Read-only JSON of saved progress, reasons, errors and retry times. Does not initialize or queue work; can be used while collection is disabled. |
+| `--resume` | Off | Clear a paused state and queue another attempt. Requires all three filters and cannot accompany `--status`. Preserves candles and cursor. After an error it retries the failed page; after empty windows it searches further back. |
+
+With no options, discover and queue due active subscriptions. `HISTORY_BACKFILL_ENABLED=false` disables dispatch and makes already queued work idle. Unsubscribed markets and outdated selected periods are skipped; changing a period creates an independent cursor. Resuming an old period requires selecting it on the feed again. An unexpired database lease is never reset by `--resume`.
+
+Start immediately and inspect progress:
+
+```bash
+php artisan trademinator:backfill-ohlcv
+php artisan trademinator:backfill-ohlcv --status
+php artisan trademinator:backfill-ohlcv --status --exchange=bitso --symbol=ADA/USD
+php artisan trademinator:backfill-ohlcv --resume --exchange=bitso --symbol=ADA/USD --period=1h
+```
+
+Only use the resume example with the market's actual selected period. Install the cron worker from [CRONTABS.md](CRONTABS.md#historical-ohlcv-backfill-worker); queuing work alone does not fetch history.
+
+The first backward window ends at the earliest stored candle. Each logical window spans **24 hours or one selected candle, whichever is longer**. Calendar months/years use actual calendar boundaries. Within each window, pages run chronologically, each requesting at most 90 candles; a job performs at most five OHLCV calls and starts no new call after its 45-second budget. Each HTTP request has a 15-second timeout; the worker job has a 120-second hard timeout. A large window resumes over several jobs, with at least 60 seconds between completed passes. A short response resumes after its last accepted candle. A full window is completed before the cursor moves to the previous window.
+
+The worker validates/normalizes through the existing ticker pipeline, accepts only closed candles inside the requested page, and atomically commits each page's upserts and checkpoint. Retries preserve unique exchange/symbol/period/timestamp rows. It does not invent missing candles, mix exchanges/periods or modify the live collector's forward cursor. Gaps still restart feature warm-up. Backfill holds the same feature lock used by M2 replay and dataset snapshots, so older inserts cannot shift a feature replay midway through its chronological scan. Normal five-minute M2 feature builds also replay imported history.
+
+History is **not universally available** through exchange OHLCV endpoints. `since`, retention and errors vary by exchange; some endpoints return only a recent batch even for old requests. CCXT documents missing no-trade intervals and exchange-specific history limits: [CCXT manual](https://docs.ccxt.com/docs/manual). Kraken's OHLC endpoint explicitly limits history to 720 recent entries: [Kraken reference](https://docs.kraken.com/api-reference/market-data/get-ohlc-data).
+
+Saved status and stop policy:
+
+| Status / reason | Meaning and action |
+| --- | --- |
+| `pending`, `queued`, `active` | Waiting, in progress or ready for another bounded pass. `before_ms` is the exclusive backward search boundary; `next_since_ms` is the page checkpoint inside the current window. |
+| `waiting_for_live_history` | No closed source candle exists yet; the backfill waits for normal collection to seed history. |
+| `retrying / request_failed` | Cursor remains at the failed page. Retry delay doubles from 60 seconds to a maximum of one hour. Timeouts, network errors and rate limits do not count as proof of a history boundary and continue to retry. |
+| `paused / no_older_data` | Three completed consecutive windows yielded no acceptable older candles (empty or outside the requested range). Automatic attempts stop. This is a reversible no-progress policy, **not proof** of the listing date or oldest exchange record. Use `--resume` to probe further through a long quiet gap. |
+| `paused / repeated_errors` | Five consecutive non-network failures at the same checkpoint. Inspect `last_error`; this can be an exchange's historical-date rejection or a request/configuration problem. Correct the issue or deliberately resume. |
+| `paused / access_or_support` | Unsupported symbol/period, credentials/permission issue, or exchange access review needs attention. Correct it, then resume. |
+| `idle / inactive_feed` | No active subscription, a changed period or backfilling disabled. Resume automatically when the same feed/period becomes eligible again. |
+| `complete / unix_epoch` | The lower timestamp boundary has reached zero; no negative timestamps are queried. |
+
+`oldest_candle_ms` tracks the earliest actual candle known to this backfill, separately from the search boundary, which can pass through empty intervals. `candles_received` counts accepted page rows, including any already present due to an independent manual import. `empty_windows`, `failures`, `last_error` and `next_attempt_at` explain stalls. Window timestamp fields are UTC Unix milliseconds; ordinary retry timestamps follow Laravel's stored timestamp convention. Configuration for page size, per-job request/time budgets and pause thresholds is in `config/history_backfill.php`.
+
+After a **completed backward window imports at least one candle**, the worker automatically queues an ordered rebuild on `INTELLIGENCE_QUEUE` (default `intelligence`):
+
+1. Rebuild M2 features from the enlarged closed-candle history.
+2. Build and validate fresh KNN/pattern intelligence using `config('intelligence.schema')` (default `core`).
+
+The two stages are separate jobs, each limited to 600 seconds, so the existing intelligence worker and `retry_after >= 720` remain sufficient. The trained generation uses the history revision, independently of the weekly generation key; this week's existing model cannot suppress the new build. Empty windows and failed imports do not trigger a new revision. Only one rebuild pipeline per market/period is queued or running. Several imports waiting for features are folded into one build; imports arriving after feature preparation stay pending for one follow-up pass. Duplicate/stale jobs cannot acknowledge a newer revision. Feature and model failures preserve imported candles and pending work, record `build_error`, and retry with exponential delay from 60 seconds to one hour. The minute scheduler recovers an expired lease or an interrupted dispatch. `INTELLIGENCE_ENABLED=false` or `HISTORY_BACKFILL_ENABLED=false` pauses automatic rebuilding without discarding pending revisions; inactive/changed feeds are deferred too.
+
+`--status` also exposes `history_revision`, `trained_revision`, `build_stage` (`features` or `knn`), `build_revision`, `build_failures`, `build_error`, `build_next_attempt_at`, `model_id` and `last_trained_at`. Matching history/trained revisions mean every completed import has been included in a successful build. A successful build can still produce an abstaining model if validation fails; it does not force a BUY/SELL signal.
+
+Manual rebuilding remains available for troubleshooting or a different schema:
+
+```bash
+php artisan trademinator:build-features bitso ADA/USD 1h
+php -d memory_limit=512M artisan trademinator:knn-build bitso ADA/USD 1h --schema=core
+```
+
+Use the exact exchange/symbol/period from the feed. The weekly intelligence dispatcher retains its weekly generation key. Backfill-triggered rebuilds and direct `knn-build` create fresh models independently of that weekly generation. Backfilling supplies candles; it does not guarantee validation success or effective neighbours. `core` avoids the 24-hour/7-day/30-day return requirements; `technical` needs those historical spans. `full` also needs genuinely historical CoinGecko snapshots, which this command cannot reconstruct. Never apply today's context to historical candles. Training still selects at most the configured `intelligence.max_rows` (default 3000) and retains its existing chronological validation and warm-up requirements. Very long retained history also increases full feature-replay cost; the existing replay time budget remains in effect.
 
 ## trademinator:build-features
 
@@ -555,3 +627,11 @@ php artisan trademinator:derive-timeframe kraken BTC/USD 1m 5m --from=2026-09-20
 php artisan trademinator:knn-build kraken BTC/USD 5m
 php artisan trademinator:signal kraken BTC/USD 5m
 ```
+
+### Reading intelligence readiness
+
+The market intelligence page distinguishes live potential history from the frozen model's last training run. **Knowledge rows X out of Y** measures the retained neighbor pool (`train_size`, normally 250), not the history needed for validation. With the default 12-candle horizon and KNN settings, at least **405 contiguous, complete usable rows** permit minimum validation; **468** permit a full tuning block. These counts include the purges at both chronological splits and the separate 20% holdout. Rows reserved for pattern training are excluded first. Actual validation must still pass.
+
+The page lists each K-selection and holdout requirement, missing selected features, stale collection, dataset exclusions, and pattern sample counts. Live potential rows are an upper bound before source, semantic-warmup and pattern checks. The data ETA assumes continuous collection and complete future features; it is unavailable when the observed inputs do not support an estimate. It is not a promise of validation success or a directional signal. The next scheduled dispatch is shown separately from data availability and does not confirm worker health.
+
+An abstaining model does not absorb newly collected rows automatically. After more history or corrected features are available, run a direct `trademinator:knn-build` for that market to reevaluate immediately. Redispatching a completed weekly generation does not rebuild it. Older models remain readable; rebuild once to record exact post-pattern history counts and frozen pattern thresholds. The page's meters refresh when the page is reloaded.

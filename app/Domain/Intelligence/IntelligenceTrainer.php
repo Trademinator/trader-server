@@ -56,6 +56,7 @@ final class IntelligenceTrainer
             }
             unset($row);
             $patternSettings = config('intelligence.patterns');
+            $sourceRows = count($rows);
             $patternBundle = ['models' => [], 'report' => [], 'version' => PatternCatalog::VERSION];
             if ($patternSettings['enabled']) {
                 $patternRows = array_slice($rows, 0, (int) floor(count($rows) * 0.4));
@@ -97,6 +98,13 @@ final class IntelligenceTrainer
                 'status' => $ready ? 'ready' : 'abstaining',
                 'reason' => $ready ? 'validated' : ($selection['k'] === null ? 'no_eligible_k' : 'holdout_failed'),
                 'k' => $selection['k'], 'settings' => $settings,
+                'pattern_settings' => $patternSettings,
+                'training_data' => [
+                    'schema' => $manifest['schema'], 'source_rows' => $sourceRows,
+                    'usable_rows' => count($rows), 'pattern_excluded_rows' => $sourceRows - count($rows),
+                    'skipped' => $manifest['skipped'] ?? [],
+                    'tuning_rows' => count($training), 'holdout_rows' => count($test),
+                ],
                 'selection' => $selection, 'holdout' => $evaluation,
                 'holdout_from_ms' => $cutoff,
                 'holdout_training_labels_available_by_ms' => max(array_column($training, 'label_available_at_ms') ?: [0]),

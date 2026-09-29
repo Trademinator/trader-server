@@ -13,18 +13,28 @@ final class CandleTimeframe
 
     public function next(int $timestampMilliseconds, string $period): int
     {
+        return $this->shift($timestampMilliseconds, $period, 1);
+    }
+
+    public function previous(int $timestampMilliseconds, string $period): int
+    {
+        return $this->shift($timestampMilliseconds, $period, -1);
+    }
+
+    private function shift(int $timestampMilliseconds, string $period, int $direction): int
+    {
         if (! in_array($period, self::SUPPORTED, true)
             || ! preg_match('/^([1-9]\d*)([mhdwMy])$/D', $period, $matches)) {
             throw new InvalidArgumentException("Invalid candle period: {$period}");
         }
 
-        $quantity = (int) $matches[1];
+        $quantity = (int) $matches[1] * $direction;
         $unit = $matches[2];
 
         if ($unit === 'M' || $unit === 'y') {
             $date = (new DateTimeImmutable('@'.intdiv($timestampMilliseconds, 1000)))
                 ->setTimezone(new DateTimeZone('UTC'));
-            $next = $date->modify('+'.$quantity.' '.($unit === 'M' ? 'months' : 'years'));
+            $next = $date->modify(($quantity > 0 ? '+' : '').$quantity.' '.($unit === 'M' ? 'months' : 'years'));
 
             return $next->getTimestamp() * 1000 + $timestampMilliseconds % 1000;
         }

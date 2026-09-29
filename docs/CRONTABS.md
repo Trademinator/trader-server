@@ -17,13 +17,14 @@ Replace `/path/to/trader-server` and `/usr/bin/php` with the deployment's actual
 * * * * * cd /path/to/trader-server && /usr/bin/flock -n storage/framework/trademinator-queue.lock /usr/bin/php artisan queue:work --queue=default --stop-when-empty --timeout=600 --tries=5 >> storage/logs/queue-cron.log 2>&1
 ```
 
-Those two entries cover collection and M2 features. M4 training also requires the intelligence queue worker below. Do **not** add separate cron lines for each `trademinator:*` scheduled command; Laravel's scheduler owns those cadences.
+Those two entries cover collection and M2 features. M4 training also requires the intelligence queue worker below. Historical backfill uses the additional history worker below. Do **not** add separate cron lines for each `trademinator:*` scheduled command; Laravel's scheduler owns those cadences.
 
 ## Commands currently triggered by the Laravel scheduler
 
 | Command | Cadence | Purpose |
 | --- | --- | --- |
 | `trademinator:dispatch-market-feeds` | Every minute | Queue due shared market feeds that have active subscribers. |
+| `trademinator:backfill-ohlcv` | Every minute | Queue bounded older-history passes and recover pending feature/KNN rebuilds after successful imports. |
 | `trademinator:dispatch-market-features` | Every five minutes | Queue M2 feature builds for subscribed markets with selected candle periods. |
 | `trademinator:collect-market-context` | Hourly | Resolve pending subscription-driven CoinGecko mappings and collect timestamped market context. |
 | `trademinator:dispatch-market-intelligence` | Monday at 04:00, application timezone | Queue one KNN/pattern training job per subscribed market and selected period. |
@@ -72,6 +73,8 @@ The `/tmp` lock is local to the worker host; use a distinct lock filename for se
 
 Weekly dispatch runs Monday at 04:00 in the application timezone using shared scheduler locks. Per-market uniqueness/build locks and the database's unique weekly generation key also protect redelivery after a worker crash. Retries use 300/900-second backoff. Completed generations include abstaining models; failed input/history builds remain visible in normal failed-job reporting. Training snapshots/models are retained for audit and need ordinary backup/storage capacity planning.
 
+The intelligence page shows this next dispatch time in UTC, separately from its conditional data-collection ETA. The displayed schedule does not verify that the scheduler or worker is running. If a weekly model has already completed but is abstaining, newly collected history will be evaluated at the next weekly run; use a direct `trademinator:knn-build` to reevaluate sooner. See [intelligence readiness](CLI.md#reading-intelligence-readiness) for the row targets and validation checks.
+
 Set `INTELLIGENCE_ENABLED=false` to disable weekly dispatch. To populate initial models, after M2 features exist, run:
 
 ```bash
@@ -82,3 +85,39 @@ php artisan schedule:list
 ```
 
 M4 does not change the default queue timeout or M1/M2 collection cadences. `derive-timeframe`, direct `knn-build`, `model-info` and `signal` are on-demand commands. Longer derived timeframes are not automatically retrained by the base-period dispatcher. See [the complete CLI workflow and model contracts](CLI.md#m4-intelligence-workflow-and-upgrade).
+
+
+## Historical OHLCV backfill worker
+
+Apply the migration and refresh deployment configuration before enabling the updated scheduler:
+
+```bash
+php artisan migrate --force
+php artisan config:cache
+php artisan schedule:list
+```
+
+`HISTORY_BACKFILL_ENABLED` defaults to `true`; `HISTORY_BACKFILL_QUEUE` defaults to `history`. Keep the existing scheduler, default-queue and intelligence-queue crons. Add this entry on the chosen history worker machine(s), using the same source, database and shared cache:
+
+```cron
+* * * * * cd /path/to/trader-server && /usr/bin/flock -n storage/framework/trademinator-history-queue.lock /usr/bin/php -d memory_limit=256M artisan queue:work --queue=history --stop-when-empty --max-time=50 --timeout=120 --memory=256 --tries=1 >> storage/logs/history-cron.log 2>&1
+```
+
+Change `--queue` to match `HISTORY_BACKFILL_QUEUE` if customized. `--max-time=50` stops between jobs; a job already running may finish later, bounded by its 120-second timeout. `flock` prevents overlap on the same host. Multiple worker machines can drain the queue: atomic database leases select one job per market/period, shared market locks coordinate with live collection, a shared exchange lock serializes history workers for that exchange, and page upserts/checkpoints are transactional. CCXT's rate limiter remains enabled. The existing `retry_after >= 720` setting is already greater than the history timeout. The job allows additional 30-second releases while another collector holds a lock; actual request failures use the saved retry schedule described in [CLI.md](CLI.md#trademinatorbackfill-ohlcv). There is no permanent worker daemon.
+
+A pass makes at most five 90-candle OHLCV requests, starts no new call after 45 seconds, and waits at least one minute before the next pass. A full 24-hour window of one-minute candles therefore normally needs four passes when all pages are full; one-hour candles normally need one pass for the same day. This is throughput, not a guaranteed ETA: exchange limits, sparse trading, queues and errors affect timing. Longer candle periods fetch at least one whole candle per logical window.
+
+Inspect collection and start a due pass without waiting for the next scheduler tick:
+
+```bash
+php artisan trademinator:backfill-ohlcv --status
+php artisan trademinator:backfill-ohlcv
+php artisan queue:failed
+```
+
+Expected request failures and pauses are recorded in `--status` and application logs; they need not appear in `queue:failed`. A hard worker failure can also appear there. Three empty/out-of-range windows pause automatic probing. Network/rate-limit errors back off without marking history exhausted. Repeated non-network errors pause for review. The status includes the cursor and reason; see [the command reference](CLI.md#trademinatorbackfill-ohlcv) for targeted resume and immediate feature/model rebuilding.
+
+
+Successful backfill windows also queue **M2 feature rebuild → fresh KNN/pattern build** on `INTELLIGENCE_QUEUE`. Keep the existing M4 intelligence cron running; no extra training cron is necessary and there is no wait until Monday. Both stages run on the intelligence worker, each with a 600-second timeout. Preserve that worker's 512 MiB memory setting, shared private research/model storage and `retry_after >= 720`. The weekly schedule remains available alongside these history-triggered builds.
+
+Rebuilds combine pending imports per market, retain imports that arrive during training for a follow-up build, and retry after errors without deleting candles. The history worker shares M2's feature lock while inserting older rows so feature replay and dataset snapshots cannot observe history changing under an offset-based scan. `trademinator:backfill-ohlcv --status` reports both collection progress and `build_stage`, pending/trained history revisions, the most recent model ID and any `build_error`. `INTELLIGENCE_ENABLED=false` pauses these automatic rebuilds as well as weekly dispatch; pending history revisions remain available when re-enabled.

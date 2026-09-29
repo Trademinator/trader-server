@@ -1,5 +1,6 @@
 <?php
 
+use App\Jobs\TrainMarketIntelligence;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -13,6 +14,9 @@ Artisan::command('inspire', function () {
 Schedule::command('trademinator:dispatch-market-feeds')
     ->everyMinute()->onOneServer()->withoutOverlapping(1);
 
+Schedule::command('trademinator:backfill-ohlcv')
+    ->everyMinute()->onOneServer()->withoutOverlapping(5);
+
 Schedule::command('trademinator:collect-market-context')
     ->hourly()->onOneServer()->withoutOverlapping(60);
 
@@ -25,4 +29,4 @@ Schedule::command('trademinator:refresh-exchanges')->dailyAt('03:20');
 
 // CPU-heavy training is drained on the intelligence queue by cron workers.
 Schedule::command('trademinator:dispatch-market-intelligence')
-    ->weeklyOn(1, '04:00')->onOneServer()->withoutOverlapping(10);
+    ->cron(TrainMarketIntelligence::CRON)->onOneServer()->withoutOverlapping(10);

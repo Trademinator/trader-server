@@ -100,3 +100,30 @@ it('continues past an empty Coinbase batch and finds later candles', function ()
 
     expect($result)->toHaveCount(1)->and($result[0]['microtimestamp'])->toBe($next);
 });
+
+it('fetches one normalized history page with adapter bounds without saving before the checkpoint transaction', function (string $exchangeClass, array $params) {
+    $from = 1_700_000_000_000;
+    $until = $from + 90 * 60000;
+    $client = Mockery::mock(ccxt\Exchange::class)->makePartial();
+    $client->options = ['paginate' => true, 'fetchOHLCV' => ['paginate' => true]];
+    $client->shouldReceive('fetch_ohlcv')->once()->with('BTC/USD', '1m', $from, 90, $params)
+        ->andReturn([[$from, 100, 102, 99, 101, 10]]);
+    $tickers = new TickerRepository;
+    $tickers->setExchange($client);
+    $repository = new ExchangeRepository;
+    $reflection = new ReflectionClass($repository);
+    $reflection->getProperty('exchange')->setValue($repository, new Exchange(['name' => 'Test', 'class' => $exchangeClass]));
+    $reflection->getProperty('ccxtExchange')->setValue($repository, $client);
+    $reflection->getProperty('tickerRepository')->setValue($repository, $tickers);
+
+    $candles = $repository->fetchHistoryPage('BTC/USD', '1m', $from, $until, 90);
+
+    expect(array_values($candles)[0])->toMatchArray(['microtimestamp' => $from, 'close' => '101']);
+    expect($client->options['paginate'])->toBeFalse();
+    expect($client->options['fetchOHLCV']['paginate'])->toBeFalse();
+    $this->assertDatabaseCount('tickers', 0);
+})->with([
+    'generic' => ['kraken', []],
+    'Bitso end in milliseconds' => ['bitso', ['end' => 1_700_005_400_000]],
+    'Coinbase until in milliseconds' => ['coinbase', ['until' => 1_700_005_400_000]],
+]);
