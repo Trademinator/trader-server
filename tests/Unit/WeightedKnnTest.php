@@ -46,3 +46,25 @@ it('rejects incompatible dimensions and malformed evidence thresholds', function
     expect(fn () => (new WeightedKnn)->predict($rows, [0.1], 3, 10))->toThrow(InvalidArgumentException::class);
     expect(fn () => new WeightedKnn(NAN))->toThrow(InvalidArgumentException::class);
 });
+
+it('removes inactive cross exchange dimensions from both distance and its denominator', function () {
+    $rows = [
+        ['decision_at_ms' => 1, 'label_available_at_ms' => 2, 'vector' => [0.1], 'label' => 'buy'],
+        ['decision_at_ms' => 2, 'label_available_at_ms' => 3, 'vector' => [0.2], 'label' => 'buy'],
+        ['decision_at_ms' => 3, 'label_available_at_ms' => 4, 'vector' => [0.3], 'label' => 'buy'],
+    ];
+    $knn = new WeightedKnn;
+    $base = $knn->neighbors($rows, [0.15], 3, 10);
+    foreach ($rows as &$row) {
+        $row['vector'][] = 1.0;
+        $row['feature_weights'] = [1.0, 0.25];
+    }
+    unset($row);
+
+    expect($knn->neighbors($rows, [0.15, 0.0], 3, 10, [1.0, 0.0]))->toBe($base);
+    foreach ($rows as &$row) {
+        $row['feature_weights'][1] = 0.0;
+    }
+    unset($row);
+    expect($knn->neighbors($rows, [0.15, 0.0], 3, 10, [1.0, 0.25]))->toBe($base);
+});

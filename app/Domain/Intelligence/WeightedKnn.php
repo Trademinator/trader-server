@@ -20,10 +20,13 @@ final class WeightedKnn
         }
     }
 
-    public function neighbors(array $rows, array $vector, int $k, int $asOfMs): array
+    public function neighbors(array $rows, array $vector, int $k, int $asOfMs, array $weights = []): array
     {
         if ($k < 1 || $vector === []) {
             throw new InvalidArgumentException('K and feature count must be positive.');
+        }
+        if ($weights !== [] && count($weights) !== count($vector)) {
+            throw new InvalidArgumentException('Query feature weights do not match the vector.');
         }
         $heap = new SplPriorityQueue;
         $heap->setExtractFlags(SplPriorityQueue::EXTR_BOTH);
@@ -34,16 +37,31 @@ final class WeightedKnn
             if (count($row['vector']) !== count($vector)) {
                 throw new InvalidArgumentException('Knowledge feature dimensions do not match.');
             }
-            $sum = 0.0;
+            $rowWeights = $row['feature_weights'] ?? [];
+            if ($rowWeights !== [] && count($rowWeights) !== count($vector)) {
+                throw new InvalidArgumentException('Knowledge feature weights do not match the vector.');
+            }
+            $sum = $dimensions = 0.0;
             foreach ($vector as $i => $value) {
                 $other = $row['vector'][$i];
                 if (! is_numeric($value) || ! is_numeric($other) || ! is_finite((float) $value)
                     || ! is_finite((float) $other) || min($value, $other) < 0 || max($value, $other) > 1) {
                     throw new InvalidArgumentException('KNN expects finite unit-interval vectors.');
                 }
-                $sum += ($value - $other) ** 2;
+                $pairWeights = [$weights[$i] ?? 1.0, $rowWeights[$i] ?? 1.0];
+                foreach ($pairWeights as $weight) {
+                    if (! is_numeric($weight) || ! is_finite((float) $weight) || $weight < 0 || $weight > 1) {
+                        throw new InvalidArgumentException('Feature weights must be finite unit-interval values.');
+                    }
+                }
+                $weight = min($pairWeights);
+                $sum += $weight * ($value - $other) ** 2;
+                $dimensions += $weight;
             }
-            $distance = sqrt($sum / count($vector));
+            if ($dimensions <= 0) {
+                continue;
+            }
+            $distance = sqrt($sum / $dimensions);
             if ($distance > $this->maxDistance) {
                 continue;
             }
@@ -104,9 +122,9 @@ final class WeightedKnn
             'reason' => 'supported', ...$evidence];
     }
 
-    public function predict(array $rows, array $vector, int $k, int $asOfMs): array
+    public function predict(array $rows, array $vector, int $k, int $asOfMs, array $weights = []): array
     {
-        return $this->vote($this->neighbors($rows, $vector, $k, $asOfMs), $k);
+        return $this->vote($this->neighbors($rows, $vector, $k, $asOfMs, $weights), $k);
     }
 
     public static function abstain(string $reason): array

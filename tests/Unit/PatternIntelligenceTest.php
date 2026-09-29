@@ -4,6 +4,7 @@ use App\Domain\Intelligence\PatternCatalog;
 use App\Domain\Intelligence\PatternTrainer;
 use App\Domain\Intelligence\ProbabilityCalibration;
 use App\Domain\Research\SemanticLabels;
+use Tests\Support\LeadLagFixtures;
 
 function patternBar(int $timestamp, float $open, float $close, float $high, float $low): array
 {
@@ -82,4 +83,37 @@ it('compares real Rubix classifiers on purged chronological calibration and eval
     $candidate = $rows[0]['patterns'][0];
     expect($trainer->predict($bundle, [0.0], [$candidate], 100)[0]['completion_probability'])->toBeNull();
     expect($trainer->predict($bundle, [0.0], [$candidate], 999999)[0]['completion_probability'])->toBeGreaterThan(0.9);
+});
+
+it('chooses the pattern algorithm before inspecting final evaluation labels', function () {
+    $rows = [];
+    for ($i = 0; $i < 400; $i++) {
+        $x = LeadLagFixtures::noise($i);
+        $y = LeadLagFixtures::noise($i, 'pattern');
+        $rows[] = ['vector' => [($x + 0.01) * 50, ($y + 0.01) * 50], 'decision_at_ms' => $i * 1000,
+            'patterns' => [['type' => 'bullish_engulfing', 'length' => 2, 'stage' => 1,
+                'progress' => 0.5, 'similarity' => 0.8, 'label' => $x * $y > 0 ? 'completed' : 'failed',
+                'label_available_at_ms' => ($i + 2) * 1000]]];
+    }
+    $trainer = new PatternTrainer(new PatternCatalog, new ProbabilityCalibration);
+    $settings = ['min_samples' => 50, 'min_block_rows' => 10, 'trees' => 1, 'k' => 15];
+    mt_srand(42);
+    $before = $trainer->train($rows, $settings, microtime(true) + 20)['report']['bullish_engulfing'];
+    foreach ($rows as $i => &$row) {
+        if ($i >= 320) {
+            $row['patterns'][0]['label'] = $row['patterns'][0]['label'] === 'completed' ? 'failed' : 'completed';
+        }
+    }
+    unset($row);
+    mt_srand(42);
+
+    $after = $trainer->train($rows, $settings, microtime(true) + 20)['report']['bullish_engulfing'];
+
+    expect($after['candidate_selected_before_test'])->toBe($before['candidate_selected_before_test']);
+    expect($before['calibration_labels_available_by_ms'])->toBeLessThan($before['selection_from_ms']);
+    expect($before['selection_labels_available_by_ms'])->toBeLessThan($before['test_from_ms']);
+    foreach (['random_forest', 'weighted_knn'] as $algorithm) {
+        expect($after['candidates'][$algorithm]['selection_metrics'])->toBe($before['candidates'][$algorithm]['selection_metrics']);
+        expect($after['candidates'][$algorithm]['metrics'])->not->toBe($before['candidates'][$algorithm]['metrics']);
+    }
 });

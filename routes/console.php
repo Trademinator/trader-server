@@ -30,3 +30,7 @@ Schedule::command('trademinator:refresh-exchanges')->dailyAt('03:20');
 // CPU-heavy training is drained on the intelligence queue by cron workers.
 Schedule::command('trademinator:dispatch-market-intelligence')
     ->cron(TrainMarketIntelligence::CRON)->onOneServer()->withoutOverlapping(10);
+
+// Refit empirical cross-exchange evidence and its downstream model together.
+Schedule::command('trademinator:dispatch-lead-lag')
+    ->dailyAt('03:45')->onOneServer()->withoutOverlapping(10);

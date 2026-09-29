@@ -32,6 +32,7 @@ final class CcxtAdapterInspector
 
         return [
             'name' => $description['name'] ?? $id,
+            'countries' => (array) ($description['countries'] ?? []),
             'spot' => ($description['has']['spot'] ?? false) === true,
             'fetchOHLCV' => $description['has']['fetchOHLCV'] ?? false,
             'timeframes' => array_keys($description['timeframes'] ?? []),

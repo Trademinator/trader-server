@@ -18,12 +18,13 @@
             <div class="review-metrics">
                 <div class="review-metric">Action<strong>{{ $signal['action'] === 'hodl' ? 'HOLD' : strtoupper($signal['action']) }}</strong></div>
                 <div class="review-metric">Confidence<strong>{{ number_format($signal['confidence'] * 100, 1) }}%</strong></div>
+                <div class="review-metric">Market state<strong>{{ ucwords(str_replace('_', ' ', $signal['regime'] ?? 'neutral')) }}</strong></div>
                 <div class="review-metric">Effective neighbors<strong>{{ number_format($signal['effective_neighbors'], 1) }}</strong></div>
             </div>
             @if (isset($signal['decision_at_ms']))
                 <p>Closed-candle decision time: {{ \Carbon\CarbonImmutable::createFromTimestampMs($signal['decision_at_ms'])->utc()->format('Y-m-d H:i:s') }} UTC</p>
             @endif
-            <p class="guide-help">Confidence describes weighted historical agreement and similarity. It is not a calibrated probability of profit. The client applies trading fees, balances and execution rules.</p>
+            <p class="guide-help">Confidence describes weighted historical agreement and similarity. It is not a calibrated probability of profit. Bull / Bear follow supported directional signals; Super also requires at least 80% confidence and six effective neighbors. The client applies trading fees, balances and execution rules.</p>
             @if ($progress['evidence_evaluated'])
                 <x-intelligence-progress label="Effective neighbors required" :value="$signal['effective_neighbors']" :target="$progress['settings']['min_effective_neighbors']" :decimals="1" />
                 <x-intelligence-progress label="Weighted agreement × similarity required" :value="max($signal['votes']) * $signal['similarity'] * 100" :target="$progress['settings']['min_confidence'] * 100" :decimals="1" suffix="%" />
@@ -31,6 +32,7 @@
             @endif
         </section>
         @include('markets.intelligence-readiness')
+        @include('markets.intelligence-lead-lag')
         <section class="guide-panel">
             <h2>Emerging patterns</h2>
             @if ($signal['patterns'] === [])
@@ -79,6 +81,9 @@
                     @if (($progress['source']['pattern_excluded_rows'] ?? 0) > 0)
                         <p>{{ number_format($progress['source']['pattern_excluded_rows']) }} earlier rows were excluded to keep pattern predictions chronological.</p>
                     @endif
+                    @if (($progress['source']['lead_lag_excluded_rows'] ?? 0) > 0)
+                        <p>{{ number_format($progress['source']['lead_lag_excluded_rows']) }} earlier rows were excluded so lead/lag evidence was validated before every downstream training decision.</p>
+                    @endif
                     <p class="guide-help">With these model settings, {{ number_format($progress['minimum']) }} contiguous, complete, usable rows permit the minimum validation sample; {{ number_format($progress['full_fold_minimum']) }} permit a full tuning block. These estimates include label purging and the separate 20% holdout. Validation must still pass.</p>
                     @if (array_sum($progress['source']['skipped'] ?? []) > 0)
                         <details><summary>Rows excluded from the last dataset</summary>
@@ -118,7 +123,7 @@
                         } }}</p>
                     @endforeach
                 @endif
-                <p class="guide-help">K is tuned on earlier chronological folds. These later-period results come from a separate held-out block. Models retrain weekly.</p>
+                <p class="guide-help">K is tuned on earlier chronological folds. These later-period results come from a separate held-out block. Models retrain weekly, after successful backfill, and daily for eligible overlapping markets when lead/lag refresh is enabled.</p>
             </section>
         @endif
     </section>

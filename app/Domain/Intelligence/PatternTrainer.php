@@ -40,7 +40,11 @@ final class PatternTrainer
             $calibrate = array_values(array_filter(array_slice($samples, $calibrationStart, $testStart - $calibrationStart),
                 fn (array $row): bool => $row['label_available_at_ms'] < $samples[$testStart]['decision_at_ms']));
             $test = array_slice($samples, $testStart);
-            if (min(count($train), count($calibrate), count($test)) < $settings['min_block_rows']
+            $selectStart = (int) floor(count($calibrate) / 2);
+            $select = array_slice($calibrate, $selectStart);
+            $calibrate = array_values(array_filter(array_slice($calibrate, 0, $selectStart),
+                fn (array $row): bool => $row['label_available_at_ms'] < ($select[0]['decision_at_ms'] ?? 0)));
+            if (min(count($train), count($calibrate), count($select), count($test)) < $settings['min_block_rows']
                 || count(array_unique(array_column($train, 'label'))) < 2
                 || count(array_unique(array_column($calibrate, 'label'))) < 2) {
                 $reports[$type] = ['status' => 'insufficient_chronological_classes', 'samples' => $count];
@@ -62,16 +66,21 @@ final class PatternTrainer
                 $raw = array_map(fn (array $p): float => $p['completed'] ?? 0.0,
                     $learner->proba(new Unlabeled(array_column($calibrate, 'vector'))));
                 $mapping = $this->calibration->fit($raw, array_column($calibrate, 'label'));
+                $rawSelect = array_map(fn (array $p): float => $p['completed'] ?? 0.0,
+                    $learner->proba(new Unlabeled(array_column($select, 'vector'))));
+                $selectionMetrics = $this->calibration->metrics(
+                    array_map(fn (float $p): float => $this->calibration->apply($p, $mapping), $rawSelect), array_column($select, 'label'));
                 $rawTest = array_map(fn (array $p): float => $p['completed'] ?? 0.0,
                     $learner->proba(new Unlabeled(array_column($test, 'vector'))));
                 $calibrated = array_map(fn (float $p): float => $this->calibration->apply($p, $mapping), $rawTest);
                 $candidates[$name] = ['algorithm' => $name, 'estimator' => $learner, 'calibration' => $mapping,
+                    'selection_metrics' => $selectionMetrics,
                     'metrics' => $this->calibration->metrics($calibrated, array_column($test, 'label')),
                     'raw_metrics' => $this->calibration->metrics($rawTest, array_column($test, 'label')),
                     'available_at_ms' => max(array_column($test, 'label_available_at_ms'))];
             }
-            uasort($candidates, fn (array $a, array $b): int => [$a['metrics']['brier'], $a['metrics']['log_loss'], $a['metrics']['calibration_error']]
-                <=> [$b['metrics']['brier'], $b['metrics']['log_loss'], $b['metrics']['calibration_error']]);
+            uasort($candidates, fn (array $a, array $b): int => [$a['selection_metrics']['brier'], $a['selection_metrics']['log_loss'], $a['selection_metrics']['calibration_error']]
+                <=> [$b['selection_metrics']['brier'], $b['selection_metrics']['log_loss'], $b['selection_metrics']['calibration_error']]);
             $winner = reset($candidates);
             $eligible = $winner['metrics']['brier'] < $baseline['brier'];
             if ($eligible) {
@@ -80,6 +89,9 @@ final class PatternTrainer
             $reports[$type] = [
                 'status' => $eligible ? 'validated' : 'no_improvement_over_prior',
                 'selected' => $eligible ? $winner['algorithm'] : null,
+                'candidate_selected_before_test' => $winner['algorithm'],
+                'selection_rows' => count($select), 'selection_from_ms' => $select[0]['decision_at_ms'],
+                'selection_labels_available_by_ms' => max(array_column($select, 'label_available_at_ms')),
                 'samples' => $count, 'train_rows' => count($train), 'calibration_rows' => count($calibrate),
                 'test_rows' => count($test),
                 'train_labels_available_by_ms' => max(array_column($train, 'label_available_at_ms')),

@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Domain\Intelligence\IntelligenceTrainer;
 use App\Domain\Intelligence\MarketIntelligence;
 use App\Domain\Intelligence\ModelStore;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -28,7 +29,7 @@ final class TrainMarketIntelligence implements ShouldBeUnique, ShouldQueue
 
     public function uniqueId(): string
     {
-        return ModelStore::marketKey($this->exchange, $this->symbol, $this->period).':'.$this->week;
+        return ModelStore::marketKey($this->exchange, $this->symbol, $this->period).':'.$this->week.':'.IntelligenceTrainer::VERSION;
     }
 
     public function handle(MarketIntelligence $intelligence): void

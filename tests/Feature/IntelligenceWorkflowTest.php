@@ -210,3 +210,31 @@ it('stacks only probabilities from a pattern model validated strictly before eac
         expect($fold['test_from_ms'])->toBeGreaterThan($knownAt);
     }
 });
+
+it('requires rebuilding legacy model validation before issuing a new signal', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $manifest = IntelligenceFixtures::snapshot();
+    app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+    $legacy = app(ModelStore::class)->current('kraken', 'BTC/USD', '1m');
+    unset($legacy['validation_version']);
+    app(ModelStore::class)->save($legacy);
+
+    $signal = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+
+    expect($signal['reason'])->toBe('model_version_mismatch');
+    expect($signal['regime'])->toBe('neutral');
+});
+
+it('describes supported direction and stronger evidence as Bull Bear or Super states', function (float $body, string $regime) {
+    $this->travelTo('2024-01-01 04:05:00 UTC');
+    config(['intelligence.knn.min_effective_neighbors' => 6.0]);
+    $manifest = IntelligenceFixtures::snapshot();
+    app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+    IntelligenceFixtures::feature(243, $body);
+    IntelligenceFixtures::feature(244, $body);
+
+    $signal = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+
+    expect($signal['reason'])->toBe('supported');
+    expect($signal['regime'])->toBe($regime);
+})->with([[0.0, 'super_bull'], [1.0, 'super_bear'], [0.21, 'bull'], [0.79, 'bear']]);

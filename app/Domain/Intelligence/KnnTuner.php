@@ -28,7 +28,7 @@ final class KnnTuner
                 }
                 $row = $rows[$index];
                 $cases[] = ['row' => $row, 'fold' => $fold['fold'],
-                    'neighbors' => $this->knn->neighbors($training, $row['vector'], $maximum, $row['decision_at_ms'])];
+                    'neighbors' => $this->knn->neighbors($training, $row['vector'], $maximum, $row['decision_at_ms'], $row['feature_weights'] ?? [])];
             }
         }
         $reports = [];
@@ -54,7 +54,7 @@ final class KnnTuner
                 throw new RuntimeException('KNN evaluation time budget exceeded.');
             }
             $cases[] = ['row' => $row, 'fold' => 1,
-                'neighbors' => $this->knn->neighbors($training, $row['vector'], $k, $row['decision_at_ms'])];
+                'neighbors' => $this->knn->neighbors($training, $row['vector'], $k, $row['decision_at_ms'], $row['feature_weights'] ?? [])];
         }
 
         return $this->score($cases, $k, $settings);

@@ -31,5 +31,8 @@ class Exchange extends Model
         'name',
         'class',
         'config',
+        'timezone',
+        'timezone_source',
+        'region_prior',
     ];
 }

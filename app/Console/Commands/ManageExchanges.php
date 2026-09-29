@@ -2,11 +2,12 @@
 
 namespace App\Console\Commands;
 
+use App\Domain\Intelligence\ExchangeTimezone;
 use App\Models\Exchange as ExchangeModel;
 use App\Models\Market;
-use Illuminate\Support\Facades\DB;
 use ccxt\Exchange as CcxtExchange;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use JsonException;
 
 class ManageExchanges extends Command
@@ -17,6 +18,7 @@ class ManageExchanges extends Command
         {--name= : Exchange display name for add or edit}
         {--config= : CCXT settings as a JSON object}
         {--config-file= : Path to a file containing a CCXT JSON object}
+        {--timezone= : Explicit IANA timezone for intelligence session context}
         {--search= : Filter the list by CCXT ID or name}
         {--force : Skip the deletion confirmation}';
 
@@ -25,6 +27,12 @@ class ManageExchanges extends Command
     public function handle(): int
     {
         $action = (string) $this->argument('action');
+        if ($this->option('timezone') !== null && (! in_array($action, ['add', 'edit'], true)
+            || ! ExchangeTimezone::valid((string) $this->option('timezone')))) {
+            $this->error('Use a valid IANA --timezone with add or edit.');
+
+            return self::FAILURE;
+        }
 
         if ($action === 'list') {
             return $this->listExchanges();
@@ -79,6 +87,7 @@ class ManageExchanges extends Command
         }
 
         $created = ExchangeModel::query()->create(['class' => $class, 'name' => $name, 'config' => $config]);
+        $this->setTimezone($created);
         $this->info("Added {$created->class} ({$created->exchange_id}).");
 
         return self::SUCCESS;
@@ -92,8 +101,8 @@ class ManageExchanges extends Command
             return self::FAILURE;
         }
 
-        if ($this->option('name') === null && $this->option('config') === null && $this->option('config-file') === null) {
-            $this->error('Provide --name, --config, or --config-file to edit an exchange.');
+        if ($this->option('name') === null && $this->option('config') === null && $this->option('config-file') === null && $this->option('timezone') === null) {
+            $this->error('Provide --name, --config, --config-file, or --timezone to edit an exchange.');
 
             return self::FAILURE;
         }
@@ -110,6 +119,7 @@ class ManageExchanges extends Command
         if ($config !== null) {
             $exchange->config = $config;
         }
+        $this->setTimezone($exchange);
         $exchange->save();
         $this->info("Updated {$exchange->class} ({$exchange->exchange_id}).");
 
@@ -165,12 +175,19 @@ class ManageExchanges extends Command
             });
         }
 
-        $rows = $query->orderBy('class')->get(['class', 'name', 'exchange_id']);
-        $this->table(['CCXT ID', 'Name', 'UUID'], $rows->map(fn (ExchangeModel $exchange): array => [
-            $exchange->class, $exchange->name, $exchange->exchange_id,
+        $rows = $query->orderBy('class')->get(['class', 'name', 'exchange_id', 'timezone', 'timezone_source']);
+        $this->table(['CCXT ID', 'Name', 'UUID', 'Timezone', 'Source'], $rows->map(fn (ExchangeModel $exchange): array => [
+            $exchange->class, $exchange->name, $exchange->exchange_id, $exchange->timezone, $exchange->timezone_source,
         ])->all());
 
         return self::SUCCESS;
+    }
+
+    private function setTimezone(ExchangeModel $exchange): void
+    {
+        if ($this->option('timezone') !== null) {
+            $exchange->forceFill(['timezone' => $this->option('timezone'), 'timezone_source' => 'operator'])->save();
+        }
     }
 
     private function nameOption(): string|false|null

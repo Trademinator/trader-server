@@ -6,6 +6,7 @@
     "exchanges": {
         "aftermath": {
             "name": "AftermathFinance",
+            "countries": [],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -44,6 +45,9 @@
         },
         "alpaca": {
             "name": "Alpaca",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -83,6 +87,7 @@
         },
         "apex": {
             "name": "Apex",
+            "countries": [],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -120,6 +125,9 @@
         },
         "arkham": {
             "name": "ARKHAM",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -151,6 +159,9 @@
         },
         "ascendex": {
             "name": "AscendEX",
+            "countries": [
+                "SG"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -187,6 +198,9 @@
         },
         "aster": {
             "name": "Aster",
+            "countries": [
+                "US"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -225,6 +239,9 @@
         },
         "backpack": {
             "name": "Backpack",
+            "countries": [
+                "JP"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -264,6 +281,9 @@
         },
         "bequant": {
             "name": "Bequant",
+            "countries": [
+                "MT"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -300,6 +320,9 @@
         },
         "bigone": {
             "name": "BigONE",
+            "countries": [
+                "CN"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -336,6 +359,7 @@
         },
         "binance": {
             "name": "Binance",
+            "countries": [],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -376,6 +400,7 @@
         },
         "binancecoinm": {
             "name": "Binance COIN-M",
+            "countries": [],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -418,6 +443,9 @@
         },
         "binanceus": {
             "name": "Binance US",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -460,6 +488,7 @@
         },
         "binanceusdm": {
             "name": "Binance USD\u24c8-M",
+            "countries": [],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -502,6 +531,9 @@
         },
         "bingx": {
             "name": "BingX",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -540,6 +572,9 @@
         },
         "bit2c": {
             "name": "Bit2C",
+            "countries": [
+                "IL"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -563,6 +598,9 @@
         },
         "bitbank": {
             "name": "bitbank",
+            "countries": [
+                "JP"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -597,6 +635,9 @@
         },
         "bitbns": {
             "name": "Bitbns",
+            "countries": [
+                "IN"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -620,6 +661,9 @@
         },
         "bitfinex": {
             "name": "Bitfinex",
+            "countries": [
+                "VG"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -657,6 +701,9 @@
         },
         "bitflyer": {
             "name": "bitFlyer",
+            "countries": [
+                "JP"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -680,6 +727,9 @@
         },
         "bitget": {
             "name": "Bitget",
+            "countries": [
+                "SG"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -719,6 +769,9 @@
         },
         "bithumb": {
             "name": "Bithumb",
+            "countries": [
+                "KR"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -752,6 +805,12 @@
         },
         "bitmart": {
             "name": "BitMart",
+            "countries": [
+                "US",
+                "CN",
+                "HK",
+                "KR"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -790,6 +849,9 @@
         },
         "bitmex": {
             "name": "BitMEX",
+            "countries": [
+                "SC"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -818,6 +880,9 @@
         },
         "bitopro": {
             "name": "BitoPro",
+            "countries": [
+                "TW"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -853,6 +918,9 @@
         },
         "bitrue": {
             "name": "Bitrue",
+            "countries": [
+                "SG"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -886,6 +954,9 @@
         },
         "bitso": {
             "name": "Bitso",
+            "countries": [
+                "MX"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -919,6 +990,9 @@
         },
         "bitstamp": {
             "name": "Bitstamp",
+            "countries": [
+                "GB"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -955,6 +1029,9 @@
         },
         "bitteam": {
             "name": "BIT.TEAM",
+            "countries": [
+                "UK"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -984,6 +1061,9 @@
         },
         "bittrade": {
             "name": "BitTrade",
+            "countries": [
+                "JP"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1018,6 +1098,9 @@
         },
         "bitvavo": {
             "name": "Bitvavo",
+            "countries": [
+                "NL"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1053,6 +1136,9 @@
         },
         "blockchaincom": {
             "name": "Blockchain.com",
+            "countries": [
+                "LX"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -1075,6 +1161,9 @@
         },
         "blofin": {
             "name": "BloFin",
+            "countries": [
+                "US"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1115,6 +1204,9 @@
         },
         "btcbox": {
             "name": "BtcBox",
+            "countries": [
+                "JP"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -1138,6 +1230,9 @@
         },
         "btcmarkets": {
             "name": "BTC Markets",
+            "countries": [
+                "AU"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1165,6 +1260,9 @@
         },
         "btcturk": {
             "name": "BTCTurk",
+            "countries": [
+                "TR"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1197,6 +1295,9 @@
         },
         "bullish": {
             "name": "Bullish",
+            "countries": [
+                "DE"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1228,6 +1329,9 @@
         },
         "bybit": {
             "name": "Bybit",
+            "countries": [
+                "VG"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1265,6 +1369,9 @@
         },
         "bybiteu": {
             "name": "Bybit EU",
+            "countries": [
+                "EU"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1304,6 +1411,9 @@
         },
         "bydfi": {
             "name": "BYDFi",
+            "countries": [
+                "SG"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1339,6 +1449,12 @@
         },
         "cex": {
             "name": "CEX.IO",
+            "countries": [
+                "GB",
+                "EU",
+                "CY",
+                "RU"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1371,6 +1487,9 @@
         },
         "coinbase": {
             "name": "Coinbase Advanced",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1403,6 +1522,9 @@
         },
         "coinbaseadvanced": {
             "name": "Coinbase Advanced",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1437,6 +1559,9 @@
         },
         "coinbaseexchange": {
             "name": "Coinbase Exchange",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1468,6 +1593,9 @@
         },
         "coinbaseinternational": {
             "name": "Coinbase International",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1501,6 +1629,10 @@
         },
         "coincheck": {
             "name": "coincheck",
+            "countries": [
+                "JP",
+                "ID"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -1524,6 +1656,9 @@
         },
         "coinex": {
             "name": "CoinEx",
+            "countries": [
+                "CN"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1561,6 +1696,11 @@
         },
         "coinmate": {
             "name": "CoinMate",
+            "countries": [
+                "GB",
+                "CZ",
+                "EU"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -1585,6 +1725,9 @@
         },
         "coinmetro": {
             "name": "Coinmetro",
+            "countries": [
+                "EE"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1614,6 +1757,9 @@
         },
         "coinone": {
             "name": "CoinOne",
+            "countries": [
+                "KR"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -1637,6 +1783,9 @@
         },
         "coinsph": {
             "name": "Coins.ph",
+            "countries": [
+                "PH"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1676,6 +1825,9 @@
         },
         "coinspot": {
             "name": "CoinSpot",
+            "countries": [
+                "AU"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -1699,6 +1851,9 @@
         },
         "cryptocom": {
             "name": "Crypto.com",
+            "countries": [
+                "MT"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1735,6 +1890,9 @@
         },
         "cryptomus": {
             "name": "Cryptomus",
+            "countries": [
+                "CA"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -1758,6 +1916,9 @@
         },
         "deepcoin": {
             "name": "DeepCoin",
+            "countries": [
+                "SG"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1794,6 +1955,9 @@
         },
         "delta": {
             "name": "Delta Exchange",
+            "countries": [
+                "VC"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1832,6 +1996,9 @@
         },
         "deribit": {
             "name": "Deribit",
+            "countries": [
+                "NL"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1868,6 +2035,7 @@
         },
         "derive": {
             "name": "derive",
+            "countries": [],
             "spot": false,
             "fetchOHLCV": false,
             "timeframes": [
@@ -1906,6 +2074,9 @@
         },
         "digifinex": {
             "name": "DigiFinex",
+            "countries": [
+                "SG"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1939,6 +2110,9 @@
         },
         "dydx": {
             "name": "dYdX",
+            "countries": [
+                "US"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -1967,6 +2141,9 @@
         },
         "exmo": {
             "name": "EXMO",
+            "countries": [
+                "LT"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2003,6 +2180,9 @@
         },
         "extended": {
             "name": "Extended",
+            "countries": [
+                "SG"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2039,6 +2219,9 @@
         },
         "fmfwio": {
             "name": "FMFW.io",
+            "countries": [
+                "KN"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2075,6 +2258,9 @@
         },
         "foxbit": {
             "name": "Foxbit",
+            "countries": [
+                "pt-BR"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2112,6 +2298,9 @@
         },
         "gate": {
             "name": "Gate",
+            "countries": [
+                "KR"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2148,6 +2337,9 @@
         },
         "gemini": {
             "name": "Gemini",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2179,6 +2371,9 @@
         },
         "grvt": {
             "name": "GRVT",
+            "countries": [
+                "SG"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2220,6 +2415,9 @@
         },
         "hashkey": {
             "name": "HashKey Global",
+            "countries": [
+                "BM"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2258,6 +2456,9 @@
         },
         "hibachi": {
             "name": "Hibachi",
+            "countries": [
+                "US"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2290,6 +2491,9 @@
         },
         "hitbtc": {
             "name": "HitBTC",
+            "countries": [
+                "HK"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2324,6 +2528,9 @@
         },
         "hollaex": {
             "name": "HollaEx",
+            "countries": [
+                "KR"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2355,6 +2562,9 @@
         },
         "htx": {
             "name": "HTX",
+            "countries": [
+                "CN"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2389,6 +2599,9 @@
         },
         "huobi": {
             "name": "HTX",
+            "countries": [
+                "CN"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2425,6 +2638,7 @@
         },
         "hyperliquid": {
             "name": "Hyperliquid",
+            "countries": [],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2463,6 +2677,10 @@
         },
         "independentreserve": {
             "name": "Independent Reserve",
+            "countries": [
+                "AU",
+                "NZ"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -2486,6 +2704,9 @@
         },
         "indodax": {
             "name": "INDODAX",
+            "countries": [
+                "ID"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [
@@ -2518,6 +2739,9 @@
         },
         "kraken": {
             "name": "Kraken",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2551,6 +2775,9 @@
         },
         "krakenfutures": {
             "name": "Kraken Futures",
+            "countries": [
+                "US"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2584,6 +2811,9 @@
         },
         "kucoin": {
             "name": "KuCoin",
+            "countries": [
+                "SC"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2623,6 +2853,9 @@
         },
         "kucoinfutures": {
             "name": "KuCoin Futures",
+            "countries": [
+                "SC"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2664,6 +2897,9 @@
         },
         "latoken": {
             "name": "Latoken",
+            "countries": [
+                "KY"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -2687,6 +2923,9 @@
         },
         "lbank": {
             "name": "LBank",
+            "countries": [
+                "CN"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2723,6 +2962,7 @@
         },
         "lighter": {
             "name": "Lighter",
+            "countries": [],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2755,6 +2995,11 @@
         },
         "luno": {
             "name": "luno",
+            "countries": [
+                "GB",
+                "SG",
+                "ZA"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2789,6 +3034,9 @@
         },
         "mercado": {
             "name": "Mercado Bitcoin",
+            "countries": [
+                "BR"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2819,6 +3067,9 @@
         },
         "mexc": {
             "name": "MEXC Global",
+            "countries": [
+                "SC"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2853,6 +3104,9 @@
         },
         "modetrade": {
             "name": "Mode Trade",
+            "countries": [
+                "KY"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2889,6 +3143,10 @@
         },
         "myokx": {
             "name": "MyOKX (EEA)",
+            "countries": [
+                "CN",
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2930,6 +3188,9 @@
         },
         "ndax": {
             "name": "NDAX",
+            "countries": [
+                "CA"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -2970,6 +3231,9 @@
         },
         "novadax": {
             "name": "NovaDAX",
+            "countries": [
+                "BR"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3002,6 +3266,10 @@
         },
         "okx": {
             "name": "OKX",
+            "countries": [
+                "CN",
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3041,6 +3309,10 @@
         },
         "okxus": {
             "name": "OKX (US)",
+            "countries": [
+                "CN",
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3082,6 +3354,9 @@
         },
         "onetrading": {
             "name": "One Trading",
+            "countries": [
+                "AT"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3114,6 +3389,9 @@
         },
         "p2b": {
             "name": "p2b",
+            "countries": [
+                "LT"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3141,6 +3419,7 @@
         },
         "pacifica": {
             "name": "Pacifica",
+            "countries": [],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3175,6 +3454,7 @@
         },
         "paradex": {
             "name": "Paradex",
+            "countries": [],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3205,6 +3485,10 @@
         },
         "paymium": {
             "name": "Paymium",
+            "countries": [
+                "FR",
+                "EU"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -3228,6 +3512,9 @@
         },
         "phemex": {
             "name": "Phemex",
+            "countries": [
+                "CN"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3268,6 +3555,9 @@
         },
         "poloniex": {
             "name": "Poloniex",
+            "countries": [
+                "US"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3306,6 +3596,9 @@
         },
         "tokocrypto": {
             "name": "Tokocrypto",
+            "countries": [
+                "ID"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3345,6 +3638,9 @@
         },
         "toobit": {
             "name": "Toobit",
+            "countries": [
+                "KY"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3383,6 +3679,12 @@
         },
         "upbit": {
             "name": "Upbit",
+            "countries": [
+                "KR",
+                "ID",
+                "SG",
+                "TH"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3420,6 +3722,9 @@
         },
         "wavesexchange": {
             "name": "Waves.Exchange",
+            "countries": [
+                "CH"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3457,6 +3762,9 @@
         },
         "weex": {
             "name": "Weex",
+            "countries": [
+                "SG"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3495,6 +3803,9 @@
         },
         "whitebit": {
             "name": "WhiteBit",
+            "countries": [
+                "EE"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3534,6 +3845,9 @@
         },
         "woo": {
             "name": "WOO X",
+            "countries": [
+                "KY"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3569,6 +3883,9 @@
         },
         "woofipro": {
             "name": "WOOFI PRO",
+            "countries": [
+                "KY"
+            ],
             "spot": false,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3605,6 +3922,9 @@
         },
         "xt": {
             "name": "XT",
+            "countries": [
+                "SC"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [
@@ -3642,6 +3962,9 @@
         },
         "yobit": {
             "name": "YoBit",
+            "countries": [
+                "RU"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -3665,6 +3988,9 @@
         },
         "zaif": {
             "name": "Zaif",
+            "countries": [
+                "JP"
+            ],
             "spot": true,
             "fetchOHLCV": false,
             "timeframes": [],
@@ -3688,6 +4014,9 @@
         },
         "zebpay": {
             "name": "Zebpay",
+            "countries": [
+                "IN"
+            ],
             "spot": true,
             "fetchOHLCV": true,
             "timeframes": [

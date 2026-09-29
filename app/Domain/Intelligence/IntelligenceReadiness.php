@@ -91,8 +91,8 @@ final class IntelligenceReadiness
         $remaining = max(0, $minimum - $history['potential']);
         if ($data['issues'] !== [] || $history['closed'] < 2 || $history['complete'] === 0) {
             $data['eta_note'] = 'ETA unavailable while collection, feature completeness or configuration needs attention.';
-        } elseif (($report['pattern_keys'] ?? []) !== []) {
-            $data['eta_note'] = 'ETA unavailable: retraining the pattern models changes how much earlier history must be excluded from KNN training.';
+        } elseif (($report['pattern_keys'] ?? []) !== [] || ($report['lead_lag_keys'] ?? []) !== []) {
+            $data['eta_note'] = 'ETA unavailable: retraining the pattern or lead/lag models changes how much earlier history must be excluded from KNN training.';
         } elseif ($remaining === 0) {
             $data['eta_note'] = 'Enough potential history is present to attempt training now. Source checks, pattern exclusions and validation still have to pass.';
         } else {

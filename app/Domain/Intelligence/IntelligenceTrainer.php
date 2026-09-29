@@ -11,10 +11,13 @@ use RuntimeException;
 
 final class IntelligenceTrainer
 {
+    public const VERSION = 'm4.1-chronological-v2';
+
     public function __construct(
         private DatasetStore $datasets,
         private ModelStore $models,
         private PatternTrainer $patterns,
+        private LeadLagIntelligence $leadLag,
     ) {}
 
     public function train(string $dataset, ?float $deadline = null, ?string $generation = null): array
@@ -62,6 +65,9 @@ final class IntelligenceTrainer
                 $patternRows = array_slice($rows, 0, (int) floor(count($rows) * 0.4));
                 $patternBundle = $this->patterns->train($patternRows, $patternSettings, $deadline);
             }
+            $leadLag = $this->leadLag->prepare($manifest, $rows, $deadline);
+            $leadLagBundle = $leadLag['bundle'];
+            $leadLagExcluded = 0;
             $patternKeys = $patternSettings['as_knn_features'] ? $this->patterns->featureKeys($patternBundle) : [];
             if ($patternKeys !== []) {
                 $knownAt = max(array_column($patternBundle['models'], 'available_at_ms'));
@@ -69,6 +75,17 @@ final class IntelligenceTrainer
                 foreach ($rows as &$row) {
                     $predictions = $this->patterns->predict($patternBundle, $row['vector'], $row['patterns'], $row['decision_at_ms']);
                     $row['vector'] = [...$row['vector'], ...$this->patterns->features($patternBundle, $predictions)];
+                }
+                unset($row);
+            }
+            if ($leadLagBundle['keys'] !== []) {
+                $before = count($rows);
+                $rows = array_values(array_filter($rows, fn (array $row): bool => $row['decision_at_ms'] > $leadLagBundle['available_at_ms']));
+                $leadLagExcluded = $before - count($rows);
+                foreach ($rows as &$row) {
+                    $evidence = $this->leadLag->features($leadLagBundle, $leadLag['series'], $row['decision_at_ms']);
+                    $row['feature_weights'] = [...array_fill(0, count($row['vector']), 1.0), ...$evidence['weights']];
+                    $row['vector'] = [...$row['vector'], ...$evidence['vector']];
                 }
                 unset($row);
             }
@@ -86,12 +103,15 @@ final class IntelligenceTrainer
             $availableAt = max(array_column($rows, 'label_available_at_ms') ?: [0]);
             $knowledge = array_map(fn (array $row): array => [
                 'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
-                'vector' => $row['vector'], 'label' => $row['label'],
+                'vector' => $row['vector'], 'label' => $row['label'], 'feature_weights' => $row['feature_weights'] ?? [],
             ], array_slice($rows, -$settings['train_size']));
             $artifact = [
+                'validation_version' => self::VERSION,
                 'generation_key' => $generation, 'dataset_id' => $dataset, 'exchange' => $manifest['exchange'], 'symbol' => $manifest['symbol'],
                 'period' => $manifest['period'], 'feature_version' => FeatureEngine::VERSION,
                 'normalization' => NormalizedVector::VERSION, 'keys' => $manifest['keys'],
+                'lead_lag' => $leadLagBundle, 'lead_lag_keys' => $leadLagBundle['keys'],
+                'regime_settings' => ['super_confidence' => 0.8, 'super_effective_neighbors' => 6.0],
                 'pattern_keys' => $patternKeys, 'label_definition' => $manifest['label_definition'],
                 'trained_as_of_ms' => $manifest['as_of_ms'], 'available_at_ms' => $availableAt,
                 'source_rows_sha256' => $manifest['rows_sha256'],
@@ -101,7 +121,8 @@ final class IntelligenceTrainer
                 'pattern_settings' => $patternSettings,
                 'training_data' => [
                     'schema' => $manifest['schema'], 'source_rows' => $sourceRows,
-                    'usable_rows' => count($rows), 'pattern_excluded_rows' => $sourceRows - count($rows),
+                    'usable_rows' => count($rows), 'pattern_excluded_rows' => $sourceRows - count($rows) - $leadLagExcluded,
+                    'lead_lag_excluded_rows' => $leadLagExcluded,
                     'skipped' => $manifest['skipped'] ?? [],
                     'tuning_rows' => count($training), 'holdout_rows' => count($test),
                 ],

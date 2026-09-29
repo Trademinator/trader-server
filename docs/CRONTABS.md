@@ -28,6 +28,7 @@ Those two entries cover collection and M2 features. M4 training also requires th
 | `trademinator:dispatch-market-features` | Every five minutes | Queue M2 feature builds for subscribed markets with selected candle periods. |
 | `trademinator:collect-market-context` | Hourly | Resolve pending subscription-driven CoinGecko mappings and collect timestamped market context. |
 | `trademinator:dispatch-market-intelligence` | Monday at 04:00, application timezone | Queue one KNN/pattern training job per subscribed market and selected period. |
+| `trademinator:dispatch-lead-lag` | Daily at 03:45, application timezone | Reevaluate lead/lag and downstream KNN/pattern intelligence for overlapping shared markets. |
 | `trademinator:refresh-exchanges` | Daily at 03:20, application timezone | Inspect installed CCXT source, refresh access classifications and add missing exchange rows while preserving existing data. |
 
 The schedule source of truth is `routes/console.php`; this document must be updated in the same change whenever that schedule changes.
@@ -121,3 +122,10 @@ Expected request failures and pauses are recorded in `--status` and application 
 Successful backfill windows also queue **M2 feature rebuild → fresh KNN/pattern build** on `INTELLIGENCE_QUEUE`. Keep the existing M4 intelligence cron running; no extra training cron is necessary and there is no wait until Monday. Both stages run on the intelligence worker, each with a 600-second timeout. Preserve that worker's 512 MiB memory setting, shared private research/model storage and `retry_after >= 720`. The weekly schedule remains available alongside these history-triggered builds.
 
 Rebuilds combine pending imports per market, retain imports that arrive during training for a follow-up build, and retry after errors without deleting candles. The history worker shares M2's feature lock while inserting older rows so feature replay and dataset snapshots cannot observe history changing under an offset-based scan. `trademinator:backfill-ohlcv --status` reports both collection progress and `build_stage`, pending/trained history revisions, the most recent model ID and any `build_error`. `INTELLIGENCE_ENABLED=false` pauses these automatic rebuilds as well as weekly dispatch; pending history revisions remain available when re-enabled.
+
+
+## M4.1 daily cross-exchange reevaluation
+
+Keep the existing scheduler and `intelligence` worker above. No extra system cron entry or permanent daemon is required. At 03:45 daily, `trademinator:dispatch-lead-lag` queues integrated model rebuilds for active feeds with the same spot symbol and selected period on at least two exchanges. Each job relearns empirical timing and rebuilds the downstream KNN/pattern model under the existing 480-second training budget, 600-second timeout, 512 MiB worker memory and retry_after >= 720. Per-day/version generations are idempotent; failed work uses the existing retries and `queue:failed`. This adds CPU/storage work proportional to the number of eligible shared feeds, not the number of users.
+
+Migrate before running the updated scheduler, refresh exchange metadata to seed unambiguous timezone priors, and set explicit IANA overrides where needed. `LEAD_LAG_ENABLED` and `LEAD_LAG_DAILY_REFRESH` default true; the second controls only this extra dispatcher. Both also respect `INTELLIGENCE_ENABLED`. Weekly Monday training and successful-backfill rebuilds continue and include lead/lag when enabled. Existing M4 models need one rebuild because the pattern validation protocol changed; versioned generation keys allow upgrade redispatch even within the same week. See [M4.1 upgrade and evidence contract](CLI.md#m41-cross-exchange-leadlag-and-m4-completion).

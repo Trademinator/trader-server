@@ -23,6 +23,7 @@ final class MarketIntelligence
         private ModelStore $models,
         private PatternCatalog $catalog,
         private PatternTrainer $patterns,
+        private LeadLagIntelligence $leadLag,
     ) {}
 
     public function build(string $exchange, string $symbol, string $period, ?string $dataset = null,
@@ -73,11 +74,12 @@ final class MarketIntelligence
         $asOfMs = min($asOfMs ?? now()->getTimestampMs(), now()->getTimestampMs());
         $model = $this->models->current($exchange, $symbol, $period);
         $context = ['exchange' => $exchange, 'symbol' => $symbol, 'period' => $period,
-            'model_id' => $model['model_id'] ?? null, 'patterns' => [], 'patterns_evaluated' => false];
+            'model_id' => $model['model_id'] ?? null, 'regime' => 'neutral', 'lead_lag' => [], 'patterns' => [], 'patterns_evaluated' => false];
         if ($model === null) {
             return [...WeightedKnn::abstain('no_model'), ...$context];
         }
-        if ($model['feature_version'] !== FeatureEngine::VERSION || $model['normalization'] !== NormalizedVector::VERSION
+        if (($model['validation_version'] ?? null) !== IntelligenceTrainer::VERSION
+            || $model['feature_version'] !== FeatureEngine::VERSION || $model['normalization'] !== NormalizedVector::VERSION
             || $model['patterns']['version'] !== PatternCatalog::VERSION) {
             return [...WeightedKnn::abstain('model_version_mismatch'), ...$context];
         }
@@ -134,9 +136,26 @@ final class MarketIntelligence
         if ($model['pattern_keys'] !== []) {
             $vector = [...$vector, ...$this->patterns->features($model['patterns'], $context['patterns'])];
         }
+        $weights = [];
+        if (($model['lead_lag_keys'] ?? []) !== []) {
+            if (($model['lead_lag']['version'] ?? null) !== LeadLagTrainer::VERSION) {
+                return [...WeightedKnn::abstain('model_version_mismatch'), ...$context];
+            }
+            $leadLag = $this->leadLag->current($model['lead_lag'], $current->available_at_ms);
+            $weights = [...array_fill(0, count($vector), 1.0), ...$leadLag['weights']];
+            $vector = [...$vector, ...$leadLag['vector']];
+            $context['lead_lag'] = $leadLag['signals'];
+        }
         $settings = $model['settings'];
         $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
-        $result = $knn->predict($model['knowledge'], $vector, $model['k'], $current->available_at_ms);
+        $result = $knn->predict($model['knowledge'], $vector, $model['k'], $current->available_at_ms, $weights);
+
+        if ($result['reason'] === 'supported' && $result['action'] !== 'hodl') {
+            $thresholds = $model['regime_settings'] ?? ['super_confidence' => 0.8, 'super_effective_neighbors' => 6.0];
+            $super = $result['confidence'] >= $thresholds['super_confidence']
+                && $thresholds['super_effective_neighbors'] <= $result['effective_neighbors'] + 1e-9;
+            $context['regime'] = ($super ? 'super_' : '').($result['action'] === 'buy' ? 'bull' : 'bear');
+        }
 
         return [...$result, ...$context, 'k' => $model['k']];
     }

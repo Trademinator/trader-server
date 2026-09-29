@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Domain\Intelligence\ExchangeTimezone;
 use App\Domain\MarketData\ExchangeMetadata;
 use App\Domain\MarketData\ExchangeMetadataBuilder;
 use App\Domain\MarketData\MarketCatalog;
@@ -16,7 +17,7 @@ final class RefreshExchanges extends Command
 
     protected $description = 'Refresh CCXT access classifications and add missing exchange entries without deleting data';
 
-    public function handle(ExchangeMetadataBuilder $builder, ExchangeMetadata $registry): int
+    public function handle(ExchangeMetadataBuilder $builder, ExchangeMetadata $registry, ExchangeTimezone $timezones): int
     {
         $lock = fopen(storage_path('framework/ccxt-metadata.lock'), 'c');
         if ($lock === false || ! flock($lock, LOCK_EX | LOCK_NB)) {
@@ -33,12 +34,13 @@ final class RefreshExchanges extends Command
             if (! $this->option('check')) {
                 // Coordinate database inserts between nodes; each node publishes
                 // its own metadata file under the separate local file lock.
-                $report['rows_added'] = Cache::lock('trademinator:exchange-registry-sync', 120)->block(10, function () use ($metadata): int {
-                    return DB::transaction(function () use ($metadata): int {
+                $report['rows_added'] = Cache::lock('trademinator:exchange-registry-sync', 120)->block(10, function () use ($metadata, $timezones): int {
+                    return DB::transaction(function () use ($metadata, $timezones): int {
                         $added = 0;
                         foreach ($metadata['exchanges'] as $id => $entry) {
                             $exchange = Exchange::query()->firstOrCreate(['class' => $id], ['name' => $entry['name'], 'config' => '{}']);
                             $added += (int) $exchange->wasRecentlyCreated;
+                            $timezones->seed($exchange, $entry);
                         }
 
                         return $added;

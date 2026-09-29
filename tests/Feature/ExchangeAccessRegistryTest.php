@@ -112,10 +112,13 @@ it('refreshes twice without replacing settings users or removed exchange history
     try {
         $this->artisan('trademinator:refresh-exchanges', ['--check' => true, '--json' => true])->assertSuccessful();
         expect(is_file($path))->toBeFalse()->and(Exchange::query()->count())->toBe(2);
+        expect($exchange->fresh()->getAttributes())->toBe($before);
+        $before['region_prior'] = 'US';
+        unset($before['updated_at']);
         foreach ([1, 2] as $iteration) {
             $this->artisan('trademinator:refresh-exchanges')->assertSuccessful();
             expect(Exchange::query()->count())->toBe(111)
-                ->and($exchange->fresh()->getAttributes())->toBe($before)
+                ->and(array_diff_key($exchange->fresh()->getAttributes(), ['updated_at' => true]))->toBe($before)
                 ->and($user->fresh()->getAttributes())->toBe($userBefore)
                 ->and($removed->fresh())->not->toBeNull()
                 ->and($registry->all()['kraken']['access']['state'])->toBe('public');

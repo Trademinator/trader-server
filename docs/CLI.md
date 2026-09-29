@@ -37,6 +37,7 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 
 - [`trademinator:backfill-ohlcv`](#trademinatorbackfill-ohlcv) — Progressively collect older candles for shared subscribed markets
 
+- [`trademinator:dispatch-lead-lag`](#trademinatordispatch-lead-lag) — Queue daily cross-exchange evidence and downstream model reevaluation
 - [`trademinator:knn-build`](#trademinatorknn-build) — Build and validate M4 intelligence
 - [`trademinator:signal`](#trademinatorsignal) — Explain the latest closed-candle signal
 - [`trademinator:model-info`](#trademinatormodel-info) — Verify and inspect a model
@@ -205,7 +206,7 @@ php artisan trademinator:dispatch-market-feeds --limit=100
 
 Description: Add, edit, list, or delete configured CCXT exchanges
 
-Signature: `trademinator:exchange {action : add, edit, delete, or list} {class? : The CCXT exchange ID, such as kraken} {--name= : Exchange display name for add or edit} {--config= : CCXT settings as a JSON object} {--config-file= : Path to a file containing a CCXT JSON object} {--search= : Filter the list by CCXT ID or name} {--force : Skip the deletion confirmation}`
+Signature: `trademinator:exchange {action : add, edit, delete, or list} {class? : The CCXT exchange ID, such as kraken} {--name= : Exchange display name for add or edit} {--config= : CCXT settings as a JSON object} {--config-file= : Path to a file containing a CCXT JSON object} {--timezone= : Explicit IANA timezone for intelligence session context} {--search= : Filter the list by CCXT ID or name} {--force : Skip the deletion confirmation}`
 
 Manage stored CCXT exchange configurations. `action` is required: `add`, `edit`, `delete`, or `list`. The positional `class` is the CCXT exchange ID; required for mutations, omitted for `list`.
 
@@ -214,6 +215,7 @@ Manage stored CCXT exchange configurations. `action` is required: `add`, `edit`,
 | `--name` | CCXT ID when adding | Display name; 1–64 characters. |
 | `--config` | `{}` when adding | CCXT settings as a JSON object. |
 | `--config-file` | None | Read a JSON object from a readable file up to 64 KiB; mutually exclusive with `--config`. |
+| `--timezone` | UTC / unknown for new exchanges | Operator-selected IANA timezone (for example `America/Mexico_City`); add/edit only. Stored separately from CCXT credentials. |
 | `--search` | None | Filter the list by CCXT ID or display name. |
 | `--force` | Off | Skip deletion confirmation. |
 
@@ -224,7 +226,7 @@ php artisan trademinator:exchange edit kraken --config-file=/secure/kraken.json
 php artisan trademinator:exchange delete kraken
 ```
 
-Edits require at least one of name/config/config-file. Active subscriptions block deletion. Deletion removes exchange configuration, markets, inactive subscriptions, and feed records; historical candles remain. Prefer a protected config file for API secrets rather than putting them in shell history. See [exchange details](EXCHANGES-CLI.md).
+Edits require at least one of name/config/config-file/timezone. The list includes timezone and source. An explicit timezone is retained across automatic refreshes. Active subscriptions block deletion. Deletion removes exchange configuration, markets, inactive subscriptions, and feed records; historical candles remain. Prefer a protected config file for API secrets rather than putting them in shell history. See [exchange details](EXCHANGES-CLI.md).
 
 ## trademinator:fetch-ohlcv
 
@@ -473,7 +475,7 @@ The first catalogue contains bullish/bearish engulfing and gap-free morning/even
 
 Candidates contain type, total length, current stage, progress and similarity. Pattern vectors reuse the selected normalized M2 vector plus length/stage/progress/similarity. Only the target test examines future candle geometry; no second technical-indicator implementation is introduced. Both completions and failures are sampled, and a candidate's label becomes available only after its remaining candles close.
 
-The first 40% of a knowledge snapshot supplies pattern samples. For each type, earlier 60% trains Rubix ML Random Forest and weighted KNN; the next 20% fits isotonic probability calibration; the last 20% compares Brier score, log loss and calibration error, with reliability bins. Splits purge outcomes extending into the next block. At least 100 samples, 15 rows per block, and both classes in training/calibration are required by default. A selected model must improve Brier score over the prior completion-rate baseline. Reported comparison metrics describe this historical selection block, not guaranteed future performance. Random Forest is stochastic; persisted artifacts preserve the exact fitted model, but rebuilds can differ.
+The first 40% of a knowledge snapshot supplies pattern samples. For each type, the earlier 60% trains Rubix ML Random Forest and weighted KNN. The next 20% is divided chronologically into calibration fitting and algorithm selection; boundaries purge outcomes reaching the next block. Brier score, log loss and calibration error on the selection block choose the algorithm. The final 20% evaluates that fixed choice, which must beat the prior completion-rate baseline. A failed final check does not switch to the other algorithm. Candidate final metrics remain visible for comparison but do not select the winner. At least 100 samples, 15 rows in each of the four blocks after purging, and both classes in training/calibration are required by default; the 100-sample count alone is therefore not sufficient. Random Forest is stochastic; persisted artifacts preserve the exact fitted model, but rebuilds can differ.
 
 By default, validated completion probabilities can feed the final KNN alongside a presence flag. Only KNN rows strictly after the pattern model's **entire** evaluation horizon are eligible. This sacrifices history to prevent stacking leakage. No future outcome is fed back as a historical probability. An absent pattern uses probability 0.5 with presence 0; a pattern without a validated model has no probability. No eligible pattern models leaves the original KNN vector unchanged. Set `patterns.as_knn_features` false to expose probabilities separately. Rebuilding preserves the old artifact; it never mutates past snapshots.
 
@@ -635,3 +637,77 @@ The market intelligence page distinguishes live potential history from the froze
 The page lists each K-selection and holdout requirement, missing selected features, stale collection, dataset exclusions, and pattern sample counts. Live potential rows are an upper bound before source, semantic-warmup and pattern checks. The data ETA assumes continuous collection and complete future features; it is unavailable when the observed inputs do not support an estimate. It is not a promise of validation success or a directional signal. The next scheduled dispatch is shown separately from data availability and does not confirm worker health.
 
 An abstaining model does not absorb newly collected rows automatically. After more history or corrected features are available, run a direct `trademinator:knn-build` for that market to reevaluate immediately. Redispatching a completed weekly generation does not rebuild it. Older models remain readable; rebuild once to record exact post-pattern history counts and frozen pattern thresholds. The page's meters refresh when the page is reloaded.
+
+
+## M4.1 cross-exchange lead/lag and M4 completion
+
+This release preserves the M4 readiness/progress/ETA UI and successful-backfill → M2 features → KNN/pattern rebuild workflow. It fixes pattern selection using its own final evaluation block, adds versioned evidence weights to KNN, and adds explicit Bull / Bear / Super Bull / Super Bear descriptions. These descriptions summarize the validated KNN signal, not a separate price forecast: BUY maps to Bull and SELL to Bear; Super additionally requires confidence at least 0.8 and at least 6 effective neighbors. HOLD and abstention map to Neutral. The thresholds are recorded in each model. Lead/lag can affect these states only through the validated downstream KNN; it never forces a trade or raises confidence by an arbitrary bonus.
+
+### Upgrade from M4 or an earlier release
+
+Deploy the full source while preserving `.env`, the database and writable `storage/`. The tarball excludes dependencies and all runtime/user data; it includes compiled frontend assets. Install locked dependencies, apply pending migrations, and refresh configuration/metadata:
+
+```bash
+composer install --no-dev --prefer-dist --no-interaction
+php artisan optimize:clear
+php artisan migrate --force
+php artisan trademinator:refresh-exchanges
+php artisan config:cache
+php artisan schedule:list
+php artisan trademinator:dispatch-market-intelligence
+php artisan trademinator:dispatch-lead-lag
+```
+
+Drain the existing `intelligence` queue using [CRONTABS.md](CRONTABS.md); no additional system cron or daemon is required. Existing M4 models are retained for inspection but abstain with `model_version_mismatch` until rebuilt under the corrected validation version. Weekly generation keys include that version, so redispatching after this upgrade can rebuild a model already completed this week. A direct `trademinator:knn-build EXCHANGE SYMBOL PERIOD` also rebuilds immediately. Do not run `migrate:fresh`, regenerate APP_KEY, or replace the deployment's storage/database.
+
+Tests require dev dependencies: install without `--no-dev` in a development checkout, then use `php artisan test --compact`; production installations without dev packages may not expose `artisan test`. The suite uses SQLite `:memory:` and ignores deployment database settings and configuration caches. `phpunit.xml` sets a **512 MiB test-process memory limit**, including when PHP starts with its 128 MiB default. This applies through Artisan, Composer and direct Pest runs. The separate market-catalog memory regression still runs its child process at 128 MiB.
+
+The initial M4.1 archive omitted this test memory setting. The complete suite could exhaust 128 MiB during a bounded database fetch even though the same test passed alone. For a checkout that still has the original `phpunit.xml`, use the following temporary command, or apply the corrected full archive:
+
+```bash
+php -d memory_limit=512M vendor/bin/pest --compact
+```
+
+Set the option on the direct Pest process: `php -d memory_limit=512M artisan test` does not forward that PHP option to Artisan's test subprocess. This test setting does not alter the web or queue PHP configuration; intelligence workers retain the explicit 512 MiB setting documented in [CRONTABS.md](CRONTABS.md).
+
+The new migration adds `exchanges.timezone`, `timezone_source`, and `region_prior`. Every exchange has an explicit IANA timezone, default UTC with source `unknown`. Refresh reads installed CCXT country metadata offline: a single country with exactly one IANA zone seeds a `country_prior`; ambiguous or missing metadata retains UTC/unknown. Unknown timezone records use only the all-hours model. Country metadata is not customer geography, nor evidence that an exchange leads. Select a local reference explicitly when appropriate:
+
+```bash
+php artisan trademinator:exchange edit bitso --timezone=America/Mexico_City
+php artisan trademinator:exchange edit ndax --timezone=America/Edmonton
+php artisan trademinator:exchange list
+```
+
+These are operator choices, not claims about the location of an exchange's traders. Overrides survive refresh. A changed leader timezone suppresses its old session feature until retraining. DST is handled by IANA rules; UTC alignment of candles never changes.
+
+### Evidence and causal use
+
+For each target, M4.1 examines up to eight other actively subscribed exchanges, sorted by CCXT ID. It compares the exact same spot symbol and quote currency at the same selected fixed-duration period. Different periods are reported as unavailable; different quotes and derivative symbols are excluded. Calendar-month/year bars are not supported by this timing estimator. It does not assume USD, USDT, CAD or other quotes are equivalent, and it does not create additional subscriptions or call exchanges. Use the feed's selected reliable period. A one-day candle cannot reveal a delay of a few minutes; the model never claims sub-candle precision.
+
+Source data are bounded to 6,000 bars per peer before the auxiliary cutoff. Observations are log returns at matching UTC candle-close times. Missing, zero-volume, invalid, flat or unclosed candles are excluded; gaps are never filled or paired by row number. Each lag requires a complete intervening interval. Source reads share a repeatable database snapshot, and the artifact records exact data fingerprints, model coefficients, local context, row counts, selected lag/session, validation boundaries and metrics.
+
+The target knowledge snapshot's first 40% boundary is the latest permissible auxiliary cutoff. Each directed relationship tests delays of 1–6 candles, all hours, and (when a timezone is known) four six-hour leader-local sessions. The initial 60% fits a two-input return regression (leader return plus the follower's own current return); the next 20% selects the lag/session; the final 20% tests the frozen winner. All candidates share the same chronological boundaries, and labels crossing either boundary are purged. Both positive and inverse relationships can qualify. Reverse-direction correlation is reported and must be at least 0.05 weaker than the forward residual correlation.
+
+Default gates require at least 160 observations and 30 rows in each block, residual correlation at least 0.2 in the fitted direction, at least 5% error improvement over **both** the local autoregressive baseline and the training-mean baseline, a positive Fisher-transformed lower evidence bound (z=3.5, with an autocorrelation-adjusted effective count), and positive improvement with consistent direction in all three later subperiods. This is a conservative screening heuristic, not a guarantee of causality or a calibrated probability. The report also exposes leader volume, candle range and follower return volatility; these are observed context, not assumed regional weights. Statistical pass rates and predictive value still require real-market evaluation.
+
+Only accepted relationships add normalized features to the final KNN. Pattern classifiers continue to reuse the original normalized M2 inputs. KNN rows must come strictly after the complete auxiliary validation horizon; the report counts these exclusions. Each accepted leader contributes a signed volatility-normalized return feature, attenuated by evidence strength and capped at 0.25 influence. Its distance weight is also bounded; missing, expired, disabled or out-of-session evidence has weight zero and is removed from both the RMS numerator and denominator. The same weighting rules apply during K tuning, final validation and live inference. Historical observations unavailable for a sample are also given zero weight. This prevents a placeholder from inventing evidence or making unrelated dimensions appear closer.
+
+Evidence expires 14 days after its validation horizon by default. With coarse periods or long snapshots, many rows may therefore have no usable lead/lag evidence; counts do not guarantee an active feature. Changing source availability at inference does not alter stored models. Old model reports remain immutable, and rebuilding can publish an abstaining replacement if a formerly useful relationship or downstream model fails. Repeatedly tuning thresholds against the reported test block would make it development data; keep later real-market data for ongoing evaluation.
+
+Settings are in `config/lead_lag.php`; `LEAD_LAG_ENABLED=false` prevents new relationships and zeroes their inference weight, while `LEAD_LAG_DAILY_REFRESH=false` disables only the extra daily dispatcher. Rebuild after changing settings. Existing models retain recorded fit/evidence thresholds. The existing weekly and backfill builds also run M4.1 preparation when enabled. No valid peer leaves core KNN/pattern processing available.
+
+## trademinator:dispatch-lead-lag
+
+Description: Queue daily lead/lag and downstream intelligence reevaluation for overlapping subscribed markets
+
+Signature: `trademinator:dispatch-lead-lag`
+
+No arguments/options. Scheduled daily at 03:45 in the application timezone. Requires migrated tables, active subscriptions on at least two distinct exchanges with the exact same symbol/selected period, stored closed candles, M2 features, a persistent queue, shared atomic cache locks and shared private model/research storage. Uses `INTELLIGENCE_QUEUE`, default `intelligence`. It queues one combined lead/lag + KNN/pattern build per matching shared feed, with a per-day/version generation key. Queue uniqueness, per-market build locks and database generation uniqueness protect redelivery. Repeating the command does not re-train a completed daily generation. Use direct `knn-build` to force reevaluation. Disabled intelligence/lead-lag/daily refresh exits successfully without dispatch; sync/null queues fail. Worker failures appear in the normal failed-job reporting; compute/time limits are the existing 480/600-second limits. No orders, messages or external API calls.
+
+```bash
+php artisan trademinator:dispatch-lead-lag
+php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --timeout=600 --memory=512 --tries=3
+php artisan queue:failed
+```
+
+This dispatcher reevaluates the complete downstream model so current lead/lag coefficients are never silently swapped into a KNN trained with different features. The existing weekly schedule remains, including for markets without matching peers. Daily rebuilds retain new dataset/model artifacts; monitor private storage usage.
