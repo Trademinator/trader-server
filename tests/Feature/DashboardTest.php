@@ -1,12 +1,16 @@
 <?php
 
+use App\Domain\Intelligence\IntelligenceTrainer;
+use App\Domain\Intelligence\ModelStore;
 use App\Models\MarketFeed;
 use App\Models\MarketSignal;
 use App\Models\MarketSubscription;
 use App\Models\Ticker;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 
 test('guests are redirected to the login page', function () {
     $this->get('/dashboard')->assertRedirect('/login');
@@ -31,6 +35,18 @@ it('requires verification and scopes dashboard charts to active subscriptions of
     $market->exchange->update(['name' => '<script>privateExchange()</script>']);
     MarketFeed::query()->create(['market_id' => $market->getKey(), 'selected_period' => '1m', 'status' => 'active']);
     $sub = MarketSubscription::query()->create(['user_id' => $owner->getKey(), 'market_id' => $market->getKey(), 'active' => true]);
+    $datasetId = (string) Str::uuid();
+    $modelId = (string) Str::uuid();
+    $marketKey = ModelStore::marketKey($market->exchange->class, $market->symbol, '1m');
+    DB::table('research_datasets')->insert(['dataset_id' => $datasetId, 'manifest' => '{}', 'created_at' => now()]);
+    DB::table('intelligence_models')->insert([
+        'model_id' => $modelId, 'dataset_id' => $datasetId, 'market_key' => $marketKey, 'status' => 'ready',
+        'generation_key' => null, 'sha256' => str_repeat('0', 64), 'report' => json_encode([
+            'model_id' => $modelId, 'dataset_id' => $datasetId, 'status' => 'ready',
+            'validation_version' => IntelligenceTrainer::VERSION, 'trained_as_of_ms' => now()->getTimestampMs(),
+        ], JSON_THROW_ON_ERROR), 'created_at' => now(),
+    ]);
+    DB::table('intelligence_heads')->insert(['market_key' => $marketKey, 'model_id' => $modelId, 'updated_at' => now()]);
     $url = route('dashboard.chart', $sub->getKey());
     $this->getJson($url)->assertUnauthorized();
     $this->actingAs(User::factory()->unverified()->create())->get('/dashboard')->assertRedirect(route('verification.notice'));
@@ -38,6 +54,7 @@ it('requires verification and scopes dashboard charts to active subscriptions of
     $this->get(route('dashboard', ['subscription' => $sub->getKey()]))->assertNotFound();
     $this->get('/dashboard')->assertOk()->assertDontSee('BTC/USD')->assertDontSee('privateExchange');
     $this->actingAs($owner)->get('/dashboard')->assertOk()->assertSee('BTC/USD')->assertSee('Waiting for evidence')
+        ->assertSee('dashboard-validated-check', false)->assertSee('aria-label="Validated model"', false)
         ->assertSee('does not enable trading')->assertSee('Unknown')->assertSee('&lt;script&gt;', false)
         ->assertDontSee('<script>privateExchange()</script>', false)->assertHeader('Cache-Control', 'no-store, private');
     $this->getJson($url)->assertOk()->assertJsonPath('subscription_id', $sub->getKey());

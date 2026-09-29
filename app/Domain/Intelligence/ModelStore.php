@@ -16,6 +16,13 @@ final class ModelStore
         return hash('sha256', "$exchange|$symbol|$period");
     }
 
+    public static function isReadyReport(?array $report): bool
+    {
+        return $report !== null && ($report['status'] ?? null) === 'ready'
+            && ($report['validation_version'] ?? null) === IntelligenceTrainer::VERSION
+            && ($report['trained_as_of_ms'] ?? 0) >= now()->getTimestampMs() - config('intelligence.max_model_age_days') * 86400000;
+    }
+
     public function path(string $id): string
     {
         if (! Str::isUuid($id)) {

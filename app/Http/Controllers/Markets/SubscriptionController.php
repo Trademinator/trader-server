@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Markets;
 
+use App\Domain\Intelligence\ModelStore;
 use App\Domain\MarketData\MarketCatalog;
 use App\Domain\MarketData\MarketCatalogException;
 use App\Domain\MarketData\MarketSubscriptions;
@@ -11,6 +12,7 @@ use App\Models\MarketSubscription;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 use InvalidArgumentException;
 use Throwable;
@@ -28,8 +30,27 @@ final class SubscriptionController extends Controller
             $exchanges = [];
         }
         $exchangeChoices = collect($exchanges)->keyBy('value');
-        $subscriptionGroups = MarketSubscription::query()->with('market.exchange', 'market.feed')
-            ->where('user_id', $request->user()->user_id)->get()
+        $subscriptions = MarketSubscription::query()->with('market.exchange', 'market.feed')
+            ->where('user_id', $request->user()->user_id)->get();
+        $marketKeys = $subscriptions->mapWithKeys(function (MarketSubscription $item): array {
+            $period = $item->market->feed?->selected_period;
+
+            return [$item->getKey() => $period === null ? null
+                : ModelStore::marketKey($item->market->exchange->class, $item->market->symbol, $period)];
+        });
+        $keys = $marketKeys->filter()->unique()->values();
+        $validatedKeys = collect();
+        if ($keys->isNotEmpty()) {
+            $validatedKeys = DB::table('intelligence_heads as heads')
+                ->join('intelligence_models as models', 'models.model_id', '=', 'heads.model_id')
+                ->whereIn('heads.market_key', $keys->all())->get(['heads.market_key', 'models.report'])
+                ->filter(fn ($row): bool => ModelStore::isReadyReport(json_decode($row->report, true, flags: JSON_THROW_ON_ERROR)))
+                ->pluck('market_key')->flip();
+        }
+        $validatedSubscriptions = $marketKeys->map(
+            fn (?string $key): bool => $key !== null && $validatedKeys->has($key)
+        );
+        $subscriptionGroups = $subscriptions
             ->groupBy(fn (MarketSubscription $item): string => $item->market->exchange_id)
             ->map(function ($items) use ($exchangeChoices): array {
                 $exchange = $items->first()->market->exchange;
@@ -50,6 +71,7 @@ final class SubscriptionController extends Controller
             'exchanges' => $exchanges,
             'catalogueError' => $catalogueError,
             'subscriptionGroups' => $subscriptionGroups,
+            'validatedSubscriptions' => $validatedSubscriptions,
             'prefillExchange' => is_string($request->query('exchange')) ? $request->query('exchange') : '',
             'prefillSymbol' => is_string($request->query('symbol')) ? $request->query('symbol') : '',
         ]);

@@ -43,13 +43,14 @@
                 @forelse ($cards as $card)
                     @php($subscription = $card['subscription'])
                     @php($market = $subscription->market)
-                    <a class="dashboard-market {{ $details && $details['subscription']->getKey() === $subscription->getKey() ? 'is-selected' : '' }}" href="{{ route('dashboard', ['subscription' => $subscription->getKey(), 'page' => $subscriptions->currentPage()]) }}#market-detail">
+                    <a class="dashboard-market {{ $card['ready'] ? 'has-validated-model' : '' }} {{ $details && $details['subscription']->getKey() === $subscription->getKey() ? 'is-selected' : '' }}" href="{{ route('dashboard', ['subscription' => $subscription->getKey(), 'page' => $subscriptions->currentPage()]) }}#market-detail">
                         <div class="flex items-start justify-between gap-3"><div><h3>{{ $market->symbol }}</h3><p>{{ $market->exchange->name }} · {{ $market->feed?->selected_period ?? 'Selecting period' }}</p></div><span class="guide-badge">Following</span></div>
                         @if ($card['sparkline'])<svg viewBox="0 0 200 48" role="img" aria-label="Recent closed price history for {{ $market->symbol }}" class="dashboard-sparkline"><polyline points="{{ $card['sparkline'] }}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" /></svg>
                         @else<p class="dashboard-muted my-3">Chart awaiting continuous price history</p>@endif
                         <div class="flex flex-wrap justify-between gap-2"><strong>{{ $card['label'] }}</strong><span>{{ $card['ready'] ? 'Model validated' : 'Learning / awaiting validation' }}</span></div>
                         @if ($card['attention'])<p class="dashboard-warning">Collection or history needs attention</p>@endif
                         <p class="guide-help">Last candle closed: {{ $time($card['chart']['last_closed_at_ms']) }}</p>
+                        @if ($card['ready'])<span class="dashboard-validated-check" role="img" aria-label="Validated model" title="Validated model">✓</span>@endif
                     </a>
                 @empty
                     <div class="guide-panel md:col-span-2 xl:col-span-3"><h3>Start following a market</h3><p>Subscribe to collect its history and follow its intelligence. You can observe without trading.</p><a class="dashboard-button mt-3" href="{{ route('markets.index') }}">Choose a market</a></div>

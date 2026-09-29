@@ -1,5 +1,7 @@
 <?php
 
+use App\Domain\Intelligence\IntelligenceTrainer;
+use App\Domain\Intelligence\ModelStore;
 use App\Domain\MarketData\ExchangeMetadata;
 use App\Models\Exchange;
 use App\Models\Market;
@@ -8,6 +10,8 @@ use App\Models\MarketSubscription;
 use App\Models\User;
 use App\Repositories\ExchangeRepository;
 use Dom\HTMLDocument;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 it('requires sign in and restricts unsubscribe to the subscription owner', function () {
     $owner = User::factory()->create();
@@ -55,6 +59,18 @@ it('groups subscriptions in independent collapsible exchanges and links each pai
         MarketFeed::query()->create(['market_id' => $market->market_id, 'selected_period' => $period]);
         MarketSubscription::query()->create(['user_id' => $user->user_id, 'market_id' => $market->market_id, 'active' => $symbol !== 'ADA/USD']);
     }
+    $datasetId = (string) Str::uuid();
+    $modelId = (string) Str::uuid();
+    $marketKey = ModelStore::marketKey('kraken', 'BTC/USD', '15m');
+    DB::table('research_datasets')->insert(['dataset_id' => $datasetId, 'manifest' => '{}', 'created_at' => now()]);
+    DB::table('intelligence_models')->insert([
+        'model_id' => $modelId, 'dataset_id' => $datasetId, 'market_key' => $marketKey, 'status' => 'ready',
+        'generation_key' => null, 'sha256' => str_repeat('0', 64), 'report' => json_encode([
+            'model_id' => $modelId, 'dataset_id' => $datasetId, 'status' => 'ready',
+            'validation_version' => IntelligenceTrainer::VERSION, 'trained_as_of_ms' => now()->getTimestampMs(),
+        ], JSON_THROW_ON_ERROR), 'created_at' => now(),
+    ]);
+    DB::table('intelligence_heads')->insert(['market_key' => $marketKey, 'model_id' => $modelId, 'updated_at' => now()]);
     $metadata = Mockery::mock(ExchangeMetadata::class);
     $metadata->shouldReceive('all')->once()->andReturn([
         'coinbase' => ['name' => 'Zeta Exchange', 'access' => ['state' => 'public'], 'spot' => true, 'fetchOHLCV' => true, 'timeframes' => ['1m'], 'logo' => 'https://example.com/zeta.png'],
@@ -70,6 +86,8 @@ it('groups subscriptions in independent collapsible exchanges and links each pai
     expect(strpos($list, 'BTC/USD'))->toBeLessThan(strpos($list, 'Zeta Exchange'));
     expect(strpos($list, 'Zeta Exchange'))->toBeLessThan(strpos($list, 'ETH/USD'));
     expect($list)->toContain('BTC/USD · 15m');
+    expect(substr_count($list, 'market-validated-check'))->toBe(1);
+    expect($list)->toMatch('/BTC\\/USD · 15m.*market-validated-check/s');
     $response->assertSee('/markets/suggestions/review?exchange=kraken&amp;symbol=ADA%2FUSD', false)
         ->assertSee('/markets/suggestions/review?exchange=kraken&amp;symbol=BTC%2FUSD', false)
         ->assertSee('/markets/suggestions/review?exchange=coinbase&amp;symbol=ETH%2FUSD', false);

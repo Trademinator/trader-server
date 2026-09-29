@@ -87,9 +87,7 @@ final class DashboardData
 
     private function ready(?array $report): bool
     {
-        return $report !== null && ($report['status'] ?? null) === 'ready'
-            && ($report['validation_version'] ?? null) === IntelligenceTrainer::VERSION
-            && ($report['trained_as_of_ms'] ?? 0) >= now()->getTimestampMs() - config('intelligence.max_model_age_days') * 86400000;
+        return ModelStore::isReadyReport($report);
     }
 
     private function fresh(Market $market, ?MarketSignal $signal, ?array $report): bool
