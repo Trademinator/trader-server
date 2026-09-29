@@ -289,7 +289,7 @@ Required arguments are the exact CCXT exchange ID, symbol, and supported candle 
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--schema` | `core` | `core`: 15 technical features without long elapsed returns; `technical`: all 18 technical features; `full`: technical plus all 10 CoinGecko context features; `custom`: exact keys from `--features`. |
+| `--schema` | `core` | `core`: 15 technical features without long elapsed returns; `technical`: all 18 technical features; `full`: technical plus all 10 CoinGecko context features; `custom`: exact keys from `--features`. See [Choosing a feature schema](#choosing-a-feature-schema) for the feature lists and history requirements shared with M4. |
 | `--features` | None | Comma-separated ordered M2 keys; required only for `custom`, rejected with other schemas. Must be nonempty, unique, known keys. Missing selected values cause a row to be dropped, never imputed. |
 | `--horizon` | `12` | Integer 1–10,000 future candles; enter at next open and exit at the close of the horizon-th subsequent candle. |
 | `--fee-bps` | `10` | Fee per side, in basis points. 10 bps = 0.10%; use the actual exchange/account fee. |
@@ -418,7 +418,7 @@ Required arguments identify the exact exchange class, symbol and candle period. 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--dataset` | New snapshot | Train a verified frozen M4 semantic dataset UUID for this exact market. Old M3 fee-aware labels are rejected. Cannot combine with date options or non-default schema. |
-| `--schema` | `core` | `core`, `technical` or `full`; uses the existing FeatureSchema. Custom schemas can be consumed from an explicitly built semantic dataset through the domain service. |
+| `--schema` | `core` | Select the stored M2 inputs: `core` (15 technical features), `technical` (18), or `full` (18 technical + 10 CoinGecko context features). See [Choosing a feature schema](#choosing-a-feature-schema). Custom schemas can be consumed from an explicitly built semantic dataset through the domain service. |
 | `--from` | Bounded recent history | Inclusive decision-time start. |
 | `--to` | Training cutoff | Inclusive decision-time end, clamped to the cutoff. |
 | `--as-of` | Before newest closed feature | Maximum time at which all training outcomes must have become available; capped at now. Explicit values can require waiting for a later candle before inference. |
@@ -430,6 +430,75 @@ php -d memory_limit=512M artisan trademinator:knn-build bitso ADA/USD 1m
 php artisan trademinator:knn-build kraken BTC/USD 1h --schema=full --from=2026-08-01 --as-of=2026-09-28
 php artisan trademinator:knn-build kraken BTC/USD 1m --dataset=DATASET_UUID
 ```
+
+### Choosing a feature schema
+
+`--schema` chooses which existing M2 feature values describe each candle to the model. These values are the inputs used to compare historical situations and predict pattern completion. It does not change the candle period, prediction horizon, BUY/HODL/SELL label definition, or select a different training algorithm. Pass one name, for example `--schema=technical`; the notation `core|technical|full` means alternatives, not a literal argument.
+
+| Schema | Base features | Includes | When to use it |
+| --- | --- | --- | --- |
+| `core` (default) | 15 | Short-window trend, returns, momentum, volatility, volume activity and candle shape. | Start here, especially with recent history or incomplete CoinGecko coverage. |
+| `technical` | 18 | Everything in `core`, plus 24-hour, 7-day and 30-day price returns. | Evaluate longer-term price context when those exact historical anchors are available. |
+| `full` | 28 | Everything in `technical`, plus all 10 CoinGecko context features. | Evaluate market-wide and asset context when complete historical context is available for the chosen market. |
+
+These counts describe the selected M2 inputs. Pattern length/stage/progress/similarity and any validated pattern-completion probabilities added by M4 are separate from these counts; choosing `full` does not enable pattern prediction by itself.
+
+#### Core: the 15 shared technical features
+
+| Group | Exact feature keys | Meaning |
+| --- | --- | --- |
+| Trend | `trend.ema_3_12`, `trend.direction` | Normalized difference between EMA 3 and EMA 12, and their relative direction. |
+| Recent returns | `return.4`, `return.12` | Normalized close-price changes over 4 and 12 candles. |
+| Momentum | `momentum.rsi_3`, `momentum.rsi_14`, `momentum.stoch_rsi_14`, `momentum.cci_20` | Normalized RSI, stochastic RSI and CCI measurements. |
+| Volatility | `volatility.atrp_3`, `volatility.atrp_14` | Normalized average true range as a percentage of price. |
+| Volume | `volume.activity_20` | Normalized volume activity relative to a 20-candle baseline. |
+| Candle shape | `candle.body`, `candle.upper_wick`, `candle.lower_wick`, `candle.direction` | Relative body/wick sizes and bullish, bearish or flat direction. |
+
+The numeric windows above count candles in the supplied period: `return.12` spans 12 minutes with `1m` candles and 12 hours with `1h` candles. The current M2 implementation needs at least 28 consecutive closed candles to finish the longest core warm-up. That only makes a feature vector eligible; training still needs enough subsequent candles to mature labels and enough eligible examples for its chronological training and validation blocks.
+
+#### Technical: core plus three elapsed-time returns
+
+`technical` adds `return.24h`, `return.7d` and `return.30d`. These are normalized close-price changes over actual elapsed time, regardless of the selected candle period. They do not derive another timeframe or train a second model.
+
+All three values must exist for every included row. M2 looks for a close at the exact timestamp 24 hours, 7 days and 30 days before that candle, within the same uninterrupted history segment. A gap resets the segment, and a period whose timestamps cannot align with an anchor cannot provide that return. Consequently, `technical` generally needs at least 30 days of continuous history before its first eligible row, followed by enough eligible rows and mature outcomes for training. Merely having 30 days of candles does not guarantee a trainable model.
+
+#### Full: technical plus ten CoinGecko context features
+
+| Exact feature key | Meaning |
+| --- | --- |
+| `context.global_regime` | Normalized 24-hour change in total crypto market capitalization. |
+| `context.btc_dominance` | Bitcoin's share of total crypto market capitalization. |
+| `context.btc_dominance_change` | Normalized change in Bitcoin dominance recorded in the context snapshot. |
+| `context.activity` | Normalized asset trading volume relative to its market capitalization. |
+| `context.activity_deviation` | Normalized deviation of that activity from its recorded baseline. |
+| `context.category_momentum` | Normalized momentum of the asset's configured category. |
+| `context.price_deviation` | Normalized difference between the exchange close and CoinGecko's reference price in the matching quote currency. |
+| `context.market_cap_share` | Asset market capitalization divided by global market capitalization. |
+| `context.circulating_fraction` | Circulating supply divided by maximum supply. |
+| `context.volume_share` | Asset volume divided by global volume; an activity/liquidity proxy. |
+
+`full` requires a valid CoinGecko market mapping and context snapshots that were already observed and still fresh at each candle's decision time, including usable category data. Enabling CoinGecko today does not recreate context observations for past candles. Some assets lack a maximum supply or category data, so collecting more candles alone may never make all 10 context values available. The training command reads stored features; it does not fetch missing context or recalculate indicators.
+
+#### Missing values and choosing between schemas
+
+If any selected feature is missing, the dataset excludes that candle; it does not fill the value with zero or fall back to a smaller schema. Missing CoinGecko values do not exclude a row from `core` or `technical`, because neither selects them. A build with no eligible labelled rows fails; a build with too little validation evidence can finish as **abstaining**. During inference, a missing selected value produces an abstention with reason `missing_selected_features`.
+
+Start with `core`. Consider `technical` or `full` only after checking their historical coverage, then compare the validation reports and usable row counts. More inputs do not guarantee better predictions, and results based on different eligible periods are not a like-for-like comparison. The model report and frozen dataset manifest record the selected schema and feature keys.
+
+Choose one of these examples, replacing the market and period with your own:
+
+```bash
+# Default: 15 technical features.
+php -d memory_limit=512M artisan trademinator:knn-build bitso ADA/USD 1m --schema=core
+
+# Add the three elapsed-time returns; their historical anchors must exist.
+php -d memory_limit=512M artisan trademinator:knn-build bitso ADA/USD 1m --schema=technical
+
+# Also require all 10 historical CoinGecko context values.
+php -d memory_limit=512M artisan trademinator:knn-build bitso ADA/USD 1m --schema=full
+```
+
+The option applies to this manual build. Weekly queued training reads `schema` from `config/intelligence.php`, currently `core`; a manual `--schema=full` does not change that setting. With `--dataset=DATASET_UUID`, the dataset's recorded keys determine the inputs: omit `--schema`, because a frozen dataset cannot be changed by selecting another schema. The M3 `build-dataset` command uses the same feature selections but creates fee-aware labels, which M4 rejects.
 
 ## trademinator:signal
 
