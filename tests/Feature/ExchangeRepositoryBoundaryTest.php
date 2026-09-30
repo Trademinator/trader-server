@@ -126,4 +126,31 @@ it('fetches one normalized history page with adapter bounds without saving befor
     'generic' => ['kraken', []],
     'Bitso end in milliseconds' => ['bitso', ['end' => 1_700_005_400_000]],
     'Coinbase until in milliseconds' => ['coinbase', ['until' => 1_700_005_400_000]],
+    'NDAX explicit ToDate' => ['ndax', ['ToDate' => '2023-11-14 23:43:20']],
 ]);
+
+it('bounds the CCXT history limit to the requested backfill window', function () {
+    $from = 1_700_000_000_000;
+    $until = $from + 24 * 60 * 60 * 1000;
+    $client = Mockery::mock(ccxt\Exchange::class)->makePartial();
+    $client->options = ['paginate' => true, 'fetchOHLCV' => ['paginate' => true]];
+    $client->shouldReceive('fetch_ohlcv')->once()
+        ->with('BTC/USDC', '1h', $from, 24, ['ToDate' => ccxt\Exchange::ymdhms($until)])
+        ->andReturn([[$from, 100, 102, 99, 101, 10]]);
+
+    $tickers = new TickerRepository;
+    $tickers->setExchange($client);
+    $repository = new ExchangeRepository;
+    $reflection = new ReflectionClass($repository);
+    $reflection->getProperty('exchange')->setValue($repository, new Exchange(['name' => 'NDAX', 'class' => 'ndax']));
+    $reflection->getProperty('ccxtExchange')->setValue($repository, $client);
+    $reflection->getProperty('tickerRepository')->setValue($repository, $tickers);
+
+    $candles = $repository->fetchHistoryPage('BTC/USDC', '1h', $from, $until, 90);
+
+    expect($candles)->toHaveCount(1)
+        ->and($candles[0]['microtimestamp'])->toBe($from);
+    expect($client->options['paginate'])->toBeFalse();
+    expect($client->options['fetchOHLCV']['paginate'])->toBeFalse();
+    $this->assertDatabaseCount('tickers', 0);
+});

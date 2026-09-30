@@ -148,9 +148,28 @@ class ExchangeRepository extends BaseRepository
             throw new \InvalidArgumentException('Invalid historical candle page.');
         }
 
+        // The history worker gives us an exclusive upper bound. Keep the CCXT
+        // request inside that window instead of blindly using the configured
+        // page size. Some adapters, including NDAX, derive their API ToDate
+        // from `since + limit * timeframe`.
+        $timeframe = new CandleTimeframe;
+        $requestLimit = 0;
+        for ($cursor = $fromMs; $cursor < $untilMs && $requestLimit < $limit; $requestLimit++) {
+            $next = $timeframe->next($cursor, $period);
+            if ($next <= $cursor) {
+                throw new \RuntimeException('Historical candle timeframe did not advance.');
+            }
+            $cursor = $next;
+        }
+
+        if ($requestLimit < 1) {
+            throw new \InvalidArgumentException('Historical candle page contains no request interval.');
+        }
+
         $params = match ($this->exchange->class) {
             'coinbase' => ['until' => $untilMs],
             'bitso' => ['end' => $untilMs],
+            'ndax' => ['ToDate' => ccxt\Exchange::ymdhms($untilMs)],
             default => [],
         };
         $this->ccxtExchange->options['paginate'] = false;
@@ -158,7 +177,7 @@ class ExchangeRepository extends BaseRepository
             $this->ccxtExchange->options['fetchOHLCV']['paginate'] = false;
         }
 
-        return $this->tickerRepository->fetch($symbol, $period, $fromMs, $limit, $params);
+        return $this->tickerRepository->fetch($symbol, $period, $fromMs, $requestLimit, $params);
     }
 
     public function findById(string $exchange_id): ?Collection
