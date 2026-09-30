@@ -148,8 +148,9 @@ it('bounds the CCXT history limit to the requested backfill window', function ()
 
     $candles = $repository->fetchHistoryPage('BTC/USDC', '1h', $from, $until, 90);
 
+    $candle = array_values($candles)[0];
     expect($candles)->toHaveCount(1)
-        ->and($candles[0]['microtimestamp'])->toBe($from);
+        ->and($candle['microtimestamp'])->toBe($from);
     expect($client->options['paginate'])->toBeFalse();
     expect($client->options['fetchOHLCV']['paginate'])->toBeFalse();
     $this->assertDatabaseCount('tickers', 0);
