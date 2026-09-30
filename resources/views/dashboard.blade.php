@@ -19,7 +19,7 @@
             <a class="dashboard-stat" href="#subscriptions"><span>Markets you follow</span><strong>{{ $totals['followed'] }}</strong><small>Active subscriptions</small></a>
             <a class="dashboard-stat" href="#subscriptions"><span>Validated models</span><strong>{{ $totals['validated'] }} <small>/ {{ $totals['followed'] }}</small></strong><small>Across all markets you follow</small></a>
             @can('manage-server')
-            <a class="dashboard-stat" href="#attention"><span>Needs attention</span><strong data-attention-count>{{ $cards->where('attention', true)->count() }}</strong><small>Collection or history on this page</small></a>
+            <button type="button" class="dashboard-stat" data-attention-toggle aria-controls="attention" aria-expanded="false"><span>Needs attention</span><strong data-attention-count>{{ $cards->where('attention', true)->count() }}</strong><small>Collection or history on this page</small></button>
             @endcan
             <a class="dashboard-stat" href="#changes"><span>New signal changes</span><strong>{{ $changeCount }}</strong><small>Since {{ $time($since) }}</small></a>
         </div>

@@ -4,7 +4,7 @@
                     @php($subscription = $card['subscription'])
                     @php($market = $subscription->market)
                     <a class="dashboard-market {{ $card['ready'] ? 'has-validated-model' : '' }} {{ $selectedId === $subscription->getKey() ? 'is-selected' : '' }}" href="{{ route('dashboard', ['subscription' => $subscription->getKey(), 'page' => $subscriptions->currentPage(), 'q' => $search]) }}#market-detail">
-                        <div class="flex items-start justify-between gap-3"><div><h3>{{ $market->symbol }}</h3><p class="flex items-center gap-2"><span class="dashboard-exchange-logo" aria-hidden="true"><span>{{ mb_strtoupper(mb_substr($market->exchange->name, 0, 1)) }}</span>@if ($card['logo_url'])<img src="{{ $card['logo_url'] }}" width="24" height="24" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">@endif</span>{{ $market->exchange->name }} · {{ $market->feed?->selected_period ?? 'Selecting period' }}</p></div><span class="guide-badge">Following</span></div>
+                        <div class="flex items-start justify-between gap-3"><div><h3>{{ $market->symbol }}</h3><p class="flex items-center gap-2"><span class="dashboard-exchange-logo" aria-hidden="true">@if ($card['logo_url'])<img src="{{ $card['logo_url'] }}" height="24" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">@endif<span>{{ mb_strtoupper(mb_substr($market->exchange->name, 0, 1)) }}</span></span>{{ $market->exchange->name }} · {{ $market->feed?->selected_period ?? 'Selecting period' }}</p></div><span class="guide-badge">Following</span></div>
                         @if ($card['sparkline'])<svg viewBox="0 0 200 48" role="img" aria-label="Recent closed price history for {{ $market->symbol }}" class="dashboard-sparkline"><polyline points="{{ $card['sparkline'] }}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" /></svg>
                         @else<p class="dashboard-muted my-3">Chart awaiting continuous price history</p>@endif
                         <div class="flex flex-wrap justify-between gap-2"><strong>{{ $card['label'] }}</strong><span>{{ $card['ready'] ? 'Model validated' : 'Learning / awaiting validation' }}</span></div>
@@ -19,8 +19,9 @@
             </div>
             <div class="mt-4" data-market-pagination>{{ $subscriptions->links() }}</div>
         @can('manage-server')
-        <section id="attention" class="guide-panel mt-5" aria-labelledby="attention-title">
-            <h2 id="attention-title">Needs attention</h2>
+        <details id="attention" class="dashboard-attention guide-panel mt-5" aria-labelledby="attention-title" data-dashboard-attention>
+            <summary><h2 id="attention-title">Needs attention</h2></summary>
+            <div class="mt-3">
             <p class="guide-help">Collection issues for the displayed markets. Run suggested commands from the server's project directory.</p>
             @forelse ($cards->where('attention', true) as $card)
                 <div class="dashboard-attention-row">
@@ -32,5 +33,6 @@
                     @endforeach
                 </div>
             @empty<p>No collection problems detected for the displayed markets.</p>@endforelse
-        </section>
+            </div>
+        </details>
         @endcan

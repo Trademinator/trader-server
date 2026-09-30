@@ -3,7 +3,7 @@
   "date": "2026-09-30",
   "source_repository": "https://github.com/Trademinator/trader-server",
   "base_commit": "73d576e82472a569456b2b7a18ec26425573e31a",
-  "source_commit": "c77e1e3df351353e38fb2a5872e57d4efd7c658b",
+  "source_commit": "5c5d5e2e8cc0818ecac7ebaf122c9ffe6011f287",
   "delivery": "Full application source plus compiled frontend assets",
   "source_note": "Source commit with packaging-only README-FIXES.txt and RELEASE.json updates, SHA256SUMS, built assets, and runtime lock files omitted.",
   "entrypoint_guide": "README-FIXES.txt",
@@ -16,24 +16,14 @@
   "compiled_frontend_assets": true,
   "validation": {
     "php": "8.4.26",
-    "scope": "Related PHP suites and dashboard JavaScript tests; not the full application suite",
-    "php_tests_passed": 154,
-    "php_assertions": 1677,
-    "frontend_tests_passed": 6,
-    "frontend_build": "npm ci and npm run build passed",
+    "scope": "Dashboard PHP suites and dashboard JavaScript tests for the logo/collapse revision",
+    "php_tests_passed": 9,
+    "php_assertions": 104,
+    "frontend_tests_passed": 8,
+    "frontend_build": "npm run build passed",
     "pint": "passed",
     "git_diff_check": "passed",
-    "database": "SQLite :memory: with repository safety guards",
-    "collection_fixture": {
-      "synthetic_binance_pairs": 5000,
-      "collection_passes": 3,
-      "features_written": 250,
-      "php_memory_limit_bytes": 134217728,
-      "peak_memory_bytes": 124428288,
-      "largest_ohlcv_request": 100,
-      "metadata_requests": 1,
-      "ohlcv_requests": 6
-    }
+    "database": "SQLite :memory: with repository safety guards"
   },
   "not_exercised": [
     "Full application test suite",
@@ -60,6 +50,31 @@
     "Preserve the deployment .env, APP_KEY, database and private storage.",
     "Validation totals cover all followed markets for the current user.",
     "Needs attention diagnostics are owner-only.",
-    "M5 remains a separate milestone."
-  ]
+    "M5 remains a separate milestone.",
+    "Dashboard exchange logos are 24px tall with proportional widths.",
+    "Needs attention is inside a container, closed by default, and toggled by its overview card or title. The state survives live search."
+  ],
+  "revision": 2,
+  "previous_validation": {
+    "source_commit": "c77e1e3df351353e38fb2a5872e57d4efd7c658b",
+    "php": "8.4.26",
+    "scope": "Related PHP suites and dashboard JavaScript tests; not the full application suite",
+    "php_tests_passed": 154,
+    "php_assertions": 1677,
+    "frontend_tests_passed": 6,
+    "frontend_build": "npm ci and npm run build passed",
+    "pint": "passed",
+    "git_diff_check": "passed",
+    "database": "SQLite :memory: with repository safety guards",
+    "collection_fixture": {
+      "synthetic_binance_pairs": 5000,
+      "collection_passes": 3,
+      "features_written": 250,
+      "php_memory_limit_bytes": 134217728,
+      "peak_memory_bytes": 124428288,
+      "largest_ohlcv_request": 100,
+      "metadata_requests": 1,
+      "ohlcv_requests": 6
+    }
+  }
 }

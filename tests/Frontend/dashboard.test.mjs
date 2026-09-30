@@ -82,7 +82,7 @@ test('rejects a refresh response for another subscription', async () => {
     view.dispose();
 });
 
-async function searchHarness() {
+async function searchHarness({ owner = true } = {}) {
     const { readFileSync } = await import('node:fs');
     const { runInNewContext } = await import('node:vm');
     const source = readFileSync(new URL('../../resources/js/components/dashboard.js', import.meta.url), 'utf8')
@@ -94,6 +94,15 @@ async function searchHarness() {
         removeAttribute(name) { delete this.attributes[name]; },
         querySelectorAll() { return []; }, replaceChildren() { this.innerHTML = ''; } });
     const input = element(), form = element(), results = element(), status = element(), attention = element();
+    const attentionToggle = owner ? element() : null;
+    const makePanel = () => owner ? { open: false, scrolls: 0, scrollIntoView() { this.scrolls++; } } : null;
+    let attentionPanel = makePanel(), cards = 'initial cards';
+    Object.defineProperty(results, 'innerHTML', {
+        get: () => cards,
+        set(value) { cards = value; attentionPanel = makePanel(); },
+    });
+    results.querySelector = selector => selector === '[data-dashboard-attention]' ? attentionPanel : null;
+    results.replaceChildren = () => { cards = ''; attentionPanel = null; };
     form.querySelector = () => input;
     const parts = { '[data-market-search]': form, '[data-market-results]': results, '[data-search-status]': status };
     const root = { dataset: { url: '/dashboard', selected: 'selected-subscription' }, querySelector: selector => parts[selector] };
@@ -101,7 +110,7 @@ async function searchHarness() {
     let timerId = 0;
     const context = { URL, AbortController, Number, Error,
         window: { location: { href: 'https://trademinator.test/dashboard' }, addEventListener() {} },
-        document: { querySelector: () => attention },
+        document: { querySelector: selector => ({ '[data-attention-count]': attention, '[data-attention-toggle]': attentionToggle })[selector] },
         setTimeout(callback, delay) { const id = ++timerId; timers.set(id, { callback, delay }); return id; },
         clearTimeout(id) { timers.delete(id); },
         fetch(url, options) { return new Promise(resolve => pending.push({ url, options, resolve })); } };
@@ -115,8 +124,61 @@ async function searchHarness() {
         return promise;
     };
     const respond = (index, data, options = {}) => pending[index].resolve({ ok: true, status: 200, json: async () => data, ...options });
-    return { input, form, results, status, attention, pending, timers, submit, respond, dispose };
+    const toggleTitle = () => {
+        attentionPanel.open = !attentionPanel.open;
+        results.listeners.toggle({ target: attentionPanel });
+    };
+    return { input, form, results, status, attention, attentionToggle, get attentionPanel() { return attentionPanel; },
+        toggleTitle, pending, timers, submit, respond, dispose };
 }
+
+test('toggles the collapsed attention panel from the overview card and reflects title toggles', async () => {
+    const view = await searchHarness();
+    assert.equal(view.attentionPanel.open, false);
+    assert.equal(view.attentionToggle.attributes['aria-expanded'], 'false');
+    view.attentionToggle.listeners.click();
+    assert.equal(view.attentionPanel.open, true);
+    assert.equal(view.attentionToggle.attributes['aria-expanded'], 'true');
+    assert.equal(view.attentionPanel.scrolls, 1);
+    view.toggleTitle();
+    assert.equal(view.attentionPanel.open, false);
+    assert.equal(view.attentionToggle.attributes['aria-expanded'], 'false');
+    view.toggleTitle();
+    assert.equal(view.attentionToggle.attributes['aria-expanded'], 'true');
+    view.attentionToggle.listeners.click();
+    assert.equal(view.attentionPanel.open, false);
+    assert.equal(view.attentionToggle.attributes['aria-expanded'], 'false');
+    assert.equal(view.pending.length, 0);
+    view.dispose();
+    assert.equal(view.attentionToggle.listeners.click, undefined);
+    assert.equal(view.results.listeners.toggle, undefined);
+});
+
+test('preserves the attention panel state across live searches and reconnects the overview card', async () => {
+    const view = await searchHarness();
+    view.attentionToggle.listeners.click();
+    const previousPanel = view.attentionPanel;
+    const first = view.submit('eth');
+    view.respond(0, { html: 'filtered cards', count: 1, attention_count: 1 });
+    await first;
+    assert.notEqual(view.attentionPanel, previousPanel);
+    assert.equal(view.attentionPanel.open, true);
+    assert.equal(view.attentionToggle.attributes['aria-expanded'], 'true');
+    const clear = view.submit('');
+    view.toggleTitle();
+    view.respond(1, { html: 'all cards', count: 27 });
+    await clear;
+    assert.equal(view.attentionPanel.open, false);
+    assert.equal(view.attentionToggle.attributes['aria-expanded'], 'false');
+    view.attentionToggle.listeners.click();
+    assert.equal(view.attentionPanel.open, true);
+    const revoked = view.submit('btc');
+    view.respond(2, {}, { ok: false, status: 401 });
+    await revoked;
+    assert.equal(view.attentionToggle.attributes['aria-expanded'], 'false');
+    assert.doesNotThrow(() => view.attentionToggle.listeners.click());
+    view.dispose();
+});
 
 test('searches and clears all followed markets without navigating or reloading', async () => {
     const view = await searchHarness();
@@ -162,7 +224,7 @@ test('ignores out-of-order searches, preserves results on failure and clears the
 });
 
 test('debounces typing and fetches the chosen results page without navigation', async () => {
-    const view = await searchHarness();
+    const view = await searchHarness({ owner: false });
     view.input.value = 'b'; view.input.listeners.input();
     view.input.value = 'bi'; view.input.listeners.input();
     view.input.value = 'bit'; view.input.listeners.input();

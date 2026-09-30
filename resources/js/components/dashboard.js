@@ -5,6 +5,17 @@ export function mountDashboardMarkets(root) {
     const input = form.querySelector('input');
     const results = root.querySelector('[data-market-results]');
     const status = root.querySelector('[data-search-status]');
+    const attentionToggle = document.querySelector('[data-attention-toggle]');
+    const attentionPanel = () => results.querySelector('[data-dashboard-attention]');
+    const reflectAttention = () => attentionToggle?.setAttribute('aria-expanded', attentionPanel()?.open ? 'true' : 'false');
+    const attentionChanged = event => { if (event.target === attentionPanel()) reflectAttention(); };
+    const toggleAttention = () => {
+        const panel = attentionPanel();
+        if (!panel) return;
+        panel.open = !panel.open;
+        reflectAttention();
+        if (panel.open) panel.scrollIntoView({ block: 'nearest' });
+    };
     let timer, request, revision = 0, disposed = false;
     const logos = () => results.querySelectorAll('.dashboard-exchange-logo img').forEach(image => {
         const fallback = () => image.remove();
@@ -26,14 +37,18 @@ export function mountDashboardMarkets(root) {
         try {
             const response = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store', signal: request.signal });
             if ([401, 403, 419].includes(response.status) || response.redirected) {
-                if (current === revision) results.replaceChildren();
+                if (current === revision) { results.replaceChildren(); reflectAttention(); }
                 throw new Error('Your session has changed. Reload the dashboard.');
             }
             if (!response.ok) throw new Error('Search failed. Your previous results are still shown; try again.');
             const data = await response.json();
             if (disposed || current !== revision) return;
             if (typeof data.html !== 'string' || !Number.isInteger(data.count)) throw new Error('Unexpected search response. Try again.');
+            const attentionOpen = attentionPanel()?.open ?? false;
             results.innerHTML = data.html;
+            const panel = attentionPanel();
+            if (panel) panel.open = attentionOpen;
+            reflectAttention();
             logos();
             status.textContent = `${data.count} matching market${data.count === 1 ? '' : 's'}`;
             const attention = document.querySelector('[data-attention-count]');
@@ -68,12 +83,17 @@ export function mountDashboardMarkets(root) {
         input.removeEventListener('input', changed);
         form.removeEventListener('submit', submit);
         results.removeEventListener('click', paginate);
+        results.removeEventListener('toggle', attentionChanged, true);
+        attentionToggle?.removeEventListener('click', toggleAttention);
     };
     input.addEventListener('input', changed);
     form.addEventListener('submit', submit);
     results.addEventListener('click', paginate);
+    results.addEventListener('toggle', attentionChanged, true);
+    attentionToggle?.addEventListener('click', toggleAttention);
     window.addEventListener('pagehide', event => { if (!event.persisted) dispose(); }, { once: true });
     logos();
+    reflectAttention();
     return dispose;
 }
 
