@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\User;
 use Tests\TestCase;
 
 uses(TestCase::class);
@@ -95,7 +96,7 @@ it('renders a branded welcome page with guest navigation', function () {
 });
 
 it('retains authenticated navigation on the welcome page', function () {
-    $this->actingAs(new App\Models\User);
+    $this->actingAs(new User);
 
     $this->view('welcome')
         ->assertSee('href="'.route('dashboard').'"', false)
@@ -125,7 +126,6 @@ it('ships a nonempty ICO favicon', function () {
     expect(strlen($contents))->toBeGreaterThan(6)
         ->and(substr($contents, 0, 4))->toBe("\x00\x00\x01\x00");
 });
-
 
 it('does not place an opaque black tile behind the sidebar logo', function () {
     $this->blade('<x-app-logo />')

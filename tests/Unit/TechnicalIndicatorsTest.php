@@ -35,7 +35,6 @@ function m0Technical(): object
     };
 }
 
-
 it('keeps SMA warm-up and rolling-window precision', function () {
     $candles = [];
     foreach ([
@@ -275,4 +274,3 @@ it('keeps ROC neutral until the requested lag exists and then uses the exact bas
         '21.0000000000000000',
     ]);
 });
-

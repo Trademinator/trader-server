@@ -23,14 +23,14 @@ function createContextMarket(string $exchangeClass, string $symbol, string $coin
     CoinGeckoMarketMapping::query()->updateOrCreate(
         ['market_id' => $market->market_id],
         [
-        'base_symbol' => strtoupper(explode('/', $symbol, 2)[0]),
-        'vs_currency' => $vsCurrency,
-        'coin_id' => $coinId,
-        'category' => $category,
-        'status' => 'resolved',
-        'resolved_at' => now(),
-        'last_error' => null,
-    ]);
+            'base_symbol' => strtoupper(explode('/', $symbol, 2)[0]),
+            'vs_currency' => $vsCurrency,
+            'coin_id' => $coinId,
+            'category' => $category,
+            'status' => 'resolved',
+            'resolved_at' => now(),
+            'last_error' => null,
+        ]);
 
     return $market;
 }

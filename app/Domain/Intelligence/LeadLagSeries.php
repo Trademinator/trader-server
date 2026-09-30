@@ -3,7 +3,7 @@
 namespace App\Domain\Intelligence;
 
 use App\Domain\MarketData\CandleTimeframe;
-use App\Models\Ticker;
+use App\Repositories\TickerRepository;
 
 /** UTC close-indexed observations. Missing bars are never forward-filled. */
 final class LeadLagSeries
@@ -23,11 +23,8 @@ final class LeadLagSeries
         }
         $result = [];
         $previous = null;
-        foreach (Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
-            ->whereBetween('microtimestamp', [max(0, $fromMs - 2 * $step), $asOfMs - $step])
-            ->orderBy('microtimestamp')->cursor() as $ticker) {
-            $bar = json_decode($ticker->payload, true);
-            $time = (int) $ticker->microtimestamp;
+        foreach (app(TickerRepository::class)->streamHistory($exchange, $symbol, $period,
+            max(0, $fromMs - 2 * $step), $asOfMs - $step) as $time => $bar) {
             $valid = is_array($bar);
             foreach (['open', 'high', 'low', 'close', 'volume'] as $key) {
                 $valid = $valid && is_numeric($bar[$key] ?? null) && is_finite((float) $bar[$key]);

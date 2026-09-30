@@ -851,3 +851,59 @@ php artisan trademinator:refresh-market-discovery
 ```
 
 This is separate from `trademinator:collect-market-context`, whose subscription-driven, timestamped snapshots remain the only CoinGecko context eligible for M2 training. See [M4.2 operating notes](CRONTABS.md#m42-dashboard-recording-and-discovery).
+
+## trademinator:archive-tickers
+
+Signature: `trademinator:archive-tickers {exchange} {symbol} {period} {month : YYYY-MM} {--dry-run}`
+
+Description: Export one immutable monthly ticker shard to verified cold storage without pruning hot rows.
+
+Creates one monthly gzip JSONL shard and adjacent manifest. `--dry-run` reports the planned files and source row count without writing the archive.
+
+## trademinator:archive-eligible-tickers
+
+Signature: `trademinator:archive-eligible-tickers {--dry-run}`
+
+Description: Export and verify complete ticker months older than the configured hot-retention boundary; never prunes rows.
+
+Scans stored market/period series and archives complete months older than `ARCHIVE_AFTER_DAYS`. This is the scheduled M4.3 command. It deliberately leaves all hot rows untouched.
+
+## trademinator:archive-verify
+
+Signature: `trademinator:archive-verify {manifest? : Relative manifest path}`
+
+Description: Verify one or all archive shards, including checksum, row count and boundary keys.
+
+With no argument, verifies every manifest under the configured archive root and reports catalog gaps, overlaps and failures.
+
+## trademinator:archive-rebuild-catalog
+
+Signature: `trademinator:archive-rebuild-catalog`
+
+Description: Rebuild the active archive catalog by scanning and verifying filesystem manifests.
+
+Use after catalog loss or migration. The filesystem manifests remain the reconstructable source for archive metadata.
+
+## trademinator:archive-restore
+
+Signature: `trademinator:archive-restore {manifest : Relative manifest path} {--from= : Inclusive millisecond timestamp} {--to= : Inclusive millisecond timestamp} {--validate-only}`
+
+Description: Validate or restore one verified archive shard into hot storage without overwriting conflicts.
+
+The optional range must remain inside the selected manifest coverage. Identical rows are idempotent; conflicting rows fail.
+
+## trademinator:portable-export
+
+Signature: `trademinator:portable-export {path} {--dataset=* : Logical datasets; currently tickers}`
+
+Description: Create a database-independent gzip JSONL export. Secrets are excluded.
+
+The initial portable dataset is ticker history. Application keys, passwords, exchange/API credentials and other secrets are not exported.
+
+## trademinator:portable-import
+
+Signature: `trademinator:portable-import {path} {--validate-only}`
+
+Description: Validate or import a portable gzip JSONL package without silently overwriting conflicts.
+
+Run with `--validate-only` before mutation. Identical records are accepted on re-import; differing records fail instead of being overwritten.

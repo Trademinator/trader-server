@@ -43,3 +43,8 @@ Schedule::command('trademinator:dispatch-lead-lag')
 
 Schedule::command('trademinator:prune-access-statistics')
     ->dailyAt('02:40')->onOneServer()->withoutOverlapping(60);
+
+// M4.3 exports and independently verifies complete old months. It never
+// deletes hot rows; archive pruning remains deliberately disabled.
+Schedule::command('trademinator:archive-eligible-tickers')
+    ->dailyAt('04:10')->onOneServer()->withoutOverlapping(120)->runInBackground();

@@ -3,6 +3,7 @@
 use App\Domain\Features\ContextFeatures;
 use App\Domain\Features\FeatureEngine;
 use App\Traits\Technical;
+use Tests\Support\TickerFixtures;
 
 function m2Candles(int $count = 80, bool $flat = false): array
 {
@@ -134,7 +135,7 @@ it('uses Technical as the single source of truth for technical indicator math', 
 });
 
 it('produces identical features for different batch sizes including gaps and a live last candle', function () {
-    $source = \Tests\Support\TickerFixtures::candles(245);
+    $source = TickerFixtures::candles(245);
     $keys = array_keys($source);
     foreach (array_slice($keys, 90, 5) as $key) {
         unset($source[$key]);
@@ -155,7 +156,7 @@ it('produces identical features for different batch sizes including gaps and a l
 });
 
 it('ignores incoming indicator cache fields instead of trusting another history or feature version', function () {
-    $source = \Tests\Support\TickerFixtures::candles(65);
+    $source = TickerFixtures::candles(65);
     $engine = new FeatureEngine;
     $expected = iterator_to_array($engine->rows($source, '1m', PHP_INT_MAX));
     foreach ($source as &$row) {

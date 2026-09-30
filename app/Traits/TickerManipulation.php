@@ -14,7 +14,7 @@ trait TickerManipulation
      * Name CCXT OHLCV columns. Reindex by Unix seconds when requested; retain
      * the original millisecond timestamp in every candle. No price rounding.
      *
-     * @param array<int|string, array<int|string, mixed>> $tickers
+     * @param  array<int|string, array<int|string, mixed>>  $tickers
      * @return array<int|string, array<string, mixed>>
      */
     public function normalize_ticker(array &$tickers, bool $reindex = false, string $indexUnit = 'seconds'): array
@@ -85,7 +85,7 @@ trait TickerManipulation
      * re-seed from two or three periods of raw prices. Initial warm-up can keep
      * up to (multiplier + 2) * period rows before it is safe to trim.
      *
-     * @param array<int|string, array<string, mixed>> $tickers
+     * @param  array<int|string, array<string, mixed>>  $tickers
      * @return array<int|string, array<string, mixed>>
      */
     public function ticker_slice(array $tickers, int $period, int $multiplier = 3): array
@@ -123,9 +123,9 @@ trait TickerManipulation
      * callback mutates its array argument by reference. Only new rows are
      * emitted; overlap and boundary bookkeeping never reach callers or DB.
      *
-     * @param iterable<int|string, array<string, mixed>> $tickers Chronological, unique keys.
-     * @param callable(array&): mixed $calculate
-     * @param null|callable(array, array): bool $continuous Optional gap/segment check.
+     * @param  iterable<int|string, array<string, mixed>>  $tickers  Chronological, unique keys.
+     * @param  callable(array&): mixed  $calculate
+     * @param  null|callable(array, array): bool  $continuous  Optional gap/segment check.
      * @return Generator<int|string, array<string, mixed>>
      */
     public function ticker_slide(iterable $tickers, callable $calculate, int $period, int $multiplier = 3, int $batchSize = 500, ?callable $continuous = null): Generator

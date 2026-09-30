@@ -2,8 +2,8 @@
 
 namespace App\Console\Commands;
 
-use App\Domain\MarketData\MarketDataSynchronizer;
 use App\Domain\MarketData\CandleSyncPages;
+use App\Domain\MarketData\MarketDataSynchronizer;
 use App\Jobs\SyncMarketCandles;
 use App\Repositories\TickerRepository;
 use Illuminate\Console\Command;

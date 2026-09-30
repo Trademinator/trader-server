@@ -2,9 +2,10 @@
 
 namespace App\Domain\Features;
 
+use App\Domain\Archive\FeatureCheckpointStore;
 use App\Domain\Operations\ActionLog;
 use App\Models\CoinGeckoMarketMapping;
-use App\Models\Ticker;
+use App\Repositories\TickerRepository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -20,17 +21,20 @@ final class FeatureBuilder
             throw new RuntimeException('Features are already being built for this market and period.');
         }
         try {
-            // Replay from the earliest stored candle for reproducible EMA/Wilder state.
-            // lazy() bounds DB memory; features never rewrite the source ticker payload.
-            $query = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
-                ->where('microtimestamp', '<=', $cutoffMs)->orderBy('microtimestamp');
-            $candles = (function () use ($query) {
-                foreach ($query->lazy(500) as $ticker) {
-                    $raw = json_decode($ticker->payload, true, flags: JSON_THROW_ON_ERROR);
-                    $raw['microtimestamp'] = (int) $ticker->microtimestamp;
-                    yield $raw;
+            $tickers = app(TickerRepository::class);
+            $checkpoints = app(FeatureCheckpointStore::class);
+            $checkpoint = $fromMs === null ? null : $checkpoints->before($exchange, $symbol, $period, $fromMs);
+            $sourceFrom = 0;
+            if ($checkpoint !== null) {
+                $elapsed = [];
+                $anchorFrom = max(0, (int) $checkpoint['through_ms'] - 2_592_000_000);
+                foreach ($tickers->streamHistory($exchange, $symbol, $period, $anchorFrom, (int) $checkpoint['through_ms']) as $timestamp => $raw) {
+                    $elapsed[$timestamp] = $raw['close'];
                 }
-            })();
+                $checkpoint['elapsed_closes'] = $elapsed;
+                $sourceFrom = (int) $checkpoint['through_ms'] + 1;
+            }
+            $candles = $tickers->streamHistory($exchange, $symbol, $period, $sourceFrom, $cutoffMs);
 
             $mapping = CoinGeckoMarketMapping::query()
                 ->where('status', 'resolved')
@@ -46,6 +50,7 @@ final class FeatureBuilder
             $pending = [];
             $count = 0;
             $started = microtime(true);
+            $latestCheckpoint = null;
             $snapshot = null;
             $snapshots = $mapping === null ? null : DB::table('market_context_snapshots')
                 ->where('coin_id', $mapping->coin_id)
@@ -56,7 +61,10 @@ final class FeatureBuilder
                 ->lazy(500)
                 ->getIterator();
             $snapshots?->rewind();
-            foreach ((new FeatureEngine)->rows($candles, $period, $cutoffMs) as $row) {
+            foreach ((new FeatureEngine)->rows($candles, $period, $cutoffMs, checkpoint: $checkpoint,
+                checkpointCallback: function (array $state) use (&$latestCheckpoint): void {
+                    $latestCheckpoint = $state;
+                }) as $row) {
                 if (microtime(true) - $started > 540) {
                     throw new RuntimeException('Feature replay exceeded 540 seconds; reduce the stored history or run a dedicated offline dataset build.');
                 }
@@ -103,6 +111,10 @@ final class FeatureBuilder
             }
             if ($pending) {
                 $this->save($pending);
+            }
+            if ($latestCheckpoint !== null) {
+                $latestCheckpoint['feature_version'] = FeatureEngine::VERSION;
+                $checkpoints->save($exchange, $symbol, $period, (int) $latestCheckpoint['through_ms'], $latestCheckpoint);
             }
 
             app(ActionLog::class)->write('features.built', ['exchange' => $exchange,

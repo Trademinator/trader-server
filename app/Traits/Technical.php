@@ -134,6 +134,7 @@ trait Technical
             $count++;
             if ($seed !== null && $this->ticker_cached($ticker, $key)) {
                 $previous = (string) $ticker[$key];
+
                 continue;
             }
             $value = $this->bcconv($ticker[$index]);
@@ -635,6 +636,7 @@ trait Technical
             }
             if (count($buffer) < $period1) {
                 $ticker[$fast] = bcadd('50', '0', $scale);
+
                 continue;
             }
             $min = $this->bcmin(...$buffer);
@@ -870,6 +872,7 @@ trait Technical
                 $averageGain = (string) $ticker[$gainKey];
                 $averageLoss = (string) $ticker[$lossKey];
                 $previousClose = $close;
+
                 continue;
             }
             if ($previousClose === null) {
@@ -1071,6 +1074,7 @@ trait Technical
             $count++;
             if ($seed !== null && $this->ticker_cached($ticker, $key)) {
                 $previous = (string) $ticker[$key];
+
                 continue;
             }
             $value = $this->bcconv($ticker[$index]);

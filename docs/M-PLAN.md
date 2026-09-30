@@ -23,7 +23,7 @@ The Server collects canonical exchange candles, computes features, trains and va
 | M4 — Validated intelligence | Existing baseline | KNN selection and validation, patterns, model registry, abstention, readiness and scheduled shared-market training. [Details](CLI.md#m4-intelligence-workflow-and-upgrade). |
 | M4.1 — Cross-exchange evidence | Existing baseline | Point-in-time lead/lag evidence, daily reevaluation and downstream model validation. [Details](CLI.md#m41-cross-exchange-leadlag-and-m4-completion). |
 | **M4.2 — Dashboard and observation history** | **Implemented here** | Read-only subscription overview, closed-candle charts, persistent Server observations, readiness, changes since visit, attention states, broad market context and explained discovery. Acceptance below. |
-| **M4.3 — Portable archive and cold-history storage** | **Planned** | Keep active database tables bounded by moving eligible immutable history into verified monthly compressed archives. Add a portable database-independent export/import format, archive catalog, transparent cold-history reads, integrity verification, owner archive tools and safe restore/rebuild behavior. Acceptance below. |
+| **M4.3 — Portable archive and cold-history storage** | **Implemented** | Verified monthly gzip JSONL ticker archives, portable data contract, archive catalog, transparent hot+cold ticker reads, feature checkpoints, OWNER recovery tools and portable export/import. Initial rollout remains export/verify only: automatic pruning is disabled. [Details](M4.3-README.md). |
 | M5 — Decisions, paper trading and Client integration | Planned | Subscription-gated Client API, explicit Client trading selection, decision/risk checks, paper evaluation and authenticated optional execution reporting. No orders or Client execution are implemented by M4.2. |
 | M6 — Commercial access | Planned | Stripe/PayPal billing, renewals, entitlements and limits through the existing market-subscription entitlement boundary. Purchasing a plan must never enable trading. |
 
@@ -73,7 +73,7 @@ The subscription access requirement is enforced for the Server dashboard/chart/i
 
 ## Deployment and verification
 
-The dashboard migration for the journal, dismissals and visit timestamp is already included in GitHub `main`. This integration adds no further migrations or Composer/npm dependencies; use the current lockfiles, including the existing GeoIP dependency. Build frontend assets and apply any pending migrations before serving the new dashboard or schedules:
+The dashboard migration for the journal, dismissals and visit timestamp is already included in GitHub `main`. M4.3 adds the archive catalog and feature-checkpoint migration but no Composer/npm dependency. Build frontend assets and apply pending migrations before serving the archive tools or schedules:
 
 ```bash
 composer install --no-dev --optimize-autoloader

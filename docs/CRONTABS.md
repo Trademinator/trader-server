@@ -154,3 +154,9 @@ Apply the dashboard migration and rebuild frontend assets before serving the new
 `trademinator:refresh-market-discovery` runs hourly at minute 10 in the scheduler background and holds a shared cache lock for up to 15 minutes. It does not use a queue worker. `DASHBOARD_DISCOVERY_ENABLED`, `COINGECKO_ENABLED` and `COINGECKO_API_KEY` control optional discovery. A default refresh makes at most 15 CoinGecko HTTP requests across all users, with the existing client timeouts; review your provider quota. Failure keeps previously cached data only while its source timestamps remain within two hours. Discovery creates no feeds, subscriptions or canonical training snapshots. The existing hourly `collect-market-context` schedule remains unchanged.
 
 After deployment, check `php artisan schedule:list`, the intelligence worker log, `php artisan queue:failed` and the dashboard's latest recorded/source times. The scheduler's timetable is not a worker heartbeat. For an immediate observation, use the dispatch/drain examples in [CLI.md](CLI.md#trademinatordispatch-market-signals). The [M plan](M-PLAN.md) documents the user-facing acceptance contract.
+
+## M4.3 archive export and verification
+
+The Laravel scheduler runs `trademinator:archive-eligible-tickers` daily at **04:10** in the application timezone using `onOneServer()`, `withoutOverlapping(120)`, and `runInBackground()`. It exports and verifies complete monthly ticker shards older than `ARCHIVE_AFTER_DAYS`. It never prunes hot rows.
+
+No daemon is required. Keep the existing once-per-minute `schedule:run` cron and ensure `ARCHIVE_PATH` points to durable shared storage when multiple application nodes must read the same cold-history tier.

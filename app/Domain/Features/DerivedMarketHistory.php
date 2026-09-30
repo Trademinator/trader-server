@@ -47,13 +47,11 @@ final class DerivedMarketHistory
             $started = microtime(true);
             DB::transaction(function () use ($exchange, $symbol, $base, $period, $fromMs, $toMs, $asOfMs, $target, $started, &$count): void {
                 $source = (function () use ($exchange, $symbol, $base, $fromMs, $asOfMs, $started) {
-                    foreach (Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $base)
-                        ->whereBetween('microtimestamp', [$fromMs, $asOfMs])->orderBy('microtimestamp')->lazy(500) as $ticker) {
+                    foreach ($this->tickers->streamHistory($exchange, $symbol, $base, $fromMs, $asOfMs) as $timestamp => $raw) {
                         if (microtime(true) - $started > 240) {
                             throw new RuntimeException('Derived history time budget exceeded while reading base candles.');
                         }
-                        $raw = json_decode($ticker->payload, true, flags: JSON_THROW_ON_ERROR);
-                        $raw['microtimestamp'] = (int) $ticker->microtimestamp;
+                        $raw['microtimestamp'] = $timestamp;
                         yield $raw;
                     }
                 })();

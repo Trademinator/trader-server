@@ -69,7 +69,7 @@ return new class extends Migration
         $result = DB::selectOne('SELECT @@innodb_file_per_table AS enabled');
 
         if ((int) ($result->enabled ?? 0) !== 1) {
-            throw new \RuntimeException(
+            throw new RuntimeException(
                 'MariaDB InnoDB page compression requires innodb_file_per_table=ON.'
             );
         }

@@ -1,7 +1,6 @@
 <?php
 
 use App\Domain\Features\FeatureEngine;
-
 use App\Domain\Research\BaselineBacktester;
 use App\Domain\Research\WalkForward;
 

@@ -2,8 +2,8 @@
 
 namespace App\Jobs;
 
-use App\Domain\MarketData\MarketDataSynchronizer;
 use App\Domain\MarketData\CandleSyncPages;
+use App\Domain\MarketData\MarketDataSynchronizer;
 use App\Repositories\TickerRepository;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;

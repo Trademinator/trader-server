@@ -75,6 +75,5 @@ it('claims a due feed only once and ignores unsubscribed feeds', function () {
     expect($dispatcher->dispatchDue())->toBe(1)
         ->and($dispatcher->dispatchDue())->toBe(0);
     Bus::assertDispatchedTimes(CollectMarketFeed::class, 1);
-    Bus::assertDispatched(CollectMarketFeed::class, fn (CollectMarketFeed $job): bool =>
-        $job->marketId === $market->market_id && $job->leaseToken === MarketFeed::query()->first()->lease_token);
+    Bus::assertDispatched(CollectMarketFeed::class, fn (CollectMarketFeed $job): bool => $job->marketId === $market->market_id && $job->leaseToken === MarketFeed::query()->first()->lease_token);
 });

@@ -37,18 +37,12 @@ final class FeatureEngine
     }
 
     /** @return \Generator<array> Chronological, completed candles only. */
-    public function rows(iterable $candles, string $period, int $cutoffMs, int $batchSize = 500): \Generator
+    public function rows(iterable $candles, string $period, int $cutoffMs, int $batchSize = 500,
+        ?array $checkpoint = null, ?callable $checkpointCallback = null): \Generator
     {
-        $calculated = $this->ticker_slide(
-            $this->closedCandles($candles, $period, $cutoffMs),
-            $this->calculateSlice(...),
-            period: 20,
-            multiplier: 3,
-            batchSize: $batchSize,
-            continuous: static fn (array $previous, array $current): bool => $previous['history_start_ms'] === $current['history_start_ms'],
-        );
-        $elapsedCloses = [];
-        $historyStart = null;
+        $calculated = $this->calculatedCandles($candles, $period, $cutoffMs, $batchSize, $checkpoint, $checkpointCallback);
+        $elapsedCloses = $checkpoint['elapsed_closes'] ?? [];
+        $historyStart = $checkpoint['history_start_ms'] ?? null;
         $scale = EXCHANGE_ROUND_DECIMALS * 2;
         foreach ($calculated as $candle) {
             $timestamp = $candle['microtimestamp'];
@@ -119,6 +113,63 @@ final class FeatureEngine
         }
     }
 
+    /** Continue recursive indicator state from a trusted M4.3 checkpoint. */
+    private function calculatedCandles(iterable $candles, string $period, int $cutoffMs, int $batchSize,
+        ?array $checkpoint, ?callable $checkpointCallback): \Generator
+    {
+        $carry = $checkpoint['carry'] ?? [];
+        $seed = [
+            'previous' => $checkpoint['through_ms'] ?? null,
+            'history_start_ms' => $checkpoint['history_start_ms'] ?? null,
+            'count' => (int) ($checkpoint['feature_count'] ?? 0),
+        ];
+        $pending = [];
+        $flush = function () use (&$pending, &$carry, $checkpointCallback): \Generator {
+            if ($pending === []) {
+                return;
+            }
+            $newKeys = array_keys($pending);
+            $slice = $carry + $pending;
+            $this->calculateSlice($slice);
+            $carry = $this->ticker_slice($slice, 20, 3);
+            $last = end($carry);
+            if (is_array($last)) {
+                $checkpointCallback?->__invoke([
+                    'carry' => array_values($carry),
+                    'through_ms' => (int) $last['microtimestamp'],
+                    'history_start_ms' => (int) $last['history_start_ms'],
+                    'feature_count' => (int) ($last['__feature_count'] ?? 0),
+                ]);
+            }
+            $pending = [];
+            foreach ($newKeys as $key) {
+                $row = $slice[$key];
+                unset($row['__ticker_position'], $row['__ticker_seed'], $row['__ticker_cached']);
+                yield $key => $row;
+            }
+        };
+
+        foreach ($this->closedCandles($candles, $period, $cutoffMs, $seed) as $key => $row) {
+            $pendingLast = end($pending);
+            if (is_array($pendingLast) && ($pendingLast['history_start_ms'] ?? null) !== ($row['history_start_ms'] ?? null)) {
+                yield from $flush();
+                $carry = [];
+            } elseif ($pending === []) {
+                $carryLast = end($carry);
+                if (is_array($carryLast) && ($carryLast['history_start_ms'] ?? null) !== ($row['history_start_ms'] ?? null)) {
+                    $carry = [];
+                }
+            }
+            $pending[$key] = $row;
+            if (count($pending) >= $batchSize) {
+                yield from $flush();
+            }
+        }
+        if ($pending !== []) {
+            yield from $flush();
+        }
+    }
+
     /** The ordinary public trait APIs are the sole indicator implementations. */
     private function calculateSlice(array &$slice): void
     {
@@ -138,11 +189,12 @@ final class FeatureEngine
     }
 
     /** @return \Generator<int, array<string, mixed>> */
-    private function closedCandles(iterable $candles, string $period, int $cutoffMs): \Generator
+    private function closedCandles(iterable $candles, string $period, int $cutoffMs, array $seed = []): \Generator
     {
         $timeframe = new CandleTimeframe;
-        $previous = $historyStart = null;
-        $count = 0;
+        $previous = $seed['previous'] ?? null;
+        $historyStart = $seed['history_start_ms'] ?? null;
+        $count = (int) ($seed['count'] ?? 0);
         foreach ($candles as $raw) {
             if (! is_array($raw)) {
                 throw new InvalidArgumentException('Each candle must be an array.');

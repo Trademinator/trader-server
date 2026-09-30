@@ -14,7 +14,7 @@ final class CandlePeriodSelector
     public function __construct(private readonly ExchangeRepository $exchanges, private readonly CandleQuality $quality) {}
 
     /** @param list<string> $periods
-     *  @return array<string, mixed>|null
+     * @return array<string, mixed>|null
      */
     public function select(string $exchange, string $symbol, array $periods, float $tickSize, int $from, int $to, float $threshold = 0.7, float $coverage = 0.8, int $minimum = 50, int $sample = 250): ?array
     {
@@ -37,8 +37,7 @@ final class CandlePeriodSelector
         $closedBefore = min($to * 1000, time() * 1000);
         foreach ($periods as $period) {
             $candles = $this->exchanges->fetch($symbol, $period, $from, $to);
-            $complete = array_values(array_filter($candles, fn (array $candle): bool =>
-                $timeframe->next((int) $candle['microtimestamp'], $period) <= $closedBefore));
+            $complete = array_values(array_filter($candles, fn (array $candle): bool => $timeframe->next((int) $candle['microtimestamp'], $period) <= $closedBefore));
             $complete = array_slice($complete, -$sample);
             $last = end($complete);
             if ($last !== false && $timeframe->next($timeframe->next((int) $last['microtimestamp'], $period), $period) < $closedBefore) {

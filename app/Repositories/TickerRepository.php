@@ -2,11 +2,15 @@
 
 namespace App\Repositories;
 
+use App\Domain\Archive\ArchiveIntegrityException;
+use App\Domain\Archive\PortableJson;
+use App\Domain\Archive\TickerArchive;
 use App\Domain\Operations\ActionLog;
 use App\Models\Ticker;
 use App\Traits\TickerManipulation;
 use ccxt\Exchange;
 use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use JasonGuru\LaravelMakeRepository\Repository\BaseRepository;
@@ -53,29 +57,69 @@ class TickerRepository extends BaseRepository
 
     public function fetchFromDB(string $exchange, string $symbol, string $period, ?int $startFetching = null, ?int $endFetching = null): array
     {
-        $tickers_q = Ticker::where('exchange', $exchange)
-            ->where('symbol', $symbol)
-            ->where('period', $period)
-            ->when(! is_null($startFetching), function ($query) use ($startFetching) {
-                return $query->where('microtimestamp', '>=', $startFetching);
-            })
-            ->when(! is_null($endFetching), function ($query) use ($endFetching) {
-                return $query->where('microtimestamp', '<=', $endFetching);
-            })
-            ->orderBy('microtimestamp');
-
-        if (App::hasDebugModeEnabled()) {
-            Log::debug('SQL Query: '.$tickers_q->toRawSql());
-        }
-
-        $rawTickers = $tickers_q->get()->toArray();
         $tickers = [];
-
-        foreach ($rawTickers as $raw) {
-            $tickers[] = json_decode($raw['payload'], true, flags: JSON_THROW_ON_ERROR);
+        foreach ($this->streamHistory($exchange, $symbol, $period, $startFetching, $endFetching) as $raw) {
+            $tickers[] = $raw;
         }
 
         return $tickers;
+    }
+
+    /**
+     * Chronological hot+cold history. Only the required archive shards are
+     * decompressed, and the two sorted streams are merged one row at a time.
+     * Identical overlap is accepted; conflicting overlap is an integrity error.
+     *
+     * @return \Generator<int, array<string, mixed>>
+     */
+    public function streamHistory(string $exchange, string $symbol, string $period, ?int $fromMs = null, ?int $toMs = null): \Generator
+    {
+        $fromMs ??= 0;
+        $toMs ??= PHP_INT_MAX;
+        $query = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+            ->whereBetween('microtimestamp', [$fromMs, $toMs])->orderBy('microtimestamp');
+        if (App::hasDebugModeEnabled()) {
+            Log::debug('Hot ticker SQL: '.$query->toRawSql());
+        }
+        $hot = (function () use ($query): \Generator {
+            foreach ($query->lazy(500) as $ticker) {
+                $payload = json_decode($ticker->payload, true, flags: JSON_THROW_ON_ERROR);
+                $payload['microtimestamp'] = (int) $ticker->microtimestamp;
+                yield (int) $ticker->microtimestamp => $payload;
+            }
+        })();
+        $cold = config('archive.enabled')
+            ? app(TickerArchive::class)->stream($exchange, $symbol, $period, $fromMs, $toMs)
+            : (function (): \Generator {
+                if (false) {
+                    yield;
+                }
+            })();
+        $hot->rewind();
+        $cold->rewind();
+        while ($hot->valid() || $cold->valid()) {
+            if (! $cold->valid() || ($hot->valid() && $hot->key() < $cold->key())) {
+                yield (int) $hot->key() => $hot->current();
+                $hot->next();
+
+                continue;
+            }
+            $coldRecord = $cold->current();
+            $coldPayload = $coldRecord['payload'];
+            $coldPayload['microtimestamp'] = (int) $cold->key();
+            if (! $hot->valid() || $cold->key() < $hot->key()) {
+                yield (int) $cold->key() => $coldPayload;
+                $cold->next();
+
+                continue;
+            }
+            if (PortableJson::encode($hot->current()) !== PortableJson::encode($coldPayload)) {
+                throw new ArchiveIntegrityException("Hot/cold ticker conflict at {$exchange}|{$symbol}|{$period}|{$hot->key()}.");
+            }
+            yield (int) $hot->key() => $hot->current();
+            $hot->next();
+            $cold->next();
+        }
     }
 
     public function latestTimestamp(string $exchange, string $symbol, string $period): ?int
@@ -83,15 +127,25 @@ class TickerRepository extends BaseRepository
         $timestamp = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)
             ->where('period', $period)->max('microtimestamp');
 
-        return $timestamp === null ? null : (int) $timestamp;
+        $archived = config('archive.enabled') ? DB::table('archive_catalog')->where('logical_type', 'tickers')
+            ->where('verification_state', 'verified')->where('exchange', $exchange)->where('symbol', $symbol)
+            ->where('period', $period)->max('range_end_ms') : null;
+        if ($timestamp === null && $archived === null) {
+            return null;
+        }
+
+        return max((int) ($timestamp ?? 0), (int) ($archived ?? 0));
     }
 
     /** @return list<int> */
     public function timestamps(string $exchange, string $symbol, string $period, int $fromMs, int $toMs): array
     {
-        return Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)
-            ->where('period', $period)->whereBetween('microtimestamp', [$fromMs, $toMs])
-            ->orderBy('microtimestamp')->pluck('microtimestamp')->map(fn ($value): int => (int) $value)->all();
+        $timestamps = [];
+        foreach ($this->streamHistory($exchange, $symbol, $period, $fromMs, $toMs) as $timestamp => $_) {
+            $timestamps[] = $timestamp;
+        }
+
+        return $timestamps;
     }
 
     // array_merge breaks timestamp keys, so normalize and reindex canonically.
