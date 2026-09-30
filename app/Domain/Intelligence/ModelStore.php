@@ -45,7 +45,7 @@ final class ModelStore
         $bytes = serialize($artifact);
         $report = $artifact;
         unset($report['knowledge'], $report['patterns'], $report['lead_lag']['models']);
-        unset($report['human_guidance']['estimator']);
+        unset($report['human_guidance']['estimator'], $report['candle_guidance']['estimator']);
         $report['patterns'] = $artifact['patterns']['report'];
         try {
             if (file_put_contents($path.'.tmp', $bytes, LOCK_EX) !== strlen($bytes)

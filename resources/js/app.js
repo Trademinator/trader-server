@@ -46,6 +46,12 @@ if (humanTrainingChart) {
         humanTrainingChart.querySelector('[data-status]').textContent = 'The chart could not load. Candle values and indicators remain available.'
     })
 }
+const candleTrainingChart = document.querySelector('[data-candle-training-chart]')
+if (candleTrainingChart) {
+    import('./components/candle-training-chart').then(({ mountCandleTrainingChart }) => mountCandleTrainingChart(candleTrainingChart)).catch(() => {
+        candleTrainingChart.querySelector('[data-status]').textContent = 'The chart could not load. Replay navigation, candle values, indicators and action buttons remain available.'
+    })
+}
 const dashboardSuggestions = document.querySelector('[data-dashboard-suggestions]')
 const dashboardMarkets = document.querySelector('[data-dashboard-markets]')
 if (dashboardChart || dashboardSuggestions || dashboardMarkets) {

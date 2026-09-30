@@ -19,6 +19,7 @@ final class IntelligenceTrainer
         private PatternTrainer $patterns,
         private LeadLagIntelligence $leadLag,
         private HumanGuidance $humanGuidance,
+        private CandleGuidance $candleGuidance,
     ) {}
 
     public function train(string $dataset, ?float $deadline = null, ?string $generation = null): array
@@ -115,10 +116,24 @@ final class IntelligenceTrainer
                 $test = $human['test'];
                 $cutoff = $human['cutoff'];
             }
+            $candle = $this->candleGuidance->compare($manifest, $rows, $settings, $deadline);
+            $candleExcluded = 0;
+            if ($candle['bundle']['influence']) {
+                $candleExcluded = count($rows) - count($candle['rows']);
+                $rows = $candle['rows'];
+                $selection = $candle['selection'];
+                $evaluation = $candle['holdout'];
+                $training = $candle['training'];
+                $test = $candle['test'];
+                $cutoff = $candle['cutoff'];
+            }
             $ready = $selection['k'] !== null && ($evaluation['eligible'] ?? false);
             $availableAt = max(array_column($rows, 'label_available_at_ms') ?: [0]);
             if ($human['bundle']['influence']) {
                 $availableAt = max($availableAt, $human['bundle']['reviews_submitted_by_ms']);
+            }
+            if ($candle['bundle']['influence']) {
+                $availableAt = max($availableAt, $candle['bundle']['labels_updated_by_ms']);
             }
             $knowledge = array_map(fn (array $row): array => [
                 'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
@@ -131,6 +146,7 @@ final class IntelligenceTrainer
                 'normalization' => NormalizedVector::VERSION, 'keys' => $manifest['keys'],
                 'lead_lag' => $leadLagBundle, 'lead_lag_keys' => $leadLagBundle['keys'],
                 'human_guidance' => $human['bundle'], 'human_keys' => $human['bundle']['keys'],
+                'candle_guidance' => $candle['bundle'], 'candle_keys' => $candle['bundle']['keys'],
                 'regime_settings' => ['super_confidence' => 0.8, 'super_effective_neighbors' => 6.0],
                 'pattern_keys' => $patternKeys, 'label_definition' => $manifest['label_definition'],
                 'trained_as_of_ms' => $manifest['as_of_ms'], 'available_at_ms' => $availableAt,
@@ -141,8 +157,9 @@ final class IntelligenceTrainer
                 'pattern_settings' => $patternSettings,
                 'training_data' => [
                     'schema' => $manifest['schema'], 'source_rows' => $sourceRows,
-                    'usable_rows' => count($rows), 'pattern_excluded_rows' => $sourceRows - count($rows) - $leadLagExcluded - $humanExcluded,
-                    'human_excluded_rows' => $humanExcluded,
+                    'usable_rows' => count($rows),
+                    'pattern_excluded_rows' => $sourceRows - count($rows) - $leadLagExcluded - $humanExcluded - $candleExcluded,
+                    'human_excluded_rows' => $humanExcluded, 'candle_excluded_rows' => $candleExcluded,
                     'lead_lag_excluded_rows' => $leadLagExcluded,
                     'skipped' => $manifest['skipped'] ?? [],
                     'tuning_rows' => count($training), 'holdout_rows' => count($test),

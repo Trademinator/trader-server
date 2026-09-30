@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers\Markets;
 
+use App\Domain\Intelligence\CandleTraining;
 use App\Domain\Intelligence\HumanTraining;
 use App\Domain\Intelligence\HumanTrainingExport;
 use App\Http\Controllers\Controller;
+use App\Models\HumanCandleLabel;
 use App\Models\HumanTrainingReview;
 use App\Models\HumanTrainingSnapshot;
 use Illuminate\Http\RedirectResponse;
@@ -17,13 +19,14 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class HumanTrainingController extends Controller
 {
-    public function index(Request $request, HumanTraining $training): Response
+    public function index(Request $request, HumanTraining $training, CandleTraining $candleTraining): Response
     {
         $reviews = HumanTrainingReview::query()->where('trainer_id', $request->user()->user_id);
         $pending = (clone $reviews)->whereNull('submitted_at')->where('expires_at', '>', now()->format('Y-m-d H:i:s.v'))->first();
 
         return response()->view('markets.human-training', ['datasets' => $training->datasets(),
             'pending' => $pending, 'completed' => (clone $reviews)->whereIn('label', HumanTraining::LABELS)->count(),
+            'candleCompleted' => $candleTraining->count($request->user()),
             'statistics' => Gate::allows('manage-server') ? $this->statistics() : null,
         ])->header('Cache-Control', 'no-store, private');
     }
@@ -50,7 +53,7 @@ class HumanTrainingController extends Controller
             'confidence' => ['nullable', 'integer', 'between:0,100'], 'reason' => ['nullable', 'string', 'max:2000']]);
         $training->submit($request->user(), $review, $data['label'], isset($data['confidence']) ? (int) $data['confidence'] : null, $data['reason'] ?? null);
 
-        return redirect()->route('human-training.show', $review)->with('status', 'Review saved. It will be considered at the next model build.');
+        return redirect()->route('human-training.show', $review)->with('status', 'Trend assessment saved. It will be considered at the next model build.');
     }
 
     public function export(HumanTrainingExport $export): BinaryFileResponse
@@ -87,6 +90,7 @@ class HumanTrainingController extends Controller
             }
         }
 
-        return ['snapshots' => $snapshots->count(), 'shared' => $shared, 'disputed' => $disputed, 'trainers' => $trainers];
+        return ['snapshots' => $snapshots->count(), 'shared' => $shared, 'disputed' => $disputed,
+            'candle_labels' => HumanCandleLabel::query()->count(), 'trainers' => $trainers];
     }
 }

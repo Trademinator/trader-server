@@ -3,42 +3,64 @@
     @include('markets.review-styles')
     <section class="pair-guide pair-review">
         <header class="guide-hero"><p class="review-eyebrow">M4.4 · Human-guided learning</p><h1>Human training</h1>
-            <p>Review a historical market as it looked at a closed candle. Future prices and objective outcome labels stay hidden.</p></header>
+            <p>Use Trend Training to assess a whole frozen setup, or Candle Training to mark the BUY, HOLD or SELL action you would take on individual candles.</p></header>
         @if(session('status'))<p class="guide-notice" role="status">{{ session('status') }}</p>@endif
         @if($errors->any())<div class="guide-notice guide-error" role="alert"><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
-        <section class="guide-panel">
-            <h2>Label a snapshot</h2>
-            <p>You have submitted {{ number_format($completed) }} labels. Your answer is a market opinion; it does not place an order or replace historical outcomes.</p>
-            @if($pending)
-                <a class="guide-button" href="{{ route('human-training.show', $pending->review_id) }}">Continue your current snapshot</a>
-            @elseif($datasets === [])
-                <p>No current semantic dataset is available. The server owner must build market features and run <code>trademinator:knn-build</code> first.</p>
-            @else
-                <form method="POST" action="{{ route('human-training.store') }}">@csrf
-                    <label for="dataset">Market and frozen dataset</label>
-                    <select id="dataset" name="dataset" required>
-                        @foreach($datasets as $dataset)<option value="{{ $dataset['dataset_id'] }}" @selected(old('dataset') === $dataset['dataset_id'])>{{ $dataset['exchange'] }} · {{ $dataset['symbol'] }} · {{ $dataset['period'] }} · {{ number_format($dataset['rows']) }} samples · {{ substr($dataset['dataset_id'], 0, 8) }}</option>@endforeach
-                    </select>
-                    <p class="guide-help">A random unseen snapshot is selected. Model output is revealed only after submission. Each snapshot accepts one answer from you; other trainers can assess it independently.</p>
-                    <button class="guide-button" type="submit">Start a random snapshot</button>
-                </form>
-            @endif
-        </section>
-        <section class="guide-panel"><h2>How your labels are used</h2>
-            <p>Super Bull, Bull, Hold, Bear and Super Bear describe your expectation over the displayed candle horizon. Optional confidence describes your own certainty.</p>
-            <p>The next model build can train an auxiliary opinion model from agreed labels on earlier candles. Machine-only, human-only and combined models are compared on later historical candles. Combined intelligence is used only after passing both tuning and holdout improvement checks. Human-only predictions cannot issue a Server signal.</p>
-            <p class="guide-help">These are retrospective research comparisons, not predictions recorded live in the past. Agreement between trainers measures consistency, not trading ability or expected profit.</p>
+        <div class="guide-grid">
+            <section class="guide-panel">
+                <p class="review-eyebrow">Existing workflow</p>
+                <h2>Trend Training</h2>
+                <p>Assess what you expect over the dataset horizon from a frozen historical snapshot. You have submitted {{ number_format($completed) }} trend labels.</p>
+                @if($pending)
+                    <a class="guide-button" href="{{ route('human-training.show', $pending->review_id) }}">Continue Trend Training</a>
+                @elseif($datasets === [])
+                    <p>No current semantic dataset is available. The server owner must build market features and run <code>trademinator:knn-build</code> first.</p>
+                @else
+                    <form method="POST" action="{{ route('human-training.store') }}">@csrf
+                        <label for="trend-dataset">Market and frozen dataset</label>
+                        <select id="trend-dataset" name="dataset" required>
+                            @foreach($datasets as $dataset)<option value="{{ $dataset['dataset_id'] }}" @selected(old('dataset') === $dataset['dataset_id'])>{{ $dataset['exchange'] }} · {{ $dataset['symbol'] }} · {{ $dataset['period'] }} · {{ number_format($dataset['rows']) }} samples · {{ substr($dataset['dataset_id'], 0, 8) }}</option>@endforeach
+                        </select>
+                        <p class="guide-help">A random unseen snapshot is selected. Future prices, objective outcomes, model output and other trainers’ answers stay hidden while you assess the trend.</p>
+                        <button class="guide-button" type="submit">Start Trend Training</button>
+                    </form>
+                @endif
+            </section>
+            <section class="guide-panel">
+                <p class="review-eyebrow">Per-candle actions</p>
+                <h2>Candle Training</h2>
+                <p>Click individual candles and mark the action you would have taken there. You currently have {{ number_format($candleCompleted) }} saved candle labels.</p>
+                @if($datasets === [])
+                    <p>No current semantic dataset is available. Candle Training uses the same frozen feature datasets as Trend Training.</p>
+                @else
+                    <form method="POST" action="{{ route('human-training.candles.start') }}">@csrf
+                        <label for="candle-dataset">Market and frozen dataset</label>
+                        <select id="candle-dataset" name="dataset" required>
+                            @foreach($datasets as $dataset)<option value="{{ $dataset['dataset_id'] }}">{{ $dataset['exchange'] }} · {{ $dataset['symbol'] }} · {{ $dataset['period'] }} · {{ number_format($dataset['rows']) }} samples · {{ substr($dataset['dataset_id'], 0, 8) }}</option>@endforeach
+                        </select>
+                        <p class="guide-help">The replay opens on an unlabelled candle when possible. Selecting an earlier candle truncates the chart there so later candles are not shown while you decide.</p>
+                        <button class="guide-button" type="submit">Start Candle Training</button>
+                    </form>
+                @endif
+            </section>
+        </div>
+        <section class="guide-panel"><h2>How the two kinds of labels are used</h2>
+            <p><strong>Trend Training</strong> uses Super Bull, Bull, Hold, Bear and Super Bear to describe your expectation over the displayed horizon. It remains the existing five-class auxiliary opinion model.</p>
+            <p><strong>Candle Training</strong> stores BUY, HOLD or SELL on the exact selected candle together with that candle’s immutable feature vector. Unlabelled candles mean no human opinion; they are never silently converted to HOLD. Saved candle actions can be changed or removed.</p>
+            <p>The next model build trains the trend and candle-action models separately. Each may contribute auxiliary features only after chronological tuning and holdout checks show that adding it improves objective market classification without reducing coverage or increasing contradictions.</p>
+            <p class="guide-help">Human labels remain retrospective research inputs, not exchange orders, fills, or probabilities of profit. Human-only output cannot issue a Server signal.</p>
         </section>
         @if($statistics !== null)
             <section class="guide-panel"><h2>Trainer agreement</h2>
-                <p>Latest {{ number_format($statistics['snapshots']) }} reviewed snapshots by candle time (maximum 1,000): {{ $statistics['shared'] }} reviewed by multiple trainers; {{ $statistics['disputed'] }} with differing labels.</p>
-                <div class="review-table-wrap"><table><thead><tr><th>Trainer UUID</th><th>Labels</th><th>Agreement with peers</th></tr></thead><tbody>
+                <p>Trend Training: latest {{ number_format($statistics['snapshots']) }} reviewed snapshots by candle time (maximum 1,000): {{ $statistics['shared'] }} reviewed by multiple trainers; {{ $statistics['disputed'] }} with differing labels.</p>
+                <p>Candle Training: {{ number_format($statistics['candle_labels']) }} current BUY/HOLD/SELL labels across authorized trainers.</p>
+                <div class="review-table-wrap"><table><thead><tr><th>Trainer UUID</th><th>Trend labels</th><th>Trend agreement with peers</th></tr></thead><tbody>
                     @forelse($statistics['trainers'] as $id => $trainer)<tr><td><code>{{ $id }}</code></td><td>{{ $trainer['labels'] }}</td><td>{{ $trainer['peer_comparisons'] ? number_format(100 * $trainer['peer_agreements'] / $trainer['peer_comparisons'], 1).'% ('.$trainer['peer_comparisons'].' comparisons)' : 'Awaiting independent reviews' }}</td></tr>
-                    @empty<tr><td colspan="3">No submitted labels yet.</td></tr>@endforelse
+                    @empty<tr><td colspan="3">No submitted trend labels yet.</td></tr>@endforelse
                 </tbody></table></div>
-                <p class="guide-help">All five labels are compared exactly. Trainer confidence does not increase voting weight. Ties and insufficient agreement are excluded from training.</p>
-                <form method="POST" action="{{ route('human-training.export') }}">@csrf<button class="review-control" type="submit">Export snapshots and labels</button></form>
-                <p><a href="{{ route('owner.intelligence') }}">View model validation and human-guidance comparisons</a></p>
+                <p class="guide-help">Trainer confidence does not increase voting weight. Ties and insufficient agreement are excluded from training. Candle-action consensus uses the same trainer authorization and agreement gates.</p>
+                <form method="POST" action="{{ route('human-training.export') }}">@csrf<button class="review-control" type="submit">Export trend and candle training</button></form>
+                <p><a href="{{ route('owner.intelligence') }}">View model validation and both human-training comparisons</a></p>
             </section>
         @endif
     </section>

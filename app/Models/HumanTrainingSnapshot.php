@@ -35,6 +35,11 @@ class HumanTrainingSnapshot extends Model
         return $this->hasMany(HumanTrainingReview::class, 'snapshot_id', 'snapshot_id');
     }
 
+    public function candleLabels(): HasMany
+    {
+        return $this->hasMany(HumanCandleLabel::class, 'snapshot_id', 'snapshot_id');
+    }
+
     public static function digest(array $payload): string
     {
         $canonicalize = function (array $value) use (&$canonicalize): array {

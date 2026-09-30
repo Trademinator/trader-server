@@ -26,6 +26,7 @@ final class MarketIntelligence
         private PatternTrainer $patterns,
         private LeadLagIntelligence $leadLag,
         private HumanGuidance $humanGuidance,
+        private CandleGuidance $candleGuidance,
     ) {}
 
     public function build(string $exchange, string $symbol, string $period, ?string $dataset = null,
@@ -49,7 +50,6 @@ final class MarketIntelligence
                 $query = MarketFeature::query()->where('exchange', $exchange)->where('symbol', $symbol)
                     ->where('period', $period)->where('version', FeatureEngine::VERSION)
                     ->where('available_at_ms', '<=', now()->getTimestampMs());
-                // Reserve the newest closed feature for inference; training labels must precede it.
                 $latest = (clone $query)->orderByDesc('microtimestamp')->first();
                 if ($latest === null) {
                     throw new RuntimeException('No current M2 features; run trademinator:build-features first.');
@@ -172,6 +172,18 @@ final class MarketIntelligence
             $weights = [...($weights ?: array_fill(0, count($vector), 1.0)), ...array_fill(0, count($humanFeatures), 1.0)];
             $vector = [...$vector, ...$humanFeatures];
             $context['human_guidance'] = ['status' => 'validated', 'opinion_shares' => array_combine(HumanTraining::LABELS, $humanFeatures)];
+        }
+        if (($model['candle_keys'] ?? []) !== []) {
+            $candle = $model['candle_guidance'];
+            if (! config('human_training.enabled') || ($candle['version'] ?? null) !== CandleGuidance::VERSION
+                || ! ($candle['influence'] ?? false) || ($candle['labels_updated_by_ms'] ?? PHP_INT_MAX) >= $current->available_at_ms) {
+                return [...WeightedKnn::abstain('candle_guidance_unavailable'), ...$context];
+            }
+            $candleFeatures = $this->candleGuidance->features($candle, $humanVector);
+            $weights = [...($weights ?: array_fill(0, count($vector), 1.0)), ...array_fill(0, count($candleFeatures), 1.0)];
+            $vector = [...$vector, ...$candleFeatures];
+            $context['candle_guidance'] = ['status' => 'validated',
+                'action_shares' => array_combine(CandleTraining::ACTIONS, $candleFeatures)];
         }
         $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
         $result = $knn->predict($model['knowledge'], $vector, $model['k'], $current->available_at_ms, $weights);

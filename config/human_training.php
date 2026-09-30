@@ -11,4 +11,7 @@ return [
     'min_agreement' => 0.67,
     'k' => 9,
     'min_precision_gain' => 0.02,
+    'candle_min_samples' => 50,
+    'candle_k' => 9,
+    'candle_min_precision_gain' => 0.02,
 ];

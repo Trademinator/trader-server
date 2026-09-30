@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\Markets\CandleTrainingController;
 use App\Http\Controllers\Markets\DashboardSuggestionController;
 use App\Http\Controllers\Markets\HumanTrainingController;
 use App\Http\Controllers\Markets\IntelligenceController;
@@ -59,6 +60,10 @@ Route::prefix('human-training')->name('human-training.')->middleware(['auth', 'v
     Route::get('/', [HumanTrainingController::class, 'index'])->name('index');
     Route::post('/', [HumanTrainingController::class, 'store'])->middleware('throttle:6,1')->name('store');
     Route::post('export', [HumanTrainingController::class, 'export'])->middleware('can:manage-server')->name('export');
+    Route::post('candles', [CandleTrainingController::class, 'store'])->middleware('throttle:12,1')->name('candles.start');
+    Route::get('candles/{dataset}', [CandleTrainingController::class, 'show'])->whereUuid('dataset')->name('candles.show');
+    Route::put('candles/{dataset}', [CandleTrainingController::class, 'update'])->whereUuid('dataset')->middleware('throttle:30,1')->name('candles.update');
+    Route::delete('candles/{dataset}', [CandleTrainingController::class, 'destroy'])->whereUuid('dataset')->middleware('throttle:30,1')->name('candles.destroy');
     Route::get('{review}', [HumanTrainingController::class, 'show'])->whereUuid('review')->name('show');
     Route::put('{review}', [HumanTrainingController::class, 'update'])->whereUuid('review')->name('update');
 });

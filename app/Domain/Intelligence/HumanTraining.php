@@ -59,19 +59,9 @@ final class HumanTraining
             $indices = array_keys(array_filter($rows, fn (array $row): bool => ! $seen->has($row['decision_at_ms'])));
             shuffle($indices);
             foreach (array_slice($indices, 0, config('human_training.candidate_attempts')) as $index) {
-                $row = $rows[$index];
-                $key = hash('sha256', $marketKey.'|'.$row['decision_at_ms'].'|'.self::VERSION);
-                $snapshot = HumanTrainingSnapshot::query()->where('snapshot_key', $key)->first();
+                $snapshot = $this->snapshotForRow($manifest, $rows[$index]);
                 if ($snapshot === null) {
-                    $payload = $this->snapshot($manifest, $row);
-                    if ($payload === null) {
-                        continue;
-                    }
-                    $snapshot = HumanTrainingSnapshot::unguarded(fn (): HumanTrainingSnapshot => HumanTrainingSnapshot::query()->firstOrCreate(
-                        ['snapshot_key' => $key], ['market_key' => $marketKey,
-                            'dataset_id' => $manifest['dataset_id'], 'decision_at_ms' => $row['decision_at_ms'],
-                            'version' => self::VERSION, 'payload' => $payload,
-                            'sha256' => HumanTrainingSnapshot::digest($payload), 'created_at' => now()]));
+                    continue;
                 }
                 $review = new HumanTrainingReview;
                 $review->forceFill(['snapshot_id' => $snapshot->snapshot_id, 'trainer_id' => $trainer->user_id,
@@ -83,6 +73,37 @@ final class HumanTraining
 
             throw ValidationException::withMessages(['dataset' => 'No unseen, intact snapshot was found in this bounded search. Retry, choose another dataset or collect more history.']);
         });
+    }
+
+    public function snapshotForRow(array $manifest, array $row): ?HumanTrainingSnapshot
+    {
+        $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
+        $key = hash('sha256', $marketKey.'|'.$row['decision_at_ms'].'|'.self::VERSION);
+        $snapshot = HumanTrainingSnapshot::query()->where('snapshot_key', $key)->first();
+        if ($snapshot !== null) {
+            $payload = $snapshot->verifiedPayload();
+            $vector = NormalizedVector::from($row['vector'], $manifest['keys']);
+            if (($payload['feature_version'] ?? null) !== $manifest['feature_version']
+                || ($payload['keys'] ?? null) !== $manifest['keys']
+                || ($payload['normalization'] ?? null) !== NormalizedVector::VERSION
+                || ($payload['horizon_candles'] ?? null) !== $manifest['label_definition']['horizon']
+                || ($payload['vector'] ?? null) != $vector
+                || ($payload['feature_sha256'] ?? null) !== ($row['source']['feature_sha256'] ?? null)) {
+                return null;
+            }
+
+            return $snapshot;
+        }
+        $payload = $this->snapshot($manifest, $row);
+        if ($payload === null) {
+            return null;
+        }
+
+        return HumanTrainingSnapshot::unguarded(fn (): HumanTrainingSnapshot => HumanTrainingSnapshot::query()->firstOrCreate(
+            ['snapshot_key' => $key], ['market_key' => $marketKey,
+                'dataset_id' => $manifest['dataset_id'], 'decision_at_ms' => $row['decision_at_ms'],
+                'version' => self::VERSION, 'payload' => $payload,
+                'sha256' => HumanTrainingSnapshot::digest($payload), 'created_at' => now()]));
     }
 
     private function snapshot(array $manifest, array $row): ?array
