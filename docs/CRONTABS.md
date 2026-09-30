@@ -26,7 +26,7 @@ Replace `/path/to/trader-server` and `/usr/bin/php` with the deployment's actual
 
 # Drain queued market/feed/feature work without a permanent worker daemon.
 # flock prevents a new local worker from starting while the previous minute's worker is still running.
-* * * * * cd /path/to/trader-server && /usr/bin/flock -n storage/framework/trademinator-queue.lock /usr/bin/php artisan queue:work --queue=default --stop-when-empty --timeout=600 --tries=5 >> storage/logs/queue-cron.log 2>&1
+* * * * * cd /path/to/trader-server && /usr/bin/flock -n storage/framework/trademinator-queue.lock /usr/bin/php -d memory_limit=512M artisan queue:work --queue=default --stop-when-empty --max-time=50 --memory=384 --timeout=600 --tries=5 >> storage/logs/queue-cron.log 2>&1
 ```
 
 Those two entries cover collection and M2 features. M4 training also requires the intelligence queue worker below. Historical backfill uses the additional history worker below. Do **not** add separate cron lines for each `trademinator:*` scheduled command; Laravel's scheduler owns those cadences.
@@ -56,6 +56,20 @@ Use a shared atomic-lock-capable cache store such as Redis when multiple applica
 
 The local `flock` only prevents overlapping cron workers on the same host; the queue backend itself safely coordinates workers across hosts.
 
+## Bounded queue memory and worker recycling
+
+PHP's `-d memory_limit` is the hard ceiling **during a job**. Laravel's separate `queue:work --memory` threshold is checked **between jobs** and defaults to 128 MiB. Increasing PHP to 1024M alone leaves that 128 MiB threshold unchanged; `Worker STOPPED Memory limit exceeded` can therefore occur well below 1 GiB. Set both explicitly as in the commands above/below. The worker threshold deliberately leaves room below PHP's ceiling. `--max-time=50` returns control to cron between jobs; it does not interrupt a running job. Keep the once-per-minute cron and its local `flock`.
+
+Candle workers install only the requested instrument into CCXT's market indexes, disable retained response copies, and reuse unchanged adapter settings. Binance spot metadata is normalized one instrument at a time without building all derivative/currency indexes. Other adapters may still require a complete metadata response from their API; OHLCV ingestion remains paged. Replaced SDK objects and unused allocator pages are reclaimed between jobs on every queue.
+
+| Queue | Bounded work |
+| --- | --- |
+| `default` | Live ingestion uses a 90-period window; period selection uses the recent 250-candle sample plus boundary allowance. Explicit queued synchronization processes one configured page per job and preserves its queue/connection on continuation. Feature replay streams 500 source candles at a time and writes batches of 100, retaining only indicator state and a 30-day close-price buffer. |
+| `history` | At most five 90-candle requests per pass, with transactional progress checkpoints and the existing 45-second work budget. |
+| `intelligence` | Feature replay uses the same streaming path. Training rejects datasets above `intelligence.max_rows` before reading their rows; KNN/Random Forest fitting uses that bounded training set. Human-review snapshots and their chart payloads are read 25 at a time. Signal recording loads one model and its recent feature window. |
+
+After deploying these changes, update **all three** queue cron commands. Inspect `php artisan queue:failed` and the corresponding worker log if a job fails. Do not remove row caps or raise memory indefinitely to mask an oversized workload. These limits bound application work; they are not a benchmark of every exchange adapter or a guarantee about production RSS.
+
 ## Deployment checks
 
 After changing application or environment configuration:
@@ -82,7 +96,7 @@ M4 adds a dedicated CPU-heavy queue. Keep the scheduler on one or multiple sched
 
 ```cron
 # Add on each chosen intelligence worker, alongside or instead of that node's default-queue worker.
-* * * * * cd /path/to/trader-server && /usr/bin/flock -n /tmp/trademinator-intelligence-queue.lock /usr/bin/php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --timeout=600 --memory=512 --tries=3 >> storage/logs/intelligence-cron.log 2>&1
+* * * * * cd /path/to/trader-server && /usr/bin/flock -n /tmp/trademinator-intelligence-queue.lock /usr/bin/php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --max-time=50 --timeout=600 --memory=384 --tries=3 >> storage/logs/intelligence-cron.log 2>&1
 ```
 
 The `/tmp` lock is local to the worker host; use a distinct lock filename for separate installations. Multiple worker hosts may drain the shared queue. `INTELLIGENCE_QUEUE` defaults to `intelligence`; if changed, change the worker's `--queue` to match. Database/Redis `retry_after` must be at least 720 seconds, greater than the 600-second job timeout. Worker PHP needs the same Composer extensions as the application. Memory needs depend on schema/history; 512 MiB is a starting limit, not a production benchmark.
@@ -95,7 +109,7 @@ Set `INTELLIGENCE_ENABLED=false` to disable weekly dispatch. To populate initial
 
 ```bash
 php artisan trademinator:dispatch-market-intelligence
-php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --timeout=600 --memory=512 --tries=3
+php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --max-time=50 --timeout=600 --memory=384 --tries=3
 php artisan queue:failed
 php artisan schedule:list
 ```
@@ -116,7 +130,7 @@ php artisan schedule:list
 `HISTORY_BACKFILL_ENABLED` defaults to `true`; `HISTORY_BACKFILL_QUEUE` defaults to `history`. Keep the existing scheduler, default-queue and intelligence-queue crons. Add this entry on the chosen history worker machine(s), using the same source, database and shared cache:
 
 ```cron
-* * * * * cd /path/to/trader-server && /usr/bin/flock -n storage/framework/trademinator-history-queue.lock /usr/bin/php -d memory_limit=256M artisan queue:work --queue=history --stop-when-empty --max-time=50 --timeout=120 --memory=256 --tries=1 >> storage/logs/history-cron.log 2>&1
+* * * * * cd /path/to/trader-server && /usr/bin/flock -n storage/framework/trademinator-history-queue.lock /usr/bin/php -d memory_limit=256M artisan queue:work --queue=history --stop-when-empty --max-time=50 --timeout=120 --memory=192 --tries=1 >> storage/logs/history-cron.log 2>&1
 ```
 
 Change `--queue` to match `HISTORY_BACKFILL_QUEUE` if customized. `--max-time=50` stops between jobs; a job already running may finish later, bounded by its 120-second timeout. `flock` prevents overlap on the same host. Multiple worker machines can drain the queue: atomic database leases select one job per market/period, shared market locks coordinate with live collection, a shared exchange lock serializes history workers for that exchange, and page upserts/checkpoints are transactional. CCXT's rate limiter remains enabled. The existing `retry_after >= 720` setting is already greater than the history timeout. The job allows additional 30-second releases while another collector holds a lock; actual request failures use the saved retry schedule described in [CLI.md](CLI.md#trademinatorbackfill-ohlcv). There is no permanent worker daemon.
@@ -134,14 +148,14 @@ php artisan queue:failed
 Expected request failures and pauses are recorded in `--status` and application logs; they need not appear in `queue:failed`. A hard worker failure can also appear there. Three empty/out-of-range windows pause automatic probing. Network/rate-limit errors back off without marking history exhausted. Repeated non-network errors pause for review. The status includes the cursor and reason; see [the command reference](CLI.md#trademinatorbackfill-ohlcv) for targeted resume and immediate feature/model rebuilding.
 
 
-Successful backfill windows also queue **M2 feature rebuild → fresh KNN/pattern build** on `INTELLIGENCE_QUEUE`. Keep the existing M4 intelligence cron running; no extra training cron is necessary and there is no wait until Monday. Both stages run on the intelligence worker, each with a 600-second timeout. Preserve that worker's 512 MiB memory setting, shared private research/model storage and `retry_after >= 720`. The weekly schedule remains available alongside these history-triggered builds.
+Successful backfill windows also queue **M2 feature rebuild → fresh KNN/pattern build** on `INTELLIGENCE_QUEUE`. Keep the existing M4 intelligence cron running; no extra training cron is necessary and there is no wait until Monday. Both stages run on the intelligence worker, each with a 600-second timeout. Preserve that worker's 512 MiB PHP ceiling and 384 MiB worker recycle threshold, shared private research/model storage and `retry_after >= 720`. The weekly schedule remains available alongside these history-triggered builds.
 
 Rebuilds combine pending imports per market, retain imports that arrive during training for a follow-up build, and retry after errors without deleting candles. The history worker shares M2's feature lock while inserting older rows so feature replay and dataset snapshots cannot observe history changing under an offset-based scan. `trademinator:backfill-ohlcv --status` reports both collection progress and `build_stage`, pending/trained history revisions, the most recent model ID and any `build_error`. `INTELLIGENCE_ENABLED=false` pauses these automatic rebuilds as well as weekly dispatch; pending history revisions remain available when re-enabled.
 
 
 ## M4.1 daily cross-exchange reevaluation
 
-Keep the existing scheduler and `intelligence` worker above. No extra system cron entry or permanent daemon is required. At 03:45 daily, `trademinator:dispatch-lead-lag` queues integrated model rebuilds for active feeds with the same spot symbol and selected period on at least two exchanges. Each job relearns empirical timing and rebuilds the downstream KNN/pattern model under the existing 480-second training budget, 600-second timeout, 512 MiB worker memory and retry_after >= 720. Per-day/version generations are idempotent; failed work uses the existing retries and `queue:failed`. This adds CPU/storage work proportional to the number of eligible shared feeds, not the number of users.
+Keep the existing scheduler and `intelligence` worker above. No extra system cron entry or permanent daemon is required. At 03:45 daily, `trademinator:dispatch-lead-lag` queues integrated model rebuilds for active feeds with the same spot symbol and selected period on at least two exchanges. Each job relearns empirical timing and rebuilds the downstream KNN/pattern model under the existing 480-second training budget, 600-second timeout, 512 MiB PHP ceiling and 384 MiB worker recycle threshold and retry_after >= 720. Per-day/version generations are idempotent; failed work uses the existing retries and `queue:failed`. This adds CPU/storage work proportional to the number of eligible shared feeds, not the number of users.
 
 Migrate before running the updated scheduler, refresh exchange metadata to seed unambiguous timezone priors, and set explicit IANA overrides where needed. `LEAD_LAG_ENABLED` and `LEAD_LAG_DAILY_REFRESH` default true; the second controls only this extra dispatcher. Both also respect `INTELLIGENCE_ENABLED`. Weekly Monday training and successful-backfill rebuilds continue and include lead/lag when enabled. Existing M4 models need one rebuild because the pattern validation protocol changed; versioned generation keys allow upgrade redispatch even within the same week. See [M4.1 upgrade and evidence contract](CLI.md#m41-cross-exchange-leadlag-and-m4-completion).
 

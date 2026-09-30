@@ -35,8 +35,14 @@ final class CandlePeriodSelector
         usort($periods, fn (string $a, string $b): int => periods_to_seconds($a) <=> periods_to_seconds($b));
         $timeframe = new CandleTimeframe;
         $closedBefore = min($to * 1000, time() * 1000);
+        $this->exchanges->prepareCandleMarket($symbol);
         foreach ($periods as $period) {
-            $candles = $this->exchanges->fetch($symbol, $period, $from, $to);
+            // Quality only needs the recent sample, not every candle in a CLI date range.
+            $sampleFrom = $closedBefore;
+            for ($i = 0; $i <= $sample; $i++) {
+                $sampleFrom = $timeframe->previous($sampleFrom, $period);
+            }
+            $candles = $this->exchanges->fetch($symbol, $period, max($from, intdiv($sampleFrom, 1000)), intdiv($closedBefore, 1000));
             $complete = array_values(array_filter($candles, fn (array $candle): bool => $timeframe->next((int) $candle['microtimestamp'], $period) <= $closedBefore));
             $complete = array_slice($complete, -$sample);
             $last = end($complete);

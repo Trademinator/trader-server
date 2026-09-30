@@ -160,6 +160,9 @@ class OperationsServiceProvider extends ServiceProvider
                 $context->end($frames[$key]);
                 unset($frames[$key]);
             }
+            // Release SDK cycles and unused allocator pages before the worker's memory check.
+            gc_collect_cycles();
+            gc_mem_caches();
         });
         Event::listen(JobTimedOut::class, function (JobTimedOut $event): void {
             app(ActionLog::class)->write('job.timeout', ['job' => $event->job->resolveName(),

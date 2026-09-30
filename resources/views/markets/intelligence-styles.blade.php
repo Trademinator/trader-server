@@ -22,5 +22,9 @@
     .pair-review details { margin: 1rem 0; }
     .pair-review summary { cursor: pointer; font-weight: 600; }
     .pair-review h3 { margin: 1.5rem 0 .6rem; font-size: 1.05rem; font-weight: 700; }
+    .dashboard-exchange-logo { position: relative; display: inline-flex; width: 24px; height: 24px; flex: 0 0 24px; align-items: center; justify-content: center; font-size: .75rem; }
+    .dashboard-exchange-logo img { position: absolute; inset: 0; width: 24px; height: 24px; object-fit: contain; background: var(--guide-panel, #fff); }
+    .dashboard-command { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; padding: .65rem; margin-top: .5rem; border-radius: .4rem; background: #e8eef3; color: #172c43; font-size: .8rem; }
+    .dark .dashboard-command { background: #172c43; color: #e5edf5; }
 </style>
 @endonce

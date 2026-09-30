@@ -1,62 +1,65 @@
 {
-  "release": "Trademinator M4.2 dashboard integrated with owner administration, syslog, GeoIP and compression",
-  "revision": 2,
-  "date": "2026-09-29",
+  "release": "Trademinator dashboard and queue memory fixes before M5",
+  "date": "2026-09-30",
   "source_repository": "https://github.com/Trademinator/trader-server",
-  "base_commit": "a2c7d8f2e67cf5e1bb7c68db448ced359274f781",
-  "delivery": "Full application source and compiled frontend assets, plus an incremental source patch against the base commit; preserve deployment data.",
-  "entrypoint_guide": "docs/M-PLAN.md",
+  "base_commit": "73d576e82472a569456b2b7a18ec26425573e31a",
+  "source_commit": "c77e1e3df351353e38fb2a5872e57d4efd7c658b",
+  "delivery": "Full application source plus compiled frontend assets",
+  "source_note": "Source commit with packaging-only README-FIXES.txt and RELEASE.json updates, SHA256SUMS, built assets, and runtime lock files omitted.",
+  "entrypoint_guide": "README-FIXES.txt",
   "cli_reference": "docs/CLI.md",
   "cron_reference": "docs/CRONTABS.md",
+  "file_checksums": "SHA256SUMS",
   "new_commands_relative_to_base": [],
   "new_migrations_relative_to_base": [],
   "dependencies_changed_relative_to_base": false,
-  "restored_schedules": [
-    "trademinator:dispatch-market-signals",
-    "trademinator:refresh-market-discovery"
-  ],
+  "compiled_frontend_assets": true,
   "validation": {
     "php": "8.4.26",
-    "laravel": "13.33.0",
-    "php_tests_passed": 417,
-    "php_assertions": 9929,
-    "php_test_memory_limit": "512M (existing phpunit.xml)",
-    "frontend_tests_passed": 13,
+    "scope": "Related PHP suites and dashboard JavaScript tests; not the full application suite",
+    "php_tests_passed": 154,
+    "php_assertions": 1677,
+    "frontend_tests_passed": 6,
+    "frontend_build": "npm ci and npm run build passed",
     "pint": "passed",
     "git_diff_check": "passed",
-    "composer_install": "passed with the existing lockfile",
     "database": "SQLite :memory: with repository safety guards",
-    "frontend_build": "npm run build passed",
-    "blade_compile": "passed"
+    "collection_fixture": {
+      "synthetic_binance_pairs": 5000,
+      "collection_passes": 3,
+      "features_written": 250,
+      "php_memory_limit_bytes": 134217728,
+      "peak_memory_bytes": 124428288,
+      "largest_ohlcv_request": 100,
+      "metadata_requests": 1,
+      "ohlcv_requests": 6
+    }
   },
   "not_exercised": [
-    "Production MariaDB, page-compression operations and multi-node concurrency",
-    "Live exchange or CoinGecko API calls",
-    "Host syslog/journald delivery or retention",
-    "Browser visual validation",
-    "A licensed production GeoIP database"
+    "Full application test suite",
+    "Live exchange APIs",
+    "Production MariaDB and multi-node concurrency",
+    "Browser visual validation"
   ],
   "excluded": [
     ".git",
     "vendor",
     "node_modules",
     ".env",
-    "databases",
-    "runtime storage and caches",
-    "root checksum duplicates",
-    "obsolete lowercase docs/crontabs.md",
-    "licensed production GeoIP data"
+    "database data",
+    "licensed production GeoIP data",
+    "runtime storage and caches"
+  ],
+  "omitted_tracked_runtime_files": [
+    "storage/framework/trademinator-history-queue.lock",
+    "storage/framework/trademinator-queue.lock",
+    "storage/framework/trademinator-inteligence-queue.lock"
   ],
   "notes": [
-    "Restores dashboard routes, signal relationships, signal horizon, frontend loading, private discovery, schedules and their CLI documentation.",
-    "Preserves all owner, suspension, trace, syslog, access-statistics and local GeoIP functionality from current GitHub main.",
-    "Preserves the compression migration in database/migrations from GitHub commit a2c7d8f without modifying it.",
-    "An active subscription to the exact exchange and market is required for Client trading; subscribing never enables trading.",
-    "Server observations are not orders or fills. Client execution stays Unknown until authenticated M5 reporting exists.",
-    "Client trading, Client API, paper trading and billing remain future milestones.",
-    "The full source package includes rebuilt owner and dashboard assets. Rebuild assets when applying the source patch.",
-    "Install the current locked dependencies and apply pending migrations using the deployment steps in docs/M-PLAN.md."
-  ],
-  "compiled_frontend_assets": true,
-  "file_checksums": "docs/M4.2-FILES.sha256"
+    "Update all three worker cron commands in docs/CRONTABS.md.",
+    "Preserve the deployment .env, APP_KEY, database and private storage.",
+    "Validation totals cover all followed markets for the current user.",
+    "Needs attention diagnostics are owner-only.",
+    "M5 remains a separate milestone."
+  ]
 }

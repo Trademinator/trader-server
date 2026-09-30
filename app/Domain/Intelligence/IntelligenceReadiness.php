@@ -39,7 +39,7 @@ final class IntelligenceReadiness
         if (in_array(config('queue.default'), ['sync', 'null'], true)) {
             $data['issues'][] = 'Automatic training requires a persistent queue connection; the current connection cannot dispatch intelligence jobs.';
         }
-        if ($feed !== null && $feed->status !== 'active') {
+        if ($feed !== null && ! in_array($feed->status, ['ready', 'active', 'queued'], true)) {
             $data['issues'][] = 'Collection status: '.$feed->status.'. Check the market collector before relying on an ETA.';
         }
         if ($feed?->last_error) {

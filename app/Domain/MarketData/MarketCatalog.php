@@ -155,7 +155,7 @@ final class MarketCatalog
         return is_numeric($value) && is_finite((float) $value) && (float) $value >= 0 ? (float) $value : null;
     }
 
-    private static function logoUrl(mixed $url): ?string
+    public static function logoUrl(mixed $url): ?string
     {
         return is_string($url) && filter_var($url, FILTER_VALIDATE_URL)
             && parse_url($url, PHP_URL_SCHEME) === 'https' ? $url : null;

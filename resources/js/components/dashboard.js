@@ -1,5 +1,82 @@
 import { chartData, formatPrice } from './market-review-chart.js';
 
+export function mountDashboardMarkets(root) {
+    const form = root.querySelector('[data-market-search]');
+    const input = form.querySelector('input');
+    const results = root.querySelector('[data-market-results]');
+    const status = root.querySelector('[data-search-status]');
+    let timer, request, revision = 0, disposed = false;
+    const logos = () => results.querySelectorAll('.dashboard-exchange-logo img').forEach(image => {
+        const fallback = () => image.remove();
+        image.addEventListener('error', fallback, { once: true });
+        if (image.complete && image.naturalWidth === 0) fallback();
+    });
+    async function search(page = 1) {
+        const current = ++revision;
+        request?.abort();
+        const controller = new AbortController();
+        request = controller;
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        const url = new URL(root.dataset.url, window.location.href);
+        url.searchParams.set('q', input.value.trim());
+        url.searchParams.set('page', page);
+        if (root.dataset.selected) url.searchParams.set('subscription', root.dataset.selected);
+        results.setAttribute('aria-busy', 'true');
+        status.textContent = 'Searching your followed markets…';
+        try {
+            const response = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store', signal: request.signal });
+            if ([401, 403, 419].includes(response.status) || response.redirected) {
+                if (current === revision) results.replaceChildren();
+                throw new Error('Your session has changed. Reload the dashboard.');
+            }
+            if (!response.ok) throw new Error('Search failed. Your previous results are still shown; try again.');
+            const data = await response.json();
+            if (disposed || current !== revision) return;
+            if (typeof data.html !== 'string' || !Number.isInteger(data.count)) throw new Error('Unexpected search response. Try again.');
+            results.innerHTML = data.html;
+            logos();
+            status.textContent = `${data.count} matching market${data.count === 1 ? '' : 's'}`;
+            const attention = document.querySelector('[data-attention-count]');
+            if (attention && Number.isInteger(data.attention_count)) attention.textContent = data.attention_count;
+        } catch (error) {
+            if (!disposed && current === revision) status.textContent = error.name === 'AbortError'
+                ? 'Search timed out. Try again.' : error.message;
+        } finally {
+            clearTimeout(timeout);
+            if (current === revision) results.removeAttribute('aria-busy');
+        }
+    }
+    const changed = () => {
+        clearTimeout(timer);
+        ++revision;
+        request?.abort();
+        timer = setTimeout(() => search(), 180);
+    };
+    const submit = event => { event.preventDefault(); clearTimeout(timer); return search(); };
+    const paginate = event => {
+        const link = event.target.closest('[data-market-pagination] a');
+        if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button > 0) return;
+        event.preventDefault();
+        clearTimeout(timer);
+        return search(new URL(link.href).searchParams.get('page') ?? 1);
+    };
+    const dispose = () => {
+        disposed = true;
+        ++revision;
+        clearTimeout(timer);
+        request?.abort();
+        input.removeEventListener('input', changed);
+        form.removeEventListener('submit', submit);
+        results.removeEventListener('click', paginate);
+    };
+    input.addEventListener('input', changed);
+    form.addEventListener('submit', submit);
+    results.addEventListener('click', paginate);
+    window.addEventListener('pagehide', event => { if (!event.persisted) dispose(); }, { once: true });
+    logos();
+    return dispose;
+}
+
 // Never draw a decision on an earlier candle than its actual recording time.
 export function signalMarkers(chart) {
     const candles = chart.series ?? [];

@@ -15,10 +15,12 @@
             <p class="dashboard-contract">A subscription lets you follow a market and is required for the Client to trade it. Following a market does not enable trading; the Client decides whether to act.</p>
         </header>
         @if (session('status'))<p class="guide-notice" role="status">{{ session('status') }}</p>@endif
-        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Dashboard overview">
-            <a class="dashboard-stat" href="#subscriptions"><span>Markets you follow</span><strong>{{ $subscriptions->total() }}</strong><small>Active subscriptions</small></a>
-            <a class="dashboard-stat" href="#subscriptions"><span>Validated models</span><strong>{{ $cards->where('ready', true)->count() }} <small>/ {{ $cards->count() }}</small></strong><small>For the markets on this page</small></a>
-            <a class="dashboard-stat" href="#attention"><span>Needs attention</span><strong>{{ $cards->where('attention', true)->count() }}</strong><small>Collection or history on this page</small></a>
+        <div class="grid gap-3 sm:grid-cols-2 {{ auth()->user()->can('manage-server') ? 'xl:grid-cols-4' : 'lg:grid-cols-3' }}" aria-label="Dashboard overview">
+            <a class="dashboard-stat" href="#subscriptions"><span>Markets you follow</span><strong>{{ $totals['followed'] }}</strong><small>Active subscriptions</small></a>
+            <a class="dashboard-stat" href="#subscriptions"><span>Validated models</span><strong>{{ $totals['validated'] }} <small>/ {{ $totals['followed'] }}</small></strong><small>Across all markets you follow</small></a>
+            @can('manage-server')
+            <a class="dashboard-stat" href="#attention"><span>Needs attention</span><strong data-attention-count>{{ $cards->where('attention', true)->count() }}</strong><small>Collection or history on this page</small></a>
+            @endcan
             <a class="dashboard-stat" href="#changes"><span>New signal changes</span><strong>{{ $changeCount }}</strong><small>Since {{ $time($since) }}</small></a>
         </div>
         <section class="guide-panel" aria-labelledby="conditions-title">
@@ -39,32 +41,15 @@
         </section>
         <section id="subscriptions" aria-labelledby="subscriptions-title">
             <div class="flex flex-wrap items-center justify-between gap-3 mb-3"><h2 id="subscriptions-title" class="text-xl font-semibold">Markets you follow</h2><span class="dashboard-muted">Choose a market to inspect its chart and readiness</span></div>
-            <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                @forelse ($cards as $card)
-                    @php($subscription = $card['subscription'])
-                    @php($market = $subscription->market)
-                    <a class="dashboard-market {{ $card['ready'] ? 'has-validated-model' : '' }} {{ $details && $details['subscription']->getKey() === $subscription->getKey() ? 'is-selected' : '' }}" href="{{ route('dashboard', ['subscription' => $subscription->getKey(), 'page' => $subscriptions->currentPage()]) }}#market-detail">
-                        <div class="flex items-start justify-between gap-3"><div><h3>{{ $market->symbol }}</h3><p>{{ $market->exchange->name }} · {{ $market->feed?->selected_period ?? 'Selecting period' }}</p></div><span class="guide-badge">Following</span></div>
-                        @if ($card['sparkline'])<svg viewBox="0 0 200 48" role="img" aria-label="Recent closed price history for {{ $market->symbol }}" class="dashboard-sparkline"><polyline points="{{ $card['sparkline'] }}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" /></svg>
-                        @else<p class="dashboard-muted my-3">Chart awaiting continuous price history</p>@endif
-                        <div class="flex flex-wrap justify-between gap-2"><strong>{{ $card['label'] }}</strong><span>{{ $card['ready'] ? 'Model validated' : 'Learning / awaiting validation' }}</span></div>
-                        @if ($card['attention'])<p class="dashboard-warning">Collection or history needs attention</p>@endif
-                        <p class="guide-help">Last candle closed: {{ $time($card['chart']['last_closed_at_ms']) }}</p>
-                        @if ($card['ready'])<span class="dashboard-validated-check" role="img" aria-label="Validated model" title="Validated model">✓</span>@endif
-                    </a>
-                @empty
-                    <div class="guide-panel md:col-span-2 xl:col-span-3"><h3>Start following a market</h3><p>Subscribe to collect its history and follow its intelligence. You can observe without trading.</p><a class="dashboard-button mt-3" href="{{ route('markets.index') }}">Choose a market</a></div>
-                @endforelse
+            <div data-dashboard-markets data-url="{{ route('dashboard') }}" data-selected="{{ $selectedId }}">
+                <form method="GET" action="{{ route('dashboard') }}" class="mb-4" data-market-search>
+                    <label for="market-search" class="block font-semibold mb-2">Search your markets</label>
+                    <input id="market-search" name="q" type="search" maxlength="100" value="{{ $search }}" placeholder="Pair, exchange or period…" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100" aria-controls="market-results" autocomplete="off">
+                    <noscript><button type="submit" class="dashboard-button mt-2">Search</button></noscript>
+                </form>
+                <p class="guide-help mb-3" role="status" aria-live="polite" data-search-status>{{ $subscriptions->total() }} matching markets</p>
+                <div id="market-results" data-market-results>@include('dashboard-markets')</div>
             </div>
-            <div class="mt-4">{{ $subscriptions->links() }}</div>
-        </section>
-        <section id="attention" class="guide-panel" aria-labelledby="attention-title">
-            <h2 id="attention-title">Needs attention</h2>
-            @forelse ($cards->where('attention', true) as $card)
-                <p class="dashboard-attention-row"><a href="{{ route('dashboard', ['subscription' => $card['subscription']->getKey()]) }}#market-detail">{{ $card['subscription']->market->exchange->name }} · {{ $card['subscription']->market->symbol }}</a>
-                    <span>{{ $card['chart']['last_closed_at_ms'] === null ? 'Waiting for closed candles.' : ($card['chart']['stale'] ? 'Price history is stale.' : 'Review collection and history quality.') }} Open the readiness details below.</span></p>
-            @empty<p>No collection problems detected for the markets shown.</p>@endforelse
-            @if ($cards->where('ready', false)->count())<p class="guide-help">{{ $cards->where('ready', false)->count() }} shown markets are still awaiting a current validated model. Select a market to see the missing evidence.</p>@endif
         </section>
         @if ($details)
             @php($selected = $details['subscription'])

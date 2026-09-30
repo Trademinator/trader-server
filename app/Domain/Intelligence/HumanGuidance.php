@@ -105,10 +105,10 @@ final class HumanGuidance
         }
         $byTime = array_column($rows, null, 'decision_at_ms');
         $snapshots = HumanTrainingSnapshot::query()->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
-            ->where('version', HumanTraining::VERSION)->whereBetween('decision_at_ms', [min(array_keys($byTime)), max(array_keys($byTime))])
+            ->where('version', HumanTraining::VERSION)->whereIn('decision_at_ms', array_keys($byTime))
             ->with(['reviews' => fn ($query) => $query->whereIn('trainer_id', $trainers)->whereIn('label', HumanTraining::LABELS)
                 ->whereNotNull('submitted_at')->where('submitted_at', '<=', CarbonImmutable::createFromTimestampMs($annotationCutoff)->format('Y-m-d H:i:s.v'))->orderBy('trainer_id')])
-            ->orderBy('decision_at_ms')->limit(config('intelligence.max_rows'))->get();
+            ->orderBy('decision_at_ms')->orderBy('snapshot_id')->lazy(25)->take((int) config('intelligence.max_rows'));
         $opinions = [];
         foreach ($snapshots as $snapshot) {
             $row = $byTime[$snapshot->decision_at_ms] ?? null;

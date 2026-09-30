@@ -39,10 +39,11 @@ final class DatasetStore
         return $manifest;
     }
 
-    public function load(string $id): array
+    public function load(string $id, ?int $maxRows = null): array
     {
         $manifest = $this->manifest($id);
-        if ($manifest['rows'] > config('research.max_rows')) {
+        $limit = min((int) config('research.max_rows'), $maxRows ?? PHP_INT_MAX);
+        if ($manifest['rows'] > $limit) {
             throw new RuntimeException('Dataset exceeds research.max_rows; use a smaller date range.');
         }
         $file = @fopen($this->directory($id).'/rows.jsonl', 'rb');
@@ -63,7 +64,7 @@ final class DatasetStore
                 }
                 $previous = $row['decision_at_ms'];
                 $rows[] = $row;
-                if (count($rows) > config('research.max_rows')) {
+                if (count($rows) > $limit) {
                     throw new RuntimeException('Dataset exceeds research.max_rows.');
                 }
             }

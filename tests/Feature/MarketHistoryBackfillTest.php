@@ -61,6 +61,7 @@ function historyRepository(string $period = '1h'): ExchangeRepository
 {
     $repository = Mockery::mock(ExchangeRepository::class);
     $repository->shouldReceive('setExchange')->withArgs(fn ($exchange, $settings) => $exchange->class === 'kraken' && $settings['timeout'] === 15000);
+    $repository->shouldReceive('prepareCandleMarket')->with('BTC/USD');
     $repository->shouldReceive('periods')->andReturn([$period => $period]);
 
     return $repository;

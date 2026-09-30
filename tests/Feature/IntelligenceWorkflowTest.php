@@ -238,3 +238,13 @@ it('describes supported direction and stronger evidence as Bull Bear or Super st
     expect($signal['reason'])->toBe('supported');
     expect($signal['regime'])->toBe($regime);
 })->with([[0.0, 'super_bull'], [1.0, 'super_bear'], [0.21, 'bull'], [0.79, 'bear']]);
+
+it('rejects an oversized training dataset before opening its rows', function () {
+    $manifest = IntelligenceFixtures::snapshot(40);
+    config(['intelligence.max_rows' => 20]);
+    unlink(app(DatasetStore::class)->directory($manifest['dataset_id']).'/rows.jsonl');
+
+    expect(fn () => app(IntelligenceTrainer::class)->train($manifest['dataset_id']))
+        ->toThrow(InvalidArgumentException::class, 'Dataset exceeds intelligence.max_rows');
+    $this->assertDatabaseCount('intelligence_models', 0);
+});

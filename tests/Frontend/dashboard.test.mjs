@@ -81,3 +81,106 @@ test('rejects a refresh response for another subscription', async () => {
     assert.equal(view.states[0].data.length, 3);
     view.dispose();
 });
+
+async function searchHarness() {
+    const { readFileSync } = await import('node:fs');
+    const { runInNewContext } = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/js/components/dashboard.js', import.meta.url), 'utf8')
+        .replace(/^import .*;\n/, '').replaceAll('export ', '');
+    const element = () => ({ value: '', textContent: '', innerHTML: 'initial cards', listeners: {}, attributes: {},
+        addEventListener(name, callback) { this.listeners[name] = callback; },
+        removeEventListener(name) { delete this.listeners[name]; },
+        setAttribute(name, value) { this.attributes[name] = value; },
+        removeAttribute(name) { delete this.attributes[name]; },
+        querySelectorAll() { return []; }, replaceChildren() { this.innerHTML = ''; } });
+    const input = element(), form = element(), results = element(), status = element(), attention = element();
+    form.querySelector = () => input;
+    const parts = { '[data-market-search]': form, '[data-market-results]': results, '[data-search-status]': status };
+    const root = { dataset: { url: '/dashboard', selected: 'selected-subscription' }, querySelector: selector => parts[selector] };
+    const pending = [], timers = new Map();
+    let timerId = 0;
+    const context = { URL, AbortController, Number, Error,
+        window: { location: { href: 'https://trademinator.test/dashboard' }, addEventListener() {} },
+        document: { querySelector: () => attention },
+        setTimeout(callback, delay) { const id = ++timerId; timers.set(id, { callback, delay }); return id; },
+        clearTimeout(id) { timers.delete(id); },
+        fetch(url, options) { return new Promise(resolve => pending.push({ url, options, resolve })); } };
+    runInNewContext(source, context);
+    const dispose = context.mountDashboardMarkets(root);
+    const submit = value => {
+        input.value = value;
+        let prevented = false;
+        const promise = form.listeners.submit({ preventDefault() { prevented = true; } });
+        assert.equal(prevented, true);
+        return promise;
+    };
+    const respond = (index, data, options = {}) => pending[index].resolve({ ok: true, status: 200, json: async () => data, ...options });
+    return { input, form, results, status, attention, pending, timers, submit, respond, dispose };
+}
+
+test('searches and clears all followed markets without navigating or reloading', async () => {
+    const view = await searchHarness();
+    const first = view.submit(' eth/us ');
+    assert.equal(view.pending[0].url.searchParams.get('q'), 'eth/us');
+    assert.equal(view.pending[0].url.searchParams.get('page'), '1');
+    assert.equal(view.pending[0].url.searchParams.get('subscription'), 'selected-subscription');
+    view.respond(0, { html: 'ETH/USDT card', count: 1, attention_count: 0 });
+    await first;
+    assert.equal(view.results.innerHTML, 'ETH/USDT card');
+    assert.equal(view.status.textContent, '1 matching market');
+    assert.equal(view.attention.textContent, 0);
+    const clear = view.submit('');
+    view.respond(1, { html: 'all cards', count: 27 });
+    await clear;
+    assert.equal(view.pending[1].url.searchParams.get('q'), '');
+    assert.equal(view.results.innerHTML, 'all cards');
+    assert.equal(view.status.textContent, '27 matching markets');
+    view.dispose();
+});
+
+test('ignores out-of-order searches, preserves results on failure and clears them on lost access', async () => {
+    const view = await searchHarness();
+    const old = view.submit('btc');
+    const latest = view.submit('coinbase');
+    assert.equal(view.pending[0].options.signal.aborted, true);
+    view.respond(1, { html: 'new results', count: 2 });
+    await latest;
+    view.respond(0, { html: 'stale results', count: 1 });
+    await old;
+    assert.equal(view.results.innerHTML, 'new results');
+    const failed = view.submit('kraken');
+    view.respond(2, {}, { ok: false, status: 503 });
+    await failed;
+    assert.equal(view.results.innerHTML, 'new results');
+    assert.match(view.status.textContent, /Search failed/);
+    const revoked = view.submit('kraken');
+    view.respond(3, {}, { ok: false, status: 401 });
+    await revoked;
+    assert.equal(view.results.innerHTML, '');
+    assert.match(view.status.textContent, /session has changed/);
+    view.dispose();
+});
+
+test('debounces typing and fetches the chosen results page without navigation', async () => {
+    const view = await searchHarness();
+    view.input.value = 'b'; view.input.listeners.input();
+    view.input.value = 'bi'; view.input.listeners.input();
+    view.input.value = 'bit'; view.input.listeners.input();
+    assert.equal(view.pending.length, 0);
+    assert.equal([...view.timers.values()].filter(timer => timer.delay === 180).length, 1);
+    const delayed = [...view.timers.values()].find(timer => timer.delay === 180).callback();
+    assert.equal(view.pending[0].url.searchParams.get('q'), 'bit');
+    view.respond(0, { html: 'first page', count: 30 });
+    await delayed;
+    let prevented = false;
+    const page = view.results.listeners.click({ button: 0,
+        target: { closest: () => ({ href: 'https://trademinator.test/dashboard?page=2&q=bit' }) },
+        preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(view.pending[1].url.searchParams.get('page'), '2');
+    assert.equal(view.pending[1].url.searchParams.get('q'), 'bit');
+    view.respond(1, { html: 'second page', count: 30 });
+    await page;
+    assert.equal(view.results.innerHTML, 'second page');
+    view.dispose();
+});

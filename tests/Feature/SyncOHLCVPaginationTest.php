@@ -19,7 +19,7 @@ it('syncs a long interval in bounded overlapping windows', function () {
     $repository->shouldReceive('findByClass')->times(3)->with('kraken')->andReturn(new Collection([$exchange]));
     $repository->shouldReceive('setExchange')->times(3)->with($exchange);
     $repository->shouldReceive('periods')->times(3)->andReturn(['1m' => '1m']);
-    $repository->shouldReceive('markets')->times(3)->andReturn(['BTC/USD' => []]);
+    $repository->shouldReceive('prepareCandleMarket')->times(3)->with('BTC/USD');
     foreach ([[0, 599], [420, 1019], [840, 1200]] as [$from, $to]) {
         $repository->shouldReceive('fetch')->once()->with('BTC/USD', '1m', $from, $to, 10)->andReturn([]);
         $tickers->shouldReceive('timestamps')->once()->with('kraken', 'BTC/USD', '1m', $from * 1000, $to * 1000)->andReturn([]);
@@ -44,16 +44,16 @@ it('queues the next bounded page only after the current page succeeds', function
     $repository->shouldReceive('findByClass')->once()->with('kraken')->andReturn(new Collection([$exchange]));
     $repository->shouldReceive('setExchange')->once()->with($exchange);
     $repository->shouldReceive('periods')->once()->andReturn(['1m' => '1m']);
-    $repository->shouldReceive('markets')->once()->andReturn(['BTC/USD' => []]);
+    $repository->shouldReceive('prepareCandleMarket')->once()->with('BTC/USD');
     $repository->shouldReceive('fetch')->once()->with('BTC/USD', '1m', 0, 599, 10)->andReturn([]);
     $tickers->shouldReceive('timestamps')->once()->with('kraken', 'BTC/USD', '1m', 0, 599_000)->andReturn([]);
     $synchronizer = new MarketDataSynchronizer($repository, $tickers, new CandleGaps, app(ActionLog::class));
 
     Bus::fake();
     (new SyncMarketCandles('kraken', 'BTC/USD', '1m', 0, 1200, false, false, 10))
-        ->handle($synchronizer, $tickers, new CandleSyncPages);
+        ->onConnection('redis')->onQueue('repairs')->handle($synchronizer, $tickers, new CandleSyncPages);
 
-    Bus::assertDispatched(SyncMarketCandles::class, fn (SyncMarketCandles $job): bool => $job->from === 420 && $job->to === 1200 && $job->pageSize === 10);
+    Bus::assertDispatched(SyncMarketCandles::class, fn (SyncMarketCandles $job): bool => $job->from === 420 && $job->to === 1200 && $job->pageSize === 10 && $job->connection === 'redis' && $job->queue === 'repairs');
 });
 
 it('queues only the first job and refuses an inline queue connection', function () {

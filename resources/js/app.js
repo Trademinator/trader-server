@@ -47,8 +47,10 @@ if (humanTrainingChart) {
     })
 }
 const dashboardSuggestions = document.querySelector('[data-dashboard-suggestions]')
-if (dashboardChart || dashboardSuggestions) {
-    import('./components/dashboard').then(({ mountDashboardChart, loadDashboardSuggestions }) => {
+const dashboardMarkets = document.querySelector('[data-dashboard-markets]')
+if (dashboardChart || dashboardSuggestions || dashboardMarkets) {
+    import('./components/dashboard').then(({ mountDashboardChart, loadDashboardSuggestions, mountDashboardMarkets }) => {
+        if (dashboardMarkets) mountDashboardMarkets(dashboardMarkets)
         if (dashboardChart) mountDashboardChart(dashboardChart)
         if (dashboardSuggestions) loadDashboardSuggestions(dashboardSuggestions)
     }).catch(() => {

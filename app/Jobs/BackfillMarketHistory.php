@@ -85,6 +85,7 @@ final class BackfillMarketHistory implements ShouldQueue
                 ]);
             }
             $exchanges->setExchange($exchange, ['timeout' => 15000]);
+            $exchanges->prepareCandleMarket($market->symbol);
             if (! array_key_exists($state->period, $exchanges->periods())) {
                 throw new NotSupported('The selected candle period is not supported by this exchange.');
             }

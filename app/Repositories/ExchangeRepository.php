@@ -25,6 +25,10 @@ class ExchangeRepository extends BaseRepository
 
     protected TickerRepository $tickerRepository;
 
+    private ?string $clientConfiguration = null;
+
+    private ?array $candleOptions = null;
+
     public function __construct(?Exchange $exchange = null)
     {
         parent::__construct();
@@ -198,6 +202,37 @@ class ExchangeRepository extends BaseRepository
         return $this->ccxtExchange->load_markets();
     }
 
+    /** Keep only the requested instrument in CCXT's market/currency indexes. */
+    public function prepareCandleMarket(string $symbol): void
+    {
+        $client = $this->ccxtExchange;
+        if (! isset($client->markets[$symbol]) && $this->candleOptions !== null) {
+            $client->options = $this->candleOptions;
+        }
+        $client->options['paginate'] = false;
+        if (is_array($client->options['fetchOHLCV'] ?? null)) {
+            $client->options['fetchOHLCV']['paginate'] = false;
+        }
+        if (isset($client->markets[$symbol])) {
+            return;
+        }
+        $rows = ! str_contains($symbol, ':') && ($client->has['spot'] ?? false)
+            ? $this->spotMarketRows($this->spotParameters()) : $client->fetch_markets();
+        try {
+            foreach ($rows as $market) {
+                if (($market['symbol'] ?? null) === $symbol) {
+                    $client->set_markets([$market]);
+
+                    return;
+                }
+            }
+        } finally {
+            $client->last_http_response = null;
+            $client->last_json_response = null;
+        }
+        throw new \InvalidArgumentException('The exchange does not support this symbol.');
+    }
+
     /** Read-only spot metadata, without load_markets' currency and market indexes. */
     public function spotMarkets(): array
     {
@@ -211,8 +246,22 @@ class ExchangeRepository extends BaseRepository
             throw new MarketCatalogException('candles_unsupported',
                 'This exchange adapter does not offer the candle data required by this page.', 422);
         }
-        // These settings affect this catalogue client only; persisted credentials,
-        // custom endpoints and the general CLI/collector market loader are retained.
+        $result = [];
+        foreach ($this->spotMarketRows($this->spotParameters()) as $market) {
+            $symbol = $market['symbol'] ?? null;
+            if (is_string($symbol) && ($market['spot'] ?? ($market['type'] ?? null) === 'spot') === true) {
+                $result[$symbol] = ['spot' => true, 'precision' => $market['precision'] ?? [],
+                    'active' => $market['active'] ?? null, 'limits' => $market['limits'] ?? [],
+                    'taker' => $market['taker'] ?? null];
+            }
+        }
+
+        return $result;
+    }
+
+    private function spotParameters(): array
+    {
+        $client = $this->ccxtExchange;
         $client->options['defaultType'] = 'spot';
         $client->options['fetchCurrencies'] = false;
         $client->options['loadAllOptions'] = false;
@@ -232,17 +281,8 @@ class ExchangeRepository extends BaseRepository
             // Large permission sets are irrelevant to a read-only pair catalogue.
             $params['showPermissionSets'] = false;
         }
-        $result = [];
-        foreach ($this->spotMarketRows($params) as $market) {
-            $symbol = $market['symbol'] ?? null;
-            if (is_string($symbol) && ($market['spot'] ?? ($market['type'] ?? null) === 'spot') === true) {
-                $result[$symbol] = ['spot' => true, 'precision' => $market['precision'] ?? [],
-                    'active' => $market['active'] ?? null, 'limits' => $market['limits'] ?? [],
-                    'taker' => $market['taker'] ?? null];
-            }
-        }
 
-        return $result;
+        return $params;
     }
 
     private function spotMarketRows(array $params): iterable
@@ -284,7 +324,7 @@ class ExchangeRepository extends BaseRepository
 
     public function periods(): array
     {
-        return $this->describe()['timeframes'] ?? [];
+        return $this->ccxtExchange->timeframes ?? [];
     }
 
     public function setExchange(Exchange $exchange, array $extraSettings = [])
@@ -297,7 +337,18 @@ class ExchangeRepository extends BaseRepository
             $settings = array_merge($settings, $extraSettings);
         }
         $settings['enableRateLimit'] = true;
+        $settings['enableLastHttpResponse'] = false;
+        $settings['enableLastJsonResponse'] = false;
+        $configuration = hash('sha256', $exchange->class.json_encode($settings, JSON_THROW_ON_ERROR));
+        if ($this->clientConfiguration === $configuration) {
+            return;
+        }
+        $this->tickerRepository->setExchange(null);
+        $this->ccxtExchange = null;
+        gc_collect_cycles();
         $this->ccxtExchange = new $ccxtExchangeName($settings);
+        $this->clientConfiguration = $configuration;
+        $this->candleOptions = $this->ccxtExchange->options;
         $this->tickerRepository->setExchange($this->ccxtExchange);
     }
 }

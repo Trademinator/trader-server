@@ -384,7 +384,7 @@ Description: Select the shortest sufficiently informative candle period
 
 Signature: `trademinator:select-candle-period {exchange} {symbol} {--periods=1m,3m,5m,15m,30m,1h,4h,1d} {--tick-size=} {--threshold=0.7} {--coverage=0.8} {--minimum=50} {--sample=250} {--from=7 days ago} {--to=now}`
 
-Fetch candidate candle periods and select the shortest one meeting the quality, coverage, and completed-sample requirements. Required: `exchange`, `symbol`. Prints the decision as JSON and stores a successful decision in `candle_period_selections`; fetched candles are also persisted. Returns failure when no candidate qualifies. A direct CLI decision does not update a shared feed's selected period; the M1 collector manages that field.
+Fetch candidate candle periods and select the shortest one meeting the quality, coverage, and completed-sample requirements. Each candidate fetch is restricted to the most recent `--sample` periods plus one boundary period inside the requested interval; it does not download the entire date range merely to discard older candles. Required: `exchange`, `symbol`. Prints the decision as JSON and stores a successful decision in `candle_period_selections`; fetched candles are also persisted. Returns failure when no candidate qualifies. A direct CLI decision does not update a shared feed's selected period; the M1 collector manages that field.
 
 | Option | Default | Meaning |
 | --- | --- | --- |

@@ -14,6 +14,8 @@ final class SyncMarketCandles implements ShouldQueue
 
     public int $tries = 5;
 
+    public int $timeout = 600;
+
     /** @var list<int> */
     public array $backoff = [30, 60, 120, 240];
 
@@ -46,6 +48,7 @@ final class SyncMarketCandles implements ShouldQueue
 
         if ($page['next'] !== null) {
             self::dispatch($this->exchange, $this->symbol, $this->period, $page['next'], $this->to, false, $this->repairGaps, $this->pageSize)
+                ->onConnection($this->connection)->onQueue($this->queue)
                 ->delay(now()->addSecond());
         }
     }

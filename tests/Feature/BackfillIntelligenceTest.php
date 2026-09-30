@@ -51,6 +51,7 @@ function importTrainingHistory(bool $empty = false): string
     $state = DB::table('market_history_backfills')->first();
     $repository = Mockery::mock(ExchangeRepository::class);
     $repository->shouldReceive('setExchange')->once();
+    $repository->shouldReceive('prepareCandleMarket')->once()->with('BTC/USD');
     $repository->shouldReceive('periods')->once()->andReturn(['1h' => '1h']);
     $repository->shouldReceive('fetchHistoryPage')->once()->andReturnUsing(
         fn ($symbol, $period, $from, $until) => $empty ? [] : array_map(backfillTrainingCandle(...), range($from, $until - 3600000, 3600000)));

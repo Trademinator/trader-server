@@ -23,7 +23,11 @@ final class IntelligenceTrainer
 
     public function train(string $dataset, ?float $deadline = null, ?string $generation = null): array
     {
-        [$manifest, $rows] = $this->datasets->load($dataset);
+        $manifest = $this->datasets->manifest($dataset);
+        if ($manifest['rows'] > config('intelligence.max_rows')) {
+            throw new InvalidArgumentException('Dataset exceeds intelligence.max_rows; use a smaller date range.');
+        }
+        [$manifest, $rows] = $this->datasets->load($dataset, (int) config('intelligence.max_rows'));
         if ($manifest['feature_version'] !== FeatureEngine::VERSION
             || $manifest['label_definition']['version'] !== SemanticLabels::VERSION) {
             throw new InvalidArgumentException('M4 requires current features and cost-free semantic labels; build fresh knowledge.');

@@ -30,9 +30,10 @@ final class MarketDataSynchronizer
 
         $this->exchanges->setExchange($model);
         if (! in_array($period, CandleTimeframe::SUPPORTED, true)
-            || ! array_key_exists($period, $this->exchanges->periods()) || ! array_key_exists($symbol, $this->exchanges->markets())) {
+            || ! array_key_exists($period, $this->exchanges->periods())) {
             throw new InvalidArgumentException('The exchange does not support this symbol and period.');
         }
+        $this->exchanges->prepareCandleMarket($symbol);
 
         $start = $from;
         if ($incremental) {

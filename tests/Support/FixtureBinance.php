@@ -12,9 +12,33 @@ class FixtureBinance extends binance
 
     public static int $requests = 0;
 
+    public static int $ohlcvRequests = 0;
+
+    public static int $largestCandleRequest = 0;
+
     public function fetch($url, $method = 'GET', $headers = null, $body = null)
     {
         parse_str(parse_url($url, PHP_URL_QUERY) ?? '', $query);
+        if (parse_url($url, PHP_URL_PATH) === '/api/v3/klines') {
+            if (($query['symbol'] ?? null) !== 'BTCUSDT' || ($query['interval'] ?? null) !== '1m') {
+                throw new RuntimeException('Unexpected candle market or period.');
+            }
+            $limit = (int) ($query['limit'] ?? 0);
+            if ($limit < 1 || $limit > 100) {
+                throw new RuntimeException('Candle request was not bounded.');
+            }
+            self::$ohlcvRequests++;
+            self::$largestCandleRequest = max(self::$largestCandleRequest, $limit);
+            $rows = [];
+            $start = (int) (ceil((int) $query['startTime'] / 60000) * 60000);
+            for ($i = 0; $i < $limit && $start + $i * 60000 < time() * 1000; $i++) {
+                $timestamp = $start + $i * 60000;
+                $price = 100 + (intdiv($timestamp, 60000) % 1000) / 10;
+                $rows[] = [$timestamp, (string) $price, (string) ($price + 1), (string) ($price - 1), (string) ($price + 0.5), '10'];
+            }
+
+            return $rows;
+        }
         if (parse_url($url, PHP_URL_PATH) !== '/api/v3/exchangeInfo'
             || ! in_array($query['showPermissionSets'] ?? null, ['false', '0'], true)) {
             throw new RuntimeException('Unexpected endpoint or oversized permission response requested.');
