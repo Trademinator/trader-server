@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendCandleHistory, candleActionAllowed, candleMeasurementLine, candleTrainingChartData, candleTrainingMove, nextCandleSelection, prependCandleHistory } from '../../resources/js/components/candle-training-chart.js';
+import { appendCandleHistory, candleActionAllowed, candleMeasurementLine, candleTimeAtLogicalIndex, candleTrainingChartData, candleTrainingMove, nextCandleSelection, prependCandleHistory } from '../../resources/js/components/candle-training-chart.js';
 
 const candle = (time, close = '11') => ({ time, open: '10.5', high: '12', low: '9', close, volume: '100' });
 
@@ -29,6 +29,18 @@ test('A B measurement shifts the previous B to A on the third click', () => {
     assert.deepEqual(selection, [10, 20]);
     selection = nextCandleSelection(selection, 30);
     assert.deepEqual(selection, [20, 30]);
+});
+
+test('logical candle hit-testing resolves the nearest bar without a fixed pixel tolerance', () => {
+    const series = [candle(10), candle(20), candle(30)];
+    assert.equal(candleTimeAtLogicalIndex(series, 0.49), 10);
+    assert.equal(candleTimeAtLogicalIndex(series, 0.51), 20);
+    assert.equal(candleTimeAtLogicalIndex(series, 1.49), 20);
+    assert.equal(candleTimeAtLogicalIndex(series, 1.51), 30);
+    assert.equal(candleTimeAtLogicalIndex(series, -0.51), null);
+    assert.equal(candleTimeAtLogicalIndex(series, 2.51), null);
+    assert.equal(candleTimeAtLogicalIndex(series, null), null);
+    assert.equal(candleTimeAtLogicalIndex(series, undefined), null);
 });
 
 test('close-to-close movement is compared with the approximate two-taker-trade fee', () => {
@@ -88,7 +100,7 @@ async function mountedChart(t, fetchResponse, snapshot = {}) {
         setAttribute(name, value) { this[name] = value; }
         removeAttribute(name) { delete this[name]; }
     }
-    const keys = ['status', 'canvas', 'legend', 'fit', 'candle-menu', 'menu-title', 'history-status', 'history-retry',
+    const keys = ['status', 'canvas', 'legend', 'fit', 'candle-menu', 'menu-title', 'menu-note', 'history-status', 'history-retry',
         'measure-tooltip', 'candle-dataset', 'candle-dataset-form', 'measure-a', 'measure-b', 'measure-move',
         'measure-fee', 'balanced-samples', 'balance-hint', 'stat-total', 'replay-time', 'step-previous', 'step-next'];
     const nodes = new Map(keys.map(key => [`[data-${key}]`, new Element()]));
@@ -221,6 +233,23 @@ test('menu rules persist after a save and closing the menu cannot move the label
     assert.equal(nodes.get('[data-menu-action="sell"]').disabled, false);
 });
 
+
+test('context-only candles still show an explanatory disabled menu', async t => {
+    const { nodes } = await mountedChart(t, async () => ({ ok: true, json: async () => ({}) }), { decisions: {} });
+    let prevented = false;
+    nodes.get('[data-canvas]').trigger('contextmenu', {
+        clientX: 30,
+        clientY: 20,
+        preventDefault() { prevented = true; },
+    });
+
+    assert.equal(prevented, true);
+    assert.equal(nodes.get('[data-candle-menu]').hidden, false);
+    assert.equal(nodes.get('[data-menu-action="buy"]').disabled, true);
+    assert.equal(nodes.get('[data-menu-action="hold"]').disabled, true);
+    assert.equal(nodes.get('[data-menu-action="sell"]').disabled, true);
+    assert.match(nodes.get('[data-menu-note]').textContent, /no immutable training row/);
+});
 
 test('newer pages preserve existing data and cannot exceed the frozen dataset cutoff', () => {
     const merged = appendCandleHistory([candle(3), candle(4)], [candle(5), candle(4, '999'), candle(5), candle(6), candle(7)], 7000);

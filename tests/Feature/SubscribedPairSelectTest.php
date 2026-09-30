@@ -94,5 +94,76 @@ it('uses dataset ids while applying subscription scope and custom pair-first sor
 
     $view->assertSeeTextInOrder(['Zeta · AAA/USD · 15m', 'Alpha · ZZZ/USD · 1m'])
         ->assertSee('value="'.$aaa.'"', false)->assertSee('value="'.$zzz.'"', false)
+        ->assertDontSeeText(substr($aaa, 0, 8))
+        ->assertDontSeeText(substr($zzz, 0, 8))
         ->assertDontSee($otherDataset, false)->assertDontSeeText('OTHER/USD');
+});
+
+it('collapses repeated frozen datasets into one logical market option by default', function () {
+    $user = User::factory()->create();
+    $exchange = Exchange::query()->create(['name' => 'Binance', 'class' => 'binance', 'config' => '{}']);
+    subscribedPairSelectMarket($user, $exchange, 'ETH/BTC', '3m');
+
+    $newest = (string) Str::uuid7();
+    $older = (string) Str::uuid7();
+    $datasets = [
+        ['dataset_id' => $newest, 'exchange' => 'binance', 'symbol' => 'ETH/BTC', 'period' => '3m', 'rows' => 3988],
+        ['dataset_id' => $older, 'exchange' => 'binance', 'symbol' => 'ETH/BTC', 'period' => '3m', 'rows' => 3900],
+    ];
+
+    $view = $this->actingAs($user)->blade(
+        '<x-subscribed-pair-select name="dataset" :datasets="$datasets" />',
+        ['datasets' => $datasets],
+    );
+    $html = (string) $view;
+
+    $view->assertSeeText('Binance · ETH/BTC · 3m · 3,988 samples')
+        ->assertDontSeeText(substr($newest, 0, 8))->assertDontSeeText(substr($older, 0, 8));
+    expect(substr_count($html, 'Binance · ETH/BTC · 3m · 3,988 samples'))->toBe(1)
+        ->and($html)->toContain('value="'.$newest.'"')->not->toContain('value="'.$older.'"');
+});
+
+it('keeps the currently open frozen dataset as the single option for its market', function () {
+    $user = User::factory()->create();
+    $exchange = Exchange::query()->create(['name' => 'Binance', 'class' => 'binance', 'config' => '{}']);
+    subscribedPairSelectMarket($user, $exchange, 'ETH/BTC', '3m');
+
+    $newest = (string) Str::uuid7();
+    $current = (string) Str::uuid7();
+    $datasets = [
+        ['dataset_id' => $newest, 'exchange' => 'binance', 'symbol' => 'ETH/BTC', 'period' => '3m', 'rows' => 3988],
+        ['dataset_id' => $current, 'exchange' => 'binance', 'symbol' => 'ETH/BTC', 'period' => '3m', 'rows' => 3800],
+    ];
+    $currentDataset = $datasets[1];
+
+    $view = $this->actingAs($user)->blade(
+        '<x-subscribed-pair-select name="dataset" :value="$current" :datasets="$datasets" :current-dataset="$currentDataset" />',
+        compact('current', 'datasets', 'currentDataset'),
+    );
+    $html = (string) $view;
+
+    $view->assertSeeText('Binance · ETH/BTC · 3m · 3,800 samples');
+    expect(substr_count($html, 'ETH/BTC · 3m'))->toBe(1)
+        ->and($html)->toContain('value="'.$current.'" selected')->not->toContain('value="'.$newest.'"');
+});
+
+it('can explicitly expose frozen dataset versions when they are useful', function () {
+    $user = User::factory()->create();
+    $exchange = Exchange::query()->create(['name' => 'Binance', 'class' => 'binance', 'config' => '{}']);
+    subscribedPairSelectMarket($user, $exchange, 'ETH/BTC', '3m');
+
+    $first = (string) Str::uuid7();
+    $second = (string) Str::uuid7();
+    $datasets = [
+        ['dataset_id' => $first, 'exchange' => 'binance', 'symbol' => 'ETH/BTC', 'period' => '3m', 'rows' => 3988],
+        ['dataset_id' => $second, 'exchange' => 'binance', 'symbol' => 'ETH/BTC', 'period' => '3m', 'rows' => 3900],
+    ];
+
+    $view = $this->actingAs($user)->blade(
+        '<x-subscribed-pair-select name="dataset" :datasets="$datasets" :show-dataset-versions="true" />',
+        ['datasets' => $datasets],
+    );
+
+    $view->assertSeeText('Binance · ETH/BTC · 3m · 3,988 samples · '.substr($first, 0, 8))
+        ->assertSeeText('Binance · ETH/BTC · 3m · 3,900 samples · '.substr($second, 0, 8));
 });

@@ -23,6 +23,7 @@ final class SubscribedPairSelect extends FormControl
         public array|string|null $sort = null,
         public array $datasets = [],
         public ?array $currentDataset = null,
+        public bool $showDatasetVersions = false,
         public string $placeholder = '',
     ) {
         parent::__construct($name, $id, $value, $label, $bag);
@@ -32,7 +33,11 @@ final class SubscribedPairSelect extends FormControl
         }
 
         if ($datasets !== []) {
-            foreach ($pairs->datasets($user, $datasets, $allSubscribed, $sort) as $dataset) {
+            $availableDatasets = $pairs->datasets($user, $datasets, $allSubscribed, $sort);
+            if (! $showDatasetVersions) {
+                $availableDatasets = $this->collapseDatasetVersions($availableDatasets, $currentDataset);
+            }
+            foreach ($availableDatasets as $dataset) {
                 $option = $this->datasetOption($dataset);
                 if ($option !== null) {
                     $this->options[] = $option;
@@ -80,11 +85,59 @@ final class SubscribedPairSelect extends FormControl
         $parts = [$exchange, $pair, $period];
         if (isset($dataset['rows']) && is_numeric($dataset['rows'])) {
             $parts[] = number_format((int) $dataset['rows']).' samples';
-            $parts[] = substr($id, 0, 8);
-        } elseif ($current) {
+            if ($this->showDatasetVersions) {
+                $parts[] = substr($id, 0, 8);
+            }
+        } elseif ($current && $this->showDatasetVersions) {
             $parts[] = 'current dataset';
         }
 
         return ['value' => $id, 'label' => implode(' · ', $parts)];
+    }
+
+    /**
+     * Keep one dataset per exchange/pair/period for normal selectors. The dataset list
+     * arrives newest first. On an open replay page, prefer the dataset being viewed so
+     * the selected value never changes underneath the user.
+     *
+     * @param  array<int, array<string, mixed>>  $datasets
+     * @param  array<string, mixed>|null  $currentDataset
+     * @return array<int, array<string, mixed>>
+     */
+    private function collapseDatasetVersions(array $datasets, ?array $currentDataset): array
+    {
+        $currentKey = $currentDataset === null ? null : $this->datasetKey($currentDataset);
+        $collapsed = [];
+        $seen = [];
+
+        foreach ($datasets as $dataset) {
+            $key = $this->datasetKey($dataset);
+            if ($key === null || isset($seen[$key])) {
+                continue;
+            }
+            if ($currentDataset !== null && $currentKey === $key) {
+                $dataset = [
+                    ...$currentDataset,
+                    'exchange_name' => $dataset['exchange_name'] ?? $currentDataset['exchange_name'] ?? null,
+                ];
+            }
+            $collapsed[] = $dataset;
+            $seen[$key] = true;
+        }
+
+        return $collapsed;
+    }
+
+    /** @param array<string, mixed> $dataset */
+    private function datasetKey(array $dataset): ?string
+    {
+        $exchange = $dataset['exchange'] ?? null;
+        $pair = $dataset['symbol'] ?? null;
+        $period = $dataset['period'] ?? null;
+        if (! is_string($exchange) || ! is_string($pair) || ! is_string($period)) {
+            return null;
+        }
+
+        return strtolower($exchange).'|'.$pair.'|'.$period;
     }
 }

@@ -35,6 +35,14 @@ export function nextCandleSelection(current, time) {
     return [current[1], value];
 }
 
+export function candleTimeAtLogicalIndex(series, logical) {
+    if (typeof logical !== 'number' || !Number.isFinite(logical)) return null;
+    const index = Math.round(logical);
+    if (index < 0 || index >= series.length) return null;
+    const time = Number(series[index]?.time);
+    return Number.isFinite(time) ? time : null;
+}
+
 export function candleTrainingMove(first, second, takerFee = null) {
     if (!first || !second) return null;
     const from = Number(first.close);
@@ -331,12 +339,18 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         if (!chart) return null;
         const rect = canvas.getBoundingClientRect();
         const x = clientX - rect.left;
-        const direct = chart.timeScale().coordinateToTime(x);
+        const timeScale = chart.timeScale();
+        const logical = typeof timeScale.coordinateToLogical === 'function'
+            ? timeScale.coordinateToLogical(x)
+            : null;
+        const logicalTime = candleTimeAtLogicalIndex(data.series, logical);
+        if (logicalTime !== null && candles.has(logicalTime)) return logicalTime;
+        const direct = timeScale.coordinateToTime(x);
         if (typeof direct === 'number' && candles.has(Number(direct))) return Number(direct);
         let best = null;
         let distance = Infinity;
         for (const time of candles.keys()) {
-            const coordinate = chart.timeScale().timeToCoordinate(time);
+            const coordinate = timeScale.timeToCoordinate(time);
             if (coordinate === null) continue;
             const candidate = Math.abs(coordinate - x);
             if (candidate < distance) { distance = candidate; best = time; }
@@ -349,25 +363,31 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         menuTime = null;
     };
     const openMenu = (time, clientX, clientY) => {
-        if (savingLabel) return;
+        if (savingLabel || !menu) return;
         const decision = data.decisions[String(time)];
-        if (!decision) {
-            status.textContent = 'This candle is visible for context but has no immutable training row in this dataset.';
-            closeMenu();
-            return;
-        }
         menuTime = Number(time);
         const current = labels.get(menuTime) ?? null;
+        const trainable = Boolean(decision);
         menu.querySelector('[data-menu-title]').textContent = `${formatTime(menuTime)}${current ? ` · ${current.toUpperCase()}` : ' · unlabelled'}`;
         const remove = menu.querySelector('[data-menu-action="delete"]');
-        if (remove) remove.hidden = current === null;
+        const note = menu.querySelector('[data-menu-note]');
+        if (remove) remove.hidden = current === null || !trainable;
+        if (note) {
+            note.textContent = trainable
+                ? 'BUY on red bars; SELL on green bars. HOLD on any bar.'
+                : 'This candle is visible for context but has no immutable training row in this dataset, so it cannot be labelled.';
+        }
         menu.querySelectorAll('[data-menu-action]').forEach(button => {
             const action = button.dataset.menuAction;
-            button.disabled = action !== 'delete' && !candleActionAllowed(candles.get(menuTime), action, data.allowedActions[String(menuTime)]);
+            button.disabled = !trainable
+                || (action !== 'delete' && !candleActionAllowed(candles.get(menuTime), action, data.allowedActions[String(menuTime)]));
         });
         menu.hidden = false;
         menu.style.left = `${Math.max(8, clientX)}px`;
         menu.style.top = `${Math.max(8, clientY)}px`;
+        if (!trainable) {
+            status.textContent = 'This candle is context-only in the frozen dataset and cannot be used as a training label.';
+        }
         requestAnimationFrame(() => {
             const rect = menu.getBoundingClientRect();
             menu.style.left = `${Math.max(8, Math.min(clientX, window.innerWidth - rect.width - 8))}px`;
@@ -415,9 +435,13 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         }
     };
     const onContextMenu = event => {
-        const time = nearestCandleTime(event.clientX);
-        if (time === null) return;
         event.preventDefault();
+        const time = nearestCandleTime(event.clientX);
+        if (time === null) {
+            closeMenu();
+            status.textContent = 'No candle is under the pointer. Right-click directly over a candle to label it.';
+            return;
+        }
         openMenu(time, event.clientX, event.clientY);
     };
     const cancelLongPress = () => {
@@ -477,7 +501,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         fit.addEventListener('click', fitChart);
         historyRetry.addEventListener('click', retryHistory);
         chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange);
-        canvas.addEventListener('contextmenu', onContextMenu);
+        canvas.addEventListener('contextmenu', onContextMenu, true);
         canvas.addEventListener('wheel', onWheel, { passive: true });
         canvas.addEventListener('pointerdown', onPointerDown);
         canvas.addEventListener('pointermove', onPointerMove);
@@ -502,7 +526,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             fit.removeEventListener('click', fitChart);
             historyRetry.removeEventListener('click', retryHistory);
             datasetSelect?.removeEventListener('change', switchDataset);
-            canvas.removeEventListener('contextmenu', onContextMenu);
+            canvas.removeEventListener('contextmenu', onContextMenu, true);
             canvas.removeEventListener('wheel', onWheel);
             canvas.removeEventListener('pointerdown', onPointerDown);
             canvas.removeEventListener('pointermove', onPointerMove);

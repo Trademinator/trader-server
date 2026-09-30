@@ -116,7 +116,7 @@
                         <button type="button" class="candle-training-hold" data-menu-action="hold" role="menuitem">● HOLD</button>
                         <button type="button" class="candle-training-sell" data-menu-action="sell" role="menuitem">▼ SELL</button>
                     </div>
-                    <p class="guide-help">BUY on red bars; SELL on green bars. HOLD on any bar.</p>
+                    <p class="guide-help" data-menu-note>BUY on red bars; SELL on green bars. HOLD on any bar.</p>
                     <button type="button" class="candle-menu-delete" data-menu-action="delete" role="menuitem">Delete my label</button>
                 </div>
                 <noscript><p>The interactive chart requires JavaScript. Use JavaScript to display the chart and label candles.</p></noscript>
