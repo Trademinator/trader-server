@@ -6,6 +6,6 @@ return [
         'enabled' => env('COINGECKO_ENABLED', false),
         'api_key' => env('COINGECKO_API_KEY'),
         'pro' => env('COINGECKO_PRO', false),
-        'max_age_seconds' => 7200,
+        'max_age_seconds' => (int) env('COINGECKO_MAX_AGE_SECONDS', 7200),
     ],
 ];

@@ -25,7 +25,12 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
 
     public bool $failOnTimeout = true;
 
-    public function __construct(public readonly string $historyId, public readonly string $leaseToken) {}
+    public ?string $schema = null;
+
+    public function __construct(public readonly string $historyId, public readonly string $leaseToken, ?string $schema = null)
+    {
+        $this->schema = $schema ?? (string) config('intelligence.schema');
+    }
 
     public function handle(BackfillIntelligence $builds, FeatureBuilder $features, MarketIntelligence $intelligence): void
     {
@@ -60,7 +65,8 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
                 ]);
             } elseif ($state->build_stage === 'knn' && (int) $state->build_revision > 0) {
                 $revision = (int) $state->build_revision;
-                $report = $intelligence->build($exchange, $symbol, $state->period, schema: config('intelligence.schema'),
+                $report = $intelligence->build($exchange, $symbol, $state->period,
+                    schema: $this->schema ?? (string) config('intelligence.schema'),
                     generation: hash('sha256', 'history:'.$this->historyId.':'.$revision));
                 $builds->release($this->historyId, $this->leaseToken, [
                     'trained_revision' => $revision, 'build_stage' => null, 'build_revision' => null,

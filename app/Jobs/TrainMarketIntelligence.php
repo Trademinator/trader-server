@@ -25,11 +25,18 @@ final class TrainMarketIntelligence implements ShouldBeUnique, ShouldQueue
 
     public array $backoff = [300, 900];
 
-    public function __construct(public string $exchange, public string $symbol, public string $period, public string $week) {}
+    public ?string $schema = null;
+
+    public function __construct(public string $exchange, public string $symbol, public string $period, public string $week, ?string $schema = null)
+    {
+        $this->schema = $schema ?? (string) config('intelligence.schema');
+    }
 
     public function uniqueId(): string
     {
-        return ModelStore::marketKey($this->exchange, $this->symbol, $this->period).':'.$this->week.':'.IntelligenceTrainer::VERSION;
+        $schema = $this->schema ?? (string) config('intelligence.schema');
+
+        return ModelStore::marketKey($this->exchange, $this->symbol, $this->period).':'.$this->week.':'.$schema.':'.IntelligenceTrainer::VERSION;
     }
 
     public function handle(MarketIntelligence $intelligence): void
@@ -43,7 +50,8 @@ final class TrainMarketIntelligence implements ShouldBeUnique, ShouldQueue
             if (Cache::has($key)) {
                 return;
             }
-            $intelligence->build($this->exchange, $this->symbol, $this->period, schema: config('intelligence.schema'),
+            $intelligence->build($this->exchange, $this->symbol, $this->period,
+                schema: $this->schema ?? (string) config('intelligence.schema'),
                 generation: hash('sha256', $this->uniqueId()));
             Cache::put($key, true, now()->addDays(14));
         } finally {
