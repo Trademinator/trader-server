@@ -39,22 +39,46 @@ function candleGuidanceAction(array $manifest, array $row, User $trainer, string
     return $snapshot;
 }
 
-it('builds a separate three-action Candle Training comparison from matching authorized labels', function () {
+it('builds a separate balanced three-action Candle Training comparison from matching authorized labels', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     $trainer = User::factory()->create();
     config(['operations.owner_uuid' => $trainer->user_id]);
     $manifest = IntelligenceFixtures::snapshot();
     [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    $actions = ['buy', 'hold', 'sell'];
     foreach (array_slice($rows, 0, 12) as $index => $row) {
-        candleGuidanceAction($manifest, $row, $trainer, $index % 2 === 0 ? 'buy' : 'sell');
+        candleGuidanceAction($manifest, $row, $trainer, $actions[$index % 3]);
     }
 
     $bundle = app(CandleGuidance::class)->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle'];
+    expect($bundle['version'])->toBe('m4.4-candle-guidance-v2');
     expect($bundle['samples'])->toBe(12);
+    expect($bundle['training_samples'])->toBe(12);
+    expect($bundle['class_counts'])->toBe(['buy' => 4, 'hold' => 4, 'sell' => 4]);
+    expect($bundle['balanced_class_counts'])->toBe(['buy' => 4, 'hold' => 4, 'sell' => 4]);
     expect($bundle['minimum_samples'])->toBe(8);
     expect($bundle['comparison'])->toHaveKeys(['baseline_without_candle', 'candle_human_only', 'combined']);
     expect($bundle['comparison']['candle_human_only']['production_eligible'])->toBeFalse();
     expect(strlen($bundle['label_provenance_sha256']))->toBe(64);
+});
+
+it('downsamples an imbalanced human action set equally across BUY HOLD and SELL', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $trainer = User::factory()->create();
+    config(['operations.owner_uuid' => $trainer->user_id, 'human_training.candle_min_samples' => 50]);
+    $manifest = IntelligenceFixtures::snapshot();
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    $actions = ['buy', 'buy', 'buy', 'buy', 'buy', 'buy', 'hold', 'hold', 'sell', 'sell'];
+    foreach ($actions as $index => $action) {
+        candleGuidanceAction($manifest, $rows[$index], $trainer, $action);
+    }
+
+    $bundle = app(CandleGuidance::class)->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle'];
+    expect($bundle['samples'])->toBe(10);
+    expect($bundle['training_samples'])->toBe(6);
+    expect($bundle['class_counts'])->toBe(['buy' => 6, 'hold' => 2, 'sell' => 2]);
+    expect($bundle['balanced_class_counts'])->toBe(['buy' => 2, 'hold' => 2, 'sell' => 2]);
+    expect($bundle['status'])->toBe('insufficient_balanced_candle_labels');
 });
 
 it('excludes candle labels from revoked trainers and incompatible snapshots', function () {
@@ -69,9 +93,11 @@ it('excludes candle labels from revoked trainers and incompatible snapshots', fu
     candleGuidanceAction($manifest, $rows[2], $users[1], 'hold');
 
     $service = app(CandleGuidance::class);
-    expect($service->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle']['samples'])->toBe(2);
+    $bundle = $service->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle'];
+    expect($bundle['samples'])->toBe(2)->and($bundle['training_samples'])->toBe(0);
     config(['operations.owner_uuid' => $users[0]->user_id, 'human_training.trainer_uuids' => []]);
-    expect($service->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle']['samples'])->toBe(1);
+    $bundle = $service->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle'];
+    expect($bundle['samples'])->toBe(1)->and($bundle['training_samples'])->toBe(0);
     config(['operations.owner_uuid' => null]);
     expect($service->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle']['samples'])->toBe(0);
 });

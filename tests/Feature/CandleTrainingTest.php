@@ -46,7 +46,7 @@ it('shows Candle Training separately from Trend Training', function () {
         ->assertSee('Unlabelled candles mean no human opinion');
 });
 
-it('creates editable BUY HOLD SELL labels and removes them back to unlabelled', function () {
+it('creates editable BUY HOLD SELL labels, reports balance, and removes them back to unlabelled', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     $user = User::factory()->create();
     config(['operations.owner_uuid' => $user->user_id]);
@@ -58,12 +58,18 @@ it('creates editable BUY HOLD SELL labels and removes them back to unlabelled', 
     $state = $training->review($user, $manifest['dataset_id'], $decision);
     expect($state['payload']['decision_at_ms'])->toBe($decision);
     expect($state['label'])->toBeNull();
+    expect($state['label_stats']['counts'])->toBe(['buy' => 0, 'hold' => 0, 'sell' => 0]);
+    expect($state['label_stats']['balanced_samples'])->toBe(0);
     expect(max(array_column($state['payload']['series'], 'time')) * 1000)->toBeLessThan($decision);
 
     $buy = $training->save($user, $manifest['dataset_id'], $decision, 'buy');
     expect($buy->action)->toBe('buy');
     expect($buy->snapshot->verifiedPayload()['vector'])->toBe($state['payload']['vector']);
     $this->assertDatabaseCount('human_candle_labels', 1);
+    $stats = $training->review($user, $manifest['dataset_id'], $decision)['label_stats'];
+    expect($stats['counts'])->toBe(['buy' => 1, 'hold' => 0, 'sell' => 0]);
+    expect($stats['percentages'])->toBe(['buy' => 100.0, 'hold' => 0.0, 'sell' => 0.0]);
+    expect($stats['least_represented'])->toBe(['hold', 'sell']);
 
     $sell = $training->save($user, $manifest['dataset_id'], $decision, 'sell');
     expect($sell->candle_label_id)->toBe($buy->candle_label_id);
@@ -72,11 +78,31 @@ it('creates editable BUY HOLD SELL labels and removes them back to unlabelled', 
 
     $this->actingAs($user)->get(route('human-training.candles.show', [
         'dataset' => $manifest['dataset_id'], 'decision_at_ms' => $decision,
-    ]))->assertOk()->assertSee('Current label: SELL')->assertSee('Unlabelled does not mean HOLD');
+    ]))->assertOk()->assertSee('Current label: SELL')->assertSee('Unlabelled does not mean HOLD')
+        ->assertSee('Left-click')->assertSee('Right-click');
 
     $training->delete($user, $manifest['dataset_id'], $decision);
     expect(HumanCandleLabel::query()->count())->toBe(0);
     expect($training->review($user, $manifest['dataset_id'], $decision)['label'])->toBeNull();
+});
+
+it('supports chart-menu JSON save and delete without a page reload', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $user = User::factory()->create();
+    config(['operations.owner_uuid' => $user->user_id]);
+    $manifest = candleTrainingDataset();
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    $decision = $rows[0]['decision_at_ms'];
+
+    $this->actingAs($user)->putJson(route('human-training.candles.update', $manifest['dataset_id']), [
+        'decision_at_ms' => $decision, 'action' => 'hold',
+    ])->assertOk()->assertJson(['decision_at_ms' => $decision, 'action' => 'hold']);
+    $this->assertDatabaseHas('human_candle_labels', ['trainer_id' => $user->user_id, 'action' => 'hold']);
+
+    $this->actingAs($user)->deleteJson(route('human-training.candles.destroy', $manifest['dataset_id']), [
+        'decision_at_ms' => $decision,
+    ])->assertOk()->assertJson(['decision_at_ms' => $decision, 'deleted' => true]);
+    $this->assertDatabaseCount('human_candle_labels', 0);
 });
 
 it('validates candle actions and prevents a trainer from changing another trainers label', function () {

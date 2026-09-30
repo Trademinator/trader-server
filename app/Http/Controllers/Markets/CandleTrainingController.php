@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Markets;
 
 use App\Domain\Intelligence\CandleTraining;
 use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -31,24 +32,41 @@ class CandleTrainingController extends Controller
             'actions' => CandleTraining::ACTIONS])->header('Cache-Control', 'no-store, private');
     }
 
-    public function update(Request $request, string $dataset, CandleTraining $training): RedirectResponse
+    public function update(Request $request, string $dataset, CandleTraining $training): RedirectResponse|JsonResponse
     {
         $data = $request->validate(['decision_at_ms' => ['required', 'integer', 'min:1'],
             'action' => ['required', Rule::in(CandleTraining::ACTIONS)]]);
         $label = $training->save($request->user(), $dataset, (int) $data['decision_at_ms'], $data['action']);
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'decision_at_ms' => (int) $data['decision_at_ms'],
+                'action' => $label->action,
+                'message' => 'Candle marked '.strtoupper($label->action).'.',
+            ]);
+        }
 
         return redirect()->route('human-training.candles.show', [
             'dataset' => $dataset, 'decision_at_ms' => $data['decision_at_ms'],
         ])->with('status', 'Candle marked '.strtoupper($label->action).'.');
     }
 
-    public function destroy(Request $request, string $dataset, CandleTraining $training): RedirectResponse
+    public function destroy(Request $request, string $dataset, CandleTraining $training): RedirectResponse|JsonResponse
     {
         $data = $request->validate(['decision_at_ms' => ['required', 'integer', 'min:1']]);
         $training->delete($request->user(), $dataset, (int) $data['decision_at_ms']);
+        $message = 'Candle label removed. This candle is now unlabelled, not HOLD. Rebuild intelligence to remove the deleted label from any already-published model.';
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'decision_at_ms' => (int) $data['decision_at_ms'],
+                'deleted' => true,
+                'message' => $message,
+            ]);
+        }
 
         return redirect()->route('human-training.candles.show', [
             'dataset' => $dataset, 'decision_at_ms' => $data['decision_at_ms'],
-        ])->with('status', 'Candle label removed. This candle is now unlabelled, not HOLD.');
+        ])->with('status', $message);
     }
 }

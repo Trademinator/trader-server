@@ -3,20 +3,27 @@
 namespace App\Domain\Intelligence;
 
 use App\Domain\Features\FeatureEngine;
+use App\Domain\MarketData\MarketCatalog;
 use App\Domain\Research\DatasetStore;
 use App\Domain\Research\SemanticLabels;
+use App\Models\Exchange;
 use App\Models\HumanCandleLabel;
 use App\Models\HumanTrainingSnapshot;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 final class CandleTraining
 {
     public const ACTIONS = ['buy', 'hold', 'sell'];
 
-    public function __construct(private DatasetStore $datasets, private HumanTraining $snapshots) {}
+    public function __construct(
+        private DatasetStore $datasets,
+        private HumanTraining $snapshots,
+        private MarketCatalog $catalog,
+    ) {}
 
     public function count(User $trainer): int
     {
@@ -82,6 +89,8 @@ final class CandleTraining
 
         return ['manifest' => $manifest, 'snapshot' => $snapshot, 'payload' => $payload,
             'label' => $label, 'visible_labels' => $visibleLabels, 'decisions' => $decisions,
+            'label_stats' => $this->labelStats($trainer, $manifest),
+            'taker_fee' => $this->takerFee($manifest),
             'previous_decision_at_ms' => is_int($rowIndex) && $rowIndex > 0 ? $rows[$rowIndex - 1]['decision_at_ms'] : null,
             'next_decision_at_ms' => is_int($rowIndex) && $rowIndex + 1 < count($rows) ? $rows[$rowIndex + 1]['decision_at_ms'] : null];
     }
@@ -149,5 +158,61 @@ final class CandleTraining
         }
 
         throw ValidationException::withMessages(['dataset' => 'No intact candle was found in this bounded search. Retry, choose another dataset or collect more history.']);
+    }
+
+    /** Counts this trainer's recorded labels for the exact exchange/symbol/period. */
+    private function labelStats(User $trainer, array $manifest): array
+    {
+        $counts = array_fill_keys(self::ACTIONS, 0);
+        $stored = HumanCandleLabel::query()
+            ->join('human_training_snapshots', 'human_training_snapshots.snapshot_id', '=', 'human_candle_labels.snapshot_id')
+            ->where('human_candle_labels.trainer_id', $trainer->user_id)
+            ->where('human_training_snapshots.market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
+            ->where('human_training_snapshots.version', HumanTraining::VERSION)
+            ->whereIn('human_candle_labels.action', self::ACTIONS)
+            ->selectRaw('human_candle_labels.action, COUNT(*) AS aggregate')
+            ->groupBy('human_candle_labels.action')
+            ->pluck('aggregate', 'action');
+        foreach (self::ACTIONS as $action) {
+            $counts[$action] = (int) ($stored[$action] ?? 0);
+        }
+        $total = array_sum($counts);
+        $percentages = [];
+        foreach ($counts as $action => $count) {
+            $percentages[$action] = $total === 0 ? 0.0 : round($count * 100 / $total, 1);
+        }
+        $minimum = min($counts);
+
+        return [
+            'counts' => $counts,
+            'percentages' => $percentages,
+            'total' => $total,
+            'balanced_per_action' => $minimum,
+            'balanced_samples' => $minimum * count(self::ACTIONS),
+            'least_represented' => array_values(array_keys(array_filter($counts, fn (int $count): bool => $count === $minimum))),
+        ];
+    }
+
+    /** Published CCXT spot taker fee, when the configured exchange exposes one. */
+    private function takerFee(array $manifest): ?float
+    {
+        $matches = Exchange::query()->where('class', $manifest['exchange'])->limit(2)->get();
+        if ($matches->count() !== 1) {
+            return null;
+        }
+        try {
+            foreach ($this->catalog->forExchange($matches->first())['symbols'] as $market) {
+                if (($market['value'] ?? null) !== $manifest['symbol']) {
+                    continue;
+                }
+                $fee = $market['taker_fee'] ?? null;
+
+                return is_numeric($fee) && is_finite((float) $fee) && (float) $fee >= 0 ? (float) $fee : null;
+            }
+        } catch (Throwable) {
+            // Training remains usable when the exchange metadata endpoint is temporarily unavailable.
+        }
+
+        return null;
     }
 }

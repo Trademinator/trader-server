@@ -14,12 +14,14 @@ use RuntimeException;
 /** Per-candle human actions are auxiliary inputs. Objective market outcomes remain the evaluation target. */
 final class CandleGuidance
 {
-    public const VERSION = 'm4.4-candle-guidance-v1';
+    public const VERSION = 'm4.4-candle-guidance-v2';
 
     public function compare(array $manifest, array $rows, array $settings, float $deadline): array
     {
-        $bundle = ['version' => self::VERSION, 'status' => 'insufficient_candle_labels', 'keys' => [],
-            'samples' => 0, 'evaluation_mode' => 'retrospective_chronological_research',
+        $bundle = ['version' => self::VERSION, 'status' => 'insufficient_balanced_candle_labels', 'keys' => [],
+            'samples' => 0, 'training_samples' => 0, 'class_counts' => array_fill_keys(CandleTraining::ACTIONS, 0),
+            'balanced_class_counts' => array_fill_keys(CandleTraining::ACTIONS, 0),
+            'evaluation_mode' => 'retrospective_chronological_research',
             'annotation_cutoff_ms' => now()->getTimestampMs(), 'influence' => false];
         if (! config('human_training.enabled') || count($rows) < 5) {
             $bundle['status'] = 'disabled_or_insufficient_history';
@@ -34,11 +36,14 @@ final class CandleGuidance
         $cutoff = $later[0]['decision_at_ms'];
         $prefix = array_values(array_filter(array_slice($rows, 0, $prefixEnd),
             fn (array $row): bool => $row['label_available_at_ms'] < $cutoff));
-        $opinions = $this->opinions($manifest, $prefix, $bundle['annotation_cutoff_ms']);
-        $bundle['samples'] = count($opinions);
+        $rawOpinions = $this->opinions($manifest, $prefix, $bundle['annotation_cutoff_ms']);
+        $bundle['samples'] = count($rawOpinions);
+        $bundle['class_counts'] = $this->classCounts($rawOpinions);
+        $opinions = $this->balanced($rawOpinions);
+        $bundle['training_samples'] = count($opinions);
+        $bundle['balanced_class_counts'] = $this->classCounts($opinions);
         $bundle['minimum_samples'] = config('human_training.candle_min_samples');
-        if (count($opinions) < config('human_training.candle_min_samples')
-            || count(array_unique(array_column($opinions, 'action'))) < 2) {
+        if (count($opinions) < config('human_training.candle_min_samples')) {
             return ['bundle' => $bundle];
         }
         $this->deadline($deadline);
@@ -143,6 +148,44 @@ final class CandleGuidance
         }
 
         return $opinions;
+    }
+
+    /**
+     * Keep an equal deterministic number of BUY/HOLD/SELL opinions. We retain the
+     * most recent eligible rows from each class, then restore chronological order.
+     */
+    private function balanced(array $opinions): array
+    {
+        $groups = array_fill_keys(CandleTraining::ACTIONS, []);
+        foreach ($opinions as $opinion) {
+            if (isset($groups[$opinion['action']])) {
+                $groups[$opinion['action']][] = $opinion;
+            }
+        }
+        $perAction = min(array_map('count', $groups));
+        if ($perAction < 1) {
+            return [];
+        }
+        $balanced = [];
+        foreach (CandleTraining::ACTIONS as $action) {
+            array_push($balanced, ...array_slice($groups[$action], -$perAction));
+        }
+        usort($balanced, fn (array $a, array $b): int => $a['decision_at_ms'] <=> $b['decision_at_ms']
+            ?: strcmp($a['action'], $b['action']));
+
+        return $balanced;
+    }
+
+    private function classCounts(array $opinions): array
+    {
+        $counts = array_fill_keys(CandleTraining::ACTIONS, 0);
+        foreach ($opinions as $opinion) {
+            if (isset($counts[$opinion['action']])) {
+                $counts[$opinion['action']]++;
+            }
+        }
+
+        return $counts;
     }
 
     private function validate(array $rows, array $settings, KnnTuner $tuner, float $deadline): array
