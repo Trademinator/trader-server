@@ -37,11 +37,15 @@ class CandleTrainingController extends Controller
     {
         $data = $request->validate([
             'decision_at_ms' => ['required', 'integer', 'min:1'],
-            'before_ms' => ['required', 'integer', 'min:1'],
+            'before_ms' => ['required_without:after_ms', 'prohibits:after_ms', 'integer', 'min:1'],
+            'after_ms' => ['required_without:before_ms', 'prohibits:before_ms', 'integer', 'min:1'],
         ]);
 
-        return response()->json($training->history($request->user(), $dataset,
-            (int) $data['decision_at_ms'], (int) $data['before_ms']))->header('Cache-Control', 'no-store, private');
+        $page = isset($data['after_ms'])
+            ? $training->nextHistory($request->user(), $dataset, (int) $data['decision_at_ms'], (int) $data['after_ms'])
+            : $training->history($request->user(), $dataset, (int) $data['decision_at_ms'], (int) $data['before_ms']);
+
+        return response()->json($page)->header('Cache-Control', 'no-store, private');
     }
 
     public function update(Request $request, string $dataset, CandleTraining $training): RedirectResponse|JsonResponse

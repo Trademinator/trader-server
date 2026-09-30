@@ -81,6 +81,15 @@ export function prependCandleHistory(current, incoming, decisionAtMs) {
     return { series, added: series.length - current.length };
 }
 
+export function appendCandleHistory(current, incoming, latestDecisionAtMs) {
+    const lastTime = current.at(-1)?.time ?? -Infinity;
+    const newer = incoming.filter(row => Number(row.time) > lastTime && Number(row.time) * 1000 < latestDecisionAtMs)
+        .map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)])));
+    const series = [...new Map([...current, ...newer].map(row => [Number(row.time), row])).values()]
+        .sort((a, b) => a.time - b.time);
+    return { series, added: series.length - current.length };
+}
+
 export function candleTrainingChartData(snapshot) {
     const series = (snapshot.series ?? []).filter(row => row.time * 1000 < snapshot.decision_at_ms)
         .map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)])));
@@ -91,6 +100,7 @@ export function candleTrainingChartData(snapshot) {
     return { ...chartData({ series }), series, labels, markers, decisions: snapshot.decisions ?? {},
         selectedAction: snapshot.selected_action ?? null, stats: snapshot.stats ?? null,
         allowedActions: snapshot.allowed_actions ?? {}, hasMore: snapshot.has_more === true,
+        hasNewer: snapshot.has_newer === true, latestDecisionAtMs: Number(snapshot.latest_decision_at_ms ?? snapshot.decision_at_ms),
         takerFee: snapshot.taker_fee ?? null, decisionAtMs: Number(snapshot.decision_at_ms) };
 }
 
@@ -109,6 +119,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     let chart, price, volume, measureLine, observer, markerPlugin, historyTimer, historyRequest;
     let loadingHistory = false, historyFailed = false, disposed = false, savingLabel = false;
     let userInteracted = false;
+    let lastVisibleRange = null, retryDirection = 'older';
     const data = candleTrainingChartData(JSON.parse(root.dataset.snapshot));
     const labels = new Map(data.labels.map(label => [Number(label.time), label.action]));
     const candles = new Map(data.series.map(candle => [Number(candle.time), candle]));
@@ -130,6 +141,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         userInteracted = false;
         clearTimeout(historyTimer);
         chart?.timeScale().fitContent();
+        lastVisibleRange = chart?.timeScale().getVisibleLogicalRange() ?? null;
     };
     const sortedMarkers = () => {
         const markers = [...labels.entries()].map(([time, action]) => actionMarker(time, action));
@@ -220,28 +232,54 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         tooltip.style.left = `${Math.max(0, Math.min(param.point.x + 12, canvas.clientWidth - tooltip.offsetWidth))}px`;
         tooltip.style.top = `${Math.max(0, param.point.y + canvas.offsetTop - tooltip.offsetHeight - 8)}px`;
     };
-    const loadOlderHistory = async () => {
-        if (loadingHistory || disposed || !data.hasMore || !chart) return;
+    const updateReplayNavigation = page => {
+        const replayTime = root.querySelector('[data-replay-time]');
+        if (replayTime) replayTime.textContent = formatTime(data.series.at(-1).time);
+        for (const direction of ['previous', 'next']) {
+            const link = root.querySelector(`[data-step-${direction}]`);
+            if (!link) continue;
+            const decision = page[`${direction}_decision_at_ms`];
+            if (decision) {
+                const url = new URL(root.dataset.replayUrl, window.location.href);
+                url.searchParams.set('decision_at_ms', String(decision));
+                link.href = url.toString();
+                link.removeAttribute('aria-disabled');
+                link.removeAttribute('tabindex');
+            } else {
+                link.removeAttribute('href');
+                link.setAttribute('aria-disabled', 'true');
+                link.setAttribute('tabindex', '-1');
+            }
+        }
+    };
+    const loadHistory = async (direction = 'older') => {
+        const newer = direction === 'newer';
+        if (loadingHistory || disposed || !(newer ? data.hasNewer : data.hasMore) || !chart) return;
         clearTimeout(historyTimer);
         loadingHistory = true;
         historyFailed = false;
+        retryDirection = direction;
         historyRetry.hidden = true;
-        historyStatus.textContent = 'Loading older candles and your saved labels…';
+        historyStatus.textContent = `Loading ${direction} candles and your saved labels…`;
         historyRequest = new AbortController();
         const timeout = setTimeout(() => historyRequest?.abort(), 15000);
         try {
             const url = new URL(root.dataset.historyUrl, window.location.href);
             url.searchParams.set('decision_at_ms', String(data.decisionAtMs));
-            url.searchParams.set('before_ms', String(data.series[0].time * 1000));
+            url.searchParams.set(newer ? 'after_ms' : 'before_ms', String((newer ? data.series.at(-1) : data.series[0]).time * 1000));
             const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store',
                 headers: { Accept: 'application/json' }, signal: historyRequest.signal });
             if (!response.ok || response.redirected) {
-                throw new Error(response.status === 429 ? 'History limit reached. Wait a minute, then retry.' : 'Older history could not load. Retry or reload this page.');
+                throw new Error(response.status === 429 ? 'History limit reached. Wait a minute, then retry.' : 'History could not load. Retry or reload this page.');
             }
             const page = await response.json();
-            if (!Array.isArray(page.series) || !Array.isArray(page.labels)) throw new Error('Unexpected history response. Reload this page.');
+            if (!Array.isArray(page.series) || !Array.isArray(page.labels)
+                || (newer && (!Number.isSafeInteger(page.decision_at_ms) || page.decision_at_ms > data.latestDecisionAtMs || page.decision_at_ms < data.decisionAtMs))) {
+                throw new Error('Unexpected history response. Reload this page.');
+            }
             if (disposed) return;
-            const merged = prependCandleHistory(data.series, page.series, data.decisionAtMs);
+            const merged = newer ? appendCandleHistory(data.series, page.series, page.decision_at_ms)
+                : prependCandleHistory(data.series, page.series, data.decisionAtMs);
             const range = chart.timeScale().getVisibleLogicalRange();
             data.series = merged.series;
             Object.assign(data, chartData({ series: data.series }));
@@ -251,13 +289,24 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             for (const label of page.labels) {
                 if (ACTIONS.includes(label.action) && candles.has(Number(label.time))) labels.set(Number(label.time), label.action);
             }
-            data.hasMore = page.has_more === true && merged.added > 0;
+            if (newer) {
+                data.decisionAtMs = page.decision_at_ms;
+                data.hasNewer = page.has_more === true && merged.added > 0 && data.decisionAtMs < data.latestDecisionAtMs;
+                updateReplayNavigation(page);
+            } else {
+                data.hasMore = page.has_more === true && merged.added > 0;
+            }
             price.setData(data.candles);
             volume.setData(data.volume);
             renderMarkers();
-            if (range) chart.timeScale().setVisibleLogicalRange({ from: range.from + merged.added, to: range.to + merged.added });
-            historyStatus.textContent = data.hasMore
-                ? `${merged.added} older candles loaded with your saved labels.` : 'Earliest available data reached.';
+            if (range) {
+                const offset = newer ? 0 : merged.added;
+                lastVisibleRange = { from: range.from + offset, to: range.to + offset };
+                chart.timeScale().setVisibleLogicalRange(lastVisibleRange);
+            }
+            historyStatus.textContent = (newer ? data.hasNewer : data.hasMore)
+                ? `${merged.added} ${direction} candles loaded with your saved labels.`
+                : newer ? 'Newest available candle reached.' : 'Earliest available data reached.';
         } catch (error) {
             if (!disposed) {
                 historyFailed = true;
@@ -270,11 +319,18 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             loadingHistory = false;
         }
     };
+    const retryHistory = () => loadHistory(retryDirection);
     const onVisibleRangeChange = range => {
         if (tooltip) tooltip.hidden = true;
         clearTimeout(historyTimer);
-        if (userInteracted && range && range.from < 5 && data.hasMore && !loadingHistory && !historyFailed && !disposed) {
-            historyTimer = setTimeout(loadOlderHistory, 180);
+        const previousRange = lastVisibleRange;
+        lastVisibleRange = range;
+        if (!userInteracted || !range || !previousRange || loadingHistory || historyFailed || disposed) return;
+        const movement = range.from + range.to - previousRange.from - previousRange.to;
+        if (movement < 0 && range.from < 5 && data.hasMore) {
+            historyTimer = setTimeout(() => loadHistory('older'), 180);
+        } else if (movement > 0 && range.to > data.series.length - 6 && data.hasNewer) {
+            historyTimer = setTimeout(() => loadHistory('newer'), 180);
         }
     };
     const onWheel = () => { userInteracted = true; closeMenu(); };
@@ -432,7 +488,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         observer = new MutationObserver(() => chart.applyOptions(theme()));
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         fit.addEventListener('click', fitChart);
-        historyRetry.addEventListener('click', loadOlderHistory);
+        historyRetry.addEventListener('click', retryHistory);
         chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange);
         canvas.addEventListener('contextmenu', onContextMenu);
         canvas.addEventListener('wheel', onWheel, { passive: true });
@@ -457,7 +513,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange);
             chart.remove();
             fit.removeEventListener('click', fitChart);
-            historyRetry.removeEventListener('click', loadOlderHistory);
+            historyRetry.removeEventListener('click', retryHistory);
             datasetSelect?.removeEventListener('change', switchDataset);
             canvas.removeEventListener('contextmenu', onContextMenu);
             canvas.removeEventListener('wheel', onWheel);

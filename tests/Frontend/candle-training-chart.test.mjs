@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { candleActionAllowed, candleMeasurementLine, candleTrainingChartData, candleTrainingMove, nextCandleSelection, prependCandleHistory } from '../../resources/js/components/candle-training-chart.js';
+import { appendCandleHistory, candleActionAllowed, candleMeasurementLine, candleTrainingChartData, candleTrainingMove, nextCandleSelection, prependCandleHistory } from '../../resources/js/components/candle-training-chart.js';
 
 const candle = (time, close = '11') => ({ time, open: '10.5', high: '12', low: '9', close, volume: '100' });
 
@@ -76,7 +76,7 @@ test('older pages preserve existing candles, deduplicate overlaps and never appe
 });
 
 // Small chart/DOM adapters exercise the mounted component without another test dependency.
-async function mountedChart(t, fetchResponse) {
+async function mountedChart(t, fetchResponse, snapshot = {}) {
     const { mountCandleTrainingChart } = await import('../../resources/js/components/candle-training-chart.js');
     class Element {
         constructor() { this.listeners = new Map(); this.dataset = {}; this.style = {}; this.hidden = false; this.disabled = false; this.textContent = ''; }
@@ -85,10 +85,12 @@ async function mountedChart(t, fetchResponse) {
         trigger(name, event = {}) { return this.listeners.get(name)?.(event); }
         getBoundingClientRect() { return { left: 0, top: 0, width: 220, height: 120 }; }
         contains(target) { return target === this; }
+        setAttribute(name, value) { this[name] = value; }
+        removeAttribute(name) { delete this[name]; }
     }
     const keys = ['status', 'canvas', 'legend', 'fit', 'candle-menu', 'menu-title', 'history-status', 'history-retry',
         'measure-tooltip', 'candle-dataset', 'candle-dataset-form', 'measure-a', 'measure-b', 'measure-move',
-        'measure-fee', 'balanced-samples', 'balance-hint', 'stat-total'];
+        'measure-fee', 'balanced-samples', 'balance-hint', 'stat-total', 'replay-time', 'step-previous', 'step-next'];
     const nodes = new Map(keys.map(key => [`[data-${key}]`, new Element()]));
     const buttons = ['buy', 'hold', 'sell', 'delete'].map(action => {
         const button = new Element();
@@ -107,10 +109,10 @@ async function mountedChart(t, fetchResponse) {
     menu.querySelectorAll = () => buttons;
     let switched = false;
     nodes.get('[data-candle-dataset-form]').requestSubmit = () => { switched = true; };
-    root.dataset = { historyUrl: '/history', updateUrl: '/labels', deleteUrl: '/labels', csrf: 'fixture',
+    root.dataset = { replayUrl: '/training', historyUrl: '/history', updateUrl: '/labels', deleteUrl: '/labels', csrf: 'fixture',
         snapshot: JSON.stringify({ decision_at_ms: 5000, series: [candle(3, '10'), candle(4, '11')], has_more: true,
             labels: [], decisions: { 3: 4000, 4: 5000 }, allowed_actions: { 3: ['buy', 'hold'], 4: ['hold', 'sell'] },
-            stats: { counts: { buy: 1, hold: 0, sell: 0 } } }) };
+            stats: { counts: { buy: 1, hold: 0, sell: 0 } }, ...snapshot }) };
     const document = new Element();
     document.documentElement = { classList: { contains: () => false } };
     const window = new Element();
@@ -217,4 +219,65 @@ test('menu rules persist after a save and closing the menu cannot move the label
     canvas.trigger('contextmenu', { clientX: 40, clientY: 20, preventDefault() {} });
     assert.equal(nodes.get('[data-menu-action="buy"]').disabled, true);
     assert.equal(nodes.get('[data-menu-action="sell"]').disabled, false);
+});
+
+
+test('newer pages preserve existing data and cannot exceed the frozen dataset cutoff', () => {
+    const merged = appendCandleHistory([candle(3), candle(4)], [candle(5), candle(4, '999'), candle(5), candle(6), candle(7)], 7000);
+    assert.deepEqual(merged.series.map(row => row.time), [3, 4, 5, 6]);
+    assert.equal(merged.series[1].close, '11');
+    assert.equal(merged.added, 2);
+});
+
+test('forward dragging loads labels once, preserves the viewport and stops at the newest available candle', async t => {
+    let resolvePage;
+    const { nodes, scale, plots, markers, requests } = await mountedChart(t, () => new Promise(resolve => { resolvePage = resolve; }),
+        { has_more: false, has_newer: true, latest_decision_at_ms: 7000 });
+    nodes.get('[data-canvas]').trigger('pointerdown', { pointerType: 'mouse' });
+    scale.range = { from: 1, to: 3 };
+    scale.onRange(scale.range);
+    t.mock.timers.tick(180);
+    assert.equal(requests.length, 1);
+    assert.equal(new URL(requests[0].url).searchParams.get('after_ms'), '4000');
+    assert.equal(new URL(requests[0].url).searchParams.has('before_ms'), false);
+    scale.range = { from: 2, to: 4 };
+    scale.onRange(scale.range);
+    t.mock.timers.tick(180);
+    assert.equal(requests.length, 1);
+    resolvePage({ ok: true, json: async () => ({ series: [candle(5), candle(6, '10')], labels: [{ time: 5, action: 'sell' }],
+        decisions: { 5: 6000, 6: 7000 }, allowed_actions: { 5: ['hold', 'sell'], 6: ['buy', 'hold'] },
+        decision_at_ms: 7000, has_more: false, previous_decision_at_ms: 4000, next_decision_at_ms: null }) });
+    await flushRequests();
+
+    assert.deepEqual(plots[0].data.map(row => row.time), [3, 4, 5, 6]);
+    assert.deepEqual(scale.range, { from: 2, to: 4 });
+    assert.ok(markers.data.some(marker => marker.id === 'human-5' && marker.text === 'SELL'));
+    assert.equal(nodes.get('[data-step-next]')['aria-disabled'], 'true');
+    assert.match(nodes.get('[data-step-previous]').href, /decision_at_ms=4000/);
+    assert.match(nodes.get('[data-replay-time]').textContent, /UTC/);
+    assert.equal(nodes.get('[data-history-status]').textContent, 'Newest available candle reached.');
+    scale.onRange({ from: 4, to: 6 });
+    t.mock.timers.tick(180);
+    assert.equal(requests.length, 1);
+    nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 60, clientY: 20, preventDefault() {} });
+    assert.equal(nodes.get('[data-menu-action="buy"]').disabled, false);
+    assert.equal(nodes.get('[data-menu-action="sell"]').disabled, true);
+});
+
+test('a failed forward request retries in the same direction and rejects data beyond the opening cutoff', async t => {
+    const { nodes, scale, plots, requests } = await mountedChart(t, async () => ({ ok: true,
+        json: async () => ({ series: [candle(7)], labels: [], decision_at_ms: 8000, has_more: false }) }),
+    { has_more: false, has_newer: true, latest_decision_at_ms: 7000 });
+    nodes.get('[data-canvas]').trigger('pointerdown', { pointerType: 'mouse' });
+    scale.range = { from: 1, to: 3 };
+    scale.onRange(scale.range);
+    t.mock.timers.tick(180);
+    await flushRequests();
+
+    assert.deepEqual(plots[0].data.map(row => row.time), [3, 4]);
+    assert.equal(nodes.get('[data-history-retry]').hidden, false);
+    await nodes.get('[data-history-retry]').trigger('click');
+    assert.equal(requests.length, 2);
+    assert.ok(requests.every(request => new URL(request.url).searchParams.get('after_ms') === '4000'));
+    assert.deepEqual(plots[0].data.map(row => row.time), [3, 4]);
 });

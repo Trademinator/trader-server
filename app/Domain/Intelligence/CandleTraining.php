@@ -63,7 +63,9 @@ final class CandleTraining
             'label' => $label, 'visible_labels' => $chart['labels'], 'decisions' => $chart['decisions'],
             'allowed_actions' => $chart['allowed_actions'],
             'earliest_time' => intdiv($rows[0]['microtimestamp'], 1000),
-            'earliest_decision_at_ms' => $rows[0]['decision_at_ms'],
+            'earliest_window_decision_at_ms' => $rows[min(count($rows) - 1,
+                max(0, (int) config('human_training.chart_candles') - 1))]['decision_at_ms'],
+            'latest_decision_at_ms' => $rows[array_key_last($rows)]['decision_at_ms'],
             'has_more' => $payload['series'][0]['time'] * 1000 > $rows[0]['microtimestamp'],
             'label_stats' => $this->labelStats($trainer, $manifest),
             'taker_fee' => $this->takerFee($manifest),
@@ -95,6 +97,37 @@ final class CandleTraining
 
         return ['series' => $series, ...$this->chartData($trainer, $manifest, $rows, $series),
             'has_more' => $series !== [] && $series[0]['time'] * 1000 > $rows[0]['microtimestamp']];
+    }
+
+    /** Advance only within the immutable dataset selected when the page opened. */
+    public function nextHistory(User $trainer, string $dataset, int $decisionAtMs, int $afterMs): array
+    {
+        Gate::forUser($trainer)->authorize('train-intelligence');
+        [$manifest, $rows] = $this->load($dataset);
+        $replayIndex = array_search($decisionAtMs, array_column($rows, 'decision_at_ms'), true);
+        if ($replayIndex === false || $rows[$replayIndex]['microtimestamp'] !== $afterMs) {
+            throw ValidationException::withMessages(['after_ms' => 'Continue from the last loaded replay candle.']);
+        }
+        if ($replayIndex === array_key_last($rows)) {
+            return ['series' => [], 'labels' => [], 'decisions' => [], 'allowed_actions' => [],
+                'decision_at_ms' => $decisionAtMs, 'has_more' => false];
+        }
+        $pageSize = min(self::PAGE_SIZE, max(1, (int) config('human_training.chart_candles')));
+        $nextIndex = min(count($rows) - 1, $replayIndex + $pageSize);
+        $row = $rows[$nextIndex];
+        $snapshot = $this->snapshots->snapshotForRow($manifest, $row);
+        if ($snapshot === null) {
+            throw ValidationException::withMessages(['after_ms' => 'This history no longer matches the frozen dataset. Choose another dataset or rebuild it.']);
+        }
+        $series = array_values(array_filter($snapshot->verifiedPayload()['series'],
+            fn (array $candle): bool => $afterMs < $candle['time'] * 1000));
+
+        return ['series' => $series, ...$this->chartData($trainer, $manifest, $rows, $series),
+            'decision_at_ms' => $row['decision_at_ms'],
+            'has_more' => $nextIndex < count($rows) - 1,
+            'previous_decision_at_ms' => $rows[max(0, $nextIndex - self::PAGE_SIZE)]['decision_at_ms'],
+            'next_decision_at_ms' => $nextIndex < count($rows) - 1
+                ? $rows[min(count($rows) - 1, $nextIndex + self::PAGE_SIZE)]['decision_at_ms'] : null];
     }
 
     public function save(User $trainer, string $dataset, int $decisionAtMs, string $action): HumanCandleLabel

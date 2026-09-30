@@ -188,7 +188,7 @@ it('steps through 50 available rows and clamps replay navigation at both ends', 
         'dataset' => $manifest['dataset_id'], 'decision_at_ms' => $rows[75]['decision_at_ms'],
     ]))->assertOk()->assertViewHas('state', fn (array $state): bool => $state['previous_decision_at_ms'] === $rows[25]['decision_at_ms']
         && $state['next_decision_at_ms'] === $rows[125]['decision_at_ms']
-        && $state['earliest_decision_at_ms'] === $rows[0]['decision_at_ms'])
+        && $state['earliest_window_decision_at_ms'] === $rows[89]['decision_at_ms'])
         ->assertViewHas('datasets', fn (array $datasets): bool => $datasets[0]['dataset_id'] === $manifest['dataset_id'])
         ->assertSee('Earliest available data:')->assertDontSee('data-current-action', false);
 
@@ -237,4 +237,84 @@ it('protects historical candle data from unauthenticated and unauthorized reques
 
     $this->getJson($url)->assertUnauthorized();
     $this->actingAs(User::factory()->create())->getJson($url)->assertForbidden();
+});
+
+it('opens the first configured chart window when following the earliest data link', function (int $window, int $count, int $visible) {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $user = User::factory()->create();
+    config(['operations.owner_uuid' => $user->user_id, 'human_training.chart_candles' => $window]);
+    $manifest = candleTrainingDataset(count: $count);
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    $training = app(CandleTraining::class);
+    $training->save($user, $manifest['dataset_id'], $rows[0]['decision_at_ms'], 'buy');
+    $response = $this->actingAs($user)->get(route('human-training.candles.show', [
+        'dataset' => $manifest['dataset_id'], 'decision_at_ms' => $rows[$count - 1]['decision_at_ms'],
+    ]));
+    preg_match('/Earliest available data: <a href="([^"]+)"/', $response->getContent(), $link);
+    expect($link)->toHaveCount(2);
+
+    $this->get(html_entity_decode($link[1]))->assertOk()
+        ->assertViewHas('state', function (array $state) use ($rows, $visible): bool {
+            return count($state['payload']['series']) === $visible
+                && $state['payload']['series'][0]['time'] === intdiv($rows[0]['microtimestamp'], 1000)
+                && $state['payload']['series'][$visible - 1]['time'] === intdiv($rows[$visible - 1]['microtimestamp'], 1000)
+                && $state['payload']['decision_at_ms'] === $rows[$visible - 1]['decision_at_ms']
+                && $state['has_more'] === false
+                && $state['visible_labels'] === [['time' => intdiv($rows[0]['microtimestamp'], 1000), 'action' => 'buy']];
+        });
+})->with([
+    'default 90-candle window' => [90, 151, 90],
+    'fewer candles than the window' => [90, 12, 12],
+    'custom chart window' => [30, 151, 30],
+    'single-candle dataset' => [90, 1, 1],
+]);
+
+it('loads newer candles and saved labels up to the selected dataset boundary', function (int $window, int $pageSize) {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $users = User::factory()->count(2)->create();
+    config(['operations.owner_uuid' => $users[0]->user_id, 'human_training.trainer_uuids' => [$users[1]->user_id],
+        'human_training.chart_candles' => $window]);
+    $manifest = candleTrainingDataset(count: 151);
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    $training = app(CandleTraining::class);
+    $training->save($users[0], $manifest['dataset_id'], $rows[110]['decision_at_ms'], 'buy');
+    $training->save($users[1], $manifest['dataset_id'], $rows[111]['decision_at_ms'], 'hold');
+    $url = route('human-training.candles.history', $manifest['dataset_id']);
+    $query = ['decision_at_ms' => $rows[89]['decision_at_ms'], 'after_ms' => $rows[89]['microtimestamp']];
+
+    $page = $this->actingAs($users[0])->getJson($url.'?'.http_build_query($query))
+        ->assertOk()->assertJsonCount($pageSize, 'series')->assertJsonPath('has_more', true)
+        ->assertJsonPath('series.0.time', intdiv($rows[90]['microtimestamp'], 1000))
+        ->assertJsonPath('series.'.($pageSize - 1).'.time', intdiv($rows[89 + $pageSize]['microtimestamp'], 1000))
+        ->assertJsonPath('decision_at_ms', $rows[89 + $pageSize]['decision_at_ms'])
+        ->assertJsonPath('labels', [['time' => intdiv($rows[110]['microtimestamp'], 1000), 'action' => 'buy']])
+        ->assertJsonMissingPath('vector')->assertJsonMissingPath('patterns')->json();
+
+    $loaded = $page['series'];
+    while ($page['has_more']) {
+        $query = ['decision_at_ms' => $page['decision_at_ms'], 'after_ms' => $page['series'][array_key_last($page['series'])]['time'] * 1000];
+        $page = $this->getJson($url.'?'.http_build_query($query))->assertOk()->json();
+        $loaded = [...$loaded, ...$page['series']];
+    }
+    expect(array_column($loaded, 'time'))->toBe(array_map(fn (array $row): int => intdiv($row['microtimestamp'], 1000), array_slice($rows, 90)));
+    expect($page['decision_at_ms'])->toBe($rows[150]['decision_at_ms']);
+    expect($page['next_decision_at_ms'])->toBeNull();
+    $query = ['decision_at_ms' => $rows[150]['decision_at_ms'], 'after_ms' => $rows[150]['microtimestamp']];
+    $this->getJson($url.'?'.http_build_query($query))->assertOk()->assertJsonCount(0, 'series')->assertJsonPath('has_more', false);
+    $query['after_ms'] += 60000;
+    $this->getJson($url.'?'.http_build_query($query))->assertUnprocessable()
+        ->assertJsonPath('errors.after_ms.0', 'Continue from the last loaded replay candle.');
+})->with(['default window' => [90, 50], 'smaller configured window' => [30, 30]]);
+
+it('rejects ambiguous forward and backward history cursors', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $user = User::factory()->create();
+    config(['operations.owner_uuid' => $user->user_id]);
+    $manifest = candleTrainingDataset();
+
+    $this->actingAs($user)->getJson(route('human-training.candles.history', $manifest['dataset_id']).'?'.http_build_query([
+        'decision_at_ms' => IntelligenceFixtures::START + 11 * 60000,
+        'before_ms' => IntelligenceFixtures::START + 10 * 60000,
+        'after_ms' => IntelligenceFixtures::START + 10 * 60000,
+    ]))->assertUnprocessable()->assertJsonValidationErrors(['before_ms', 'after_ms']);
 });
