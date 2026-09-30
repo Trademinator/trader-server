@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Domain\Intelligence\BackfillIntelligence;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\MarketData\ExchangeMetadata;
+use App\Domain\MarketData\HistoryDepth;
 use App\Domain\MarketData\MarketHistoryBackfill;
 use App\Models\MarketFeed;
 use App\Models\Ticker;
@@ -132,6 +133,19 @@ final class BackfillMarketHistory implements ShouldQueue
                 // its last candle; only an empty/out-of-range page scans to the bound.
                 $next = $closed === [] ? $until : min($until, $timeframe->next(array_key_last($closed), $state->period));
                 $changes = $this->progress($state, $closed, $next);
+                $depth = null;
+                if ($exchange->class === 'ndax' && $changes['status'] === 'paused' && $changes['reason'] === 'no_older_data') {
+                    $latest = Ticker::query()->where('exchange', $exchange->class)->where('symbol', $market->symbol)
+                        ->where('period', $state->period)->max('microtimestamp');
+                    if ($latest !== null) {
+                        $depth = app(HistoryDepth::class);
+                        $probe = $depth->recentProbe($state->period, (int) $latest);
+                        if ($exchanges->hasHistoricalData($market->symbol, $state->period,
+                            $probe['from'], $probe['until'], $probe['limit'])) {
+                            $changes['reason'] = 'exchange_history_boundary';
+                        }
+                    }
+                }
                 $saved = DB::transaction(function () use ($history, $tickers, $exchange, $market, $state, $closed, $changes): bool {
                     $owned = $history->owned($this->historyId, $this->leaseToken);
                     if ($owned->lockForUpdate()->first() === null) {
@@ -144,6 +158,21 @@ final class BackfillMarketHistory implements ShouldQueue
                 });
                 if (! $saved) {
                     return;
+                }
+                if ($changes['reason'] === 'exchange_history_boundary'
+                    && config('history_backfill.reselect_shallow_periods') && $depth !== null) {
+                    $stored = Ticker::query()->where('exchange', $exchange->class)->where('symbol', $market->symbol)
+                        ->where('period', $state->period);
+                    $oldest = (clone $stored)->min('microtimestamp');
+                    $latest = (clone $stored)->max('microtimestamp');
+                    if ($oldest !== null && $latest !== null
+                        && ! $depth->spanIsSufficient($state->period, (int) $oldest, (int) $latest)) {
+                        MarketFeed::query()->whereKey($state->market_id)->where('selected_period', $state->period)->update([
+                            'selected_period' => null, 'status' => 'pending', 'next_pull_at' => now(),
+                            'last_error' => 'Selected candle period has insufficient retrievable history; automatic reselection requested.',
+                            'updated_at' => now(),
+                        ]);
+                    }
                 }
                 if ($changes['status'] === 'paused' || $changes['window_start_ms'] === null) {
                     $history->release($this->historyId, $this->leaseToken, ['status' => $changes['status']]);

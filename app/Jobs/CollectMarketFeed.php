@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Domain\MarketData\CandlePeriodSelector;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\MarketData\ExchangeMetadata;
+use App\Domain\MarketData\HistoryDepth;
 use App\Domain\MarketData\MarketCatalogException;
 use App\Domain\MarketData\MarketDataSynchronizer;
 use App\Domain\Operations\ActionLog;
@@ -69,20 +70,32 @@ final class CollectMarketFeed implements ShouldQueue
                 if (! $periods) {
                     throw new RuntimeException('The exchange has no supported candle periods.');
                 }
-                // Fetch enough completed history per candidate to calculate quality.
-                // A market with no adequate sample stays pending for a later retry.
+                $exchanges->prepareCandleMarket($market->symbol);
+                $depth = app(HistoryDepth::class);
+                // A period must be informative now and retrievable far enough back
+                // to support the normal training/validation window. This prevents
+                // a short-retention adapter from winning only because its latest
+                // candles look good.
                 $selected = null;
                 foreach ($periods as $period) {
                     $to = time();
                     $from = $to - min(365 * 86400, 260 * periods_to_seconds($period));
-                    $selected = $selector->select($exchange->class, $market->symbol, [$period],
+                    $candidate = $selector->select($exchange->class, $market->symbol, [$period],
                         (float) $market->tick_size, $from, $to);
-                    if ($selected !== null) {
-                        break;
+                    if ($candidate === null) {
+                        continue;
                     }
+                    $probe = $depth->depthProbe($period, $to * 1000);
+                    if (! $exchanges->hasHistoricalData($market->symbol, $period,
+                        $probe['from'], $probe['until'], $probe['limit'])) {
+                        continue;
+                    }
+                    $selected = $candidate;
+                    break;
                 }
                 if ($selected === null) {
-                    $this->finish('pending', now()->addMinutes(15), 'No candle period meets the quality and coverage thresholds yet.');
+                    $this->finish('pending', now()->addMinutes(15),
+                        'No candle period meets the quality, coverage and historical-depth thresholds yet.');
 
                     return;
                 }

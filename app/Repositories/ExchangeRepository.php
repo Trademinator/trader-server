@@ -180,6 +180,19 @@ class ExchangeRepository extends BaseRepository
         return $this->tickerRepository->fetch($symbol, $period, $fromMs, $requestLimit, $params);
     }
 
+    /** Confirm that an adapter returned at least one candle inside an exact historical window. */
+    public function hasHistoricalData(string $symbol, string $period, int $fromMs, int $untilMs, int $limit): bool
+    {
+        foreach ($this->fetchHistoryPage($symbol, $period, $fromMs, $untilMs, $limit) as $candle) {
+            $timestamp = (int) ($candle['microtimestamp'] ?? -1);
+            if ($timestamp >= $fromMs && $timestamp < $untilMs) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function findById(string $exchange_id): ?Collection
     {
         $exchange_q = Exchange::where('exchange_id', $exchange_id);
