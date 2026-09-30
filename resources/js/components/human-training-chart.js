@@ -13,26 +13,70 @@ export function trainingChartData(snapshot) {
         shape: buy ? 'arrowUp' : sell ? 'arrowDown' : 'circle',
         text: `Human: ${label.replaceAll('_', ' ').toUpperCase()}`,
     }] : [];
-    return { ...chartData({ series }), series, markers };
+    return { ...chartData({ series }), series, markers, assessmentTime: last?.time ?? null };
+}
+
+export function trainingChartTheme(dark = false) {
+    return {
+        layout: {
+            // The frame owns the solid background. Keeping the chart transparent lets the
+            // assessment band sit behind the candles instead of washing them out.
+            background: { type: 'solid', color: 'transparent' },
+            textColor: dark ? '#e5edf5' : '#172c43',
+            attributionLogo: true,
+        },
+        grid: {
+            vertLines: { color: dark ? '#263348' : '#edf1f5' },
+            horzLines: { color: dark ? '#263348' : '#edf1f5' },
+        },
+        timeScale: { timeVisible: true, secondsVisible: false },
+    };
 }
 
 export async function mountHumanTrainingChart(root) {
     const status = root.querySelector('[data-status]');
     const canvas = root.querySelector('[data-canvas]');
+    const frame = root.querySelector('[data-chart-frame]');
+    const band = root.querySelector('[data-assessment-band]');
+    const assessmentLabel = root.querySelector('[data-assessment-label]');
     const legend = root.querySelector('[data-legend]');
     const fit = root.querySelector('[data-fit]');
-    let chart, observer;
+    let chart, observer, resizeObserver;
     const data = trainingChartData(JSON.parse(root.dataset.snapshot));
     const smallestPrice = Math.min(...data.candles.map(candle => candle.low));
     const minMove = Number.isFinite(smallestPrice) && smallestPrice > 0
         ? 10 ** Math.max(-18, Math.min(-2, Math.floor(Math.log10(smallestPrice)) - 5)) : 0.00000001;
-    const theme = () => {
-        const dark = document.documentElement.classList.contains('dark');
-        return { layout: { background: { type: 'solid', color: dark ? '#111827' : '#ffffff' }, textColor: dark ? '#e5edf5' : '#172c43', attributionLogo: true },
-            grid: { vertLines: { color: dark ? '#263348' : '#edf1f5' }, horzLines: { color: dark ? '#263348' : '#edf1f5' } },
-            timeScale: { timeVisible: true, secondsVisible: false } };
+    const theme = () => trainingChartTheme(document.documentElement.classList.contains('dark'));
+    const hideAssessment = () => {
+        if (band) band.hidden = true;
+        if (assessmentLabel) assessmentLabel.hidden = true;
     };
-    const fitChart = () => chart?.timeScale().fitContent();
+    const positionAssessment = () => {
+        if (!chart || !frame || !band || !assessmentLabel || data.assessmentTime === null) {
+            hideAssessment();
+            return;
+        }
+        const x = chart.timeScale().timeToCoordinate(data.assessmentTime);
+        if (x === null || !Number.isFinite(x)) {
+            hideAssessment();
+            return;
+        }
+        const previousTime = data.series.at(-2)?.time;
+        const previousX = previousTime === undefined ? null : chart.timeScale().timeToCoordinate(previousTime);
+        const fallback = frame.clientWidth / Math.max(1, data.candles.length);
+        const spacing = previousX !== null && Number.isFinite(previousX) ? Math.abs(x - previousX) : fallback;
+        const width = Math.max(10, Math.min(72, spacing * 0.86));
+        band.style.left = `${x - width / 2}px`;
+        band.style.width = `${width}px`;
+        band.hidden = false;
+        assessmentLabel.style.left = `${Math.max(58, Math.min(frame.clientWidth - 58, x))}px`;
+        assessmentLabel.hidden = false;
+    };
+    const scheduleAssessment = () => requestAnimationFrame(positionAssessment);
+    const fitChart = () => {
+        chart?.timeScale().fitContent();
+        scheduleAssessment();
+    };
     try {
         const library = await import('lightweight-charts');
         chart = library.createChart(canvas, { autoSize: true, ...theme() });
@@ -47,20 +91,30 @@ export async function mountHumanTrainingChart(root) {
             const candle = data.series.find(row => row.time === param.time) ?? data.series.at(-1);
             if (candle) legend.textContent = `${new Date(candle.time * 1000).toISOString().slice(0, 16)} UTC · O ${formatPrice(candle.open, minMove)} · H ${formatPrice(candle.high, minMove)} · L ${formatPrice(candle.low, minMove)} · C ${formatPrice(candle.close, minMove)} · Volume ${formatPrice(candle.volume)}`;
         });
-        observer = new MutationObserver(() => chart.applyOptions(theme()));
+        chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleAssessment);
+        resizeObserver = new ResizeObserver(scheduleAssessment);
+        resizeObserver.observe(frame);
+        observer = new MutationObserver(() => {
+            chart.applyOptions(theme());
+            scheduleAssessment();
+        });
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         fit.addEventListener('click', fitChart);
         fitChart();
-        status.textContent = `${data.candles.length} historical closed candles. Future candles are hidden; automatic refresh is disabled.`;
+        status.textContent = `${data.candles.length} historical closed candles. The shaded candle is the decision candle; assess the trend starting immediately after it. Future candles are hidden.`;
         window.addEventListener('pagehide', event => {
             if (event.persisted) return;
             observer.disconnect();
+            resizeObserver.disconnect();
+            chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleAssessment);
             chart.remove();
             fit.removeEventListener('click', fitChart);
         }, { once: true });
     } catch {
         observer?.disconnect();
+        resizeObserver?.disconnect();
         chart?.remove();
+        hideAssessment();
         canvas.hidden = true;
         fit.disabled = true;
         status.textContent = 'The chart could not load. Recent candle values and frozen indicators remain available below.';

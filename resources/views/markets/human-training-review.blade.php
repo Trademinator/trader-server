@@ -6,6 +6,13 @@
         .human-labels label { display:flex; align-items:center; gap:8px; padding:12px; border:1px solid #94a3b8; border-radius:8px; cursor:pointer; }
         .pair-guide .human-labels input[type=radio] { width:20px; height:20px; min-height:20px; margin:0; padding:0; }
         .pair-guide textarea { display:block; width:100%; padding:10px; border:2px solid #94a3b8; border-radius:8px; background:white; color:#172033; }
+        .human-training-chart-frame { position:relative; overflow:hidden; background:#fff; }
+        .dark .human-training-chart-frame { background:#111827; }
+        .human-training-chart-canvas { position:absolute; inset:0; z-index:1; }
+        .human-training-assessment-band { position:absolute; z-index:0; top:0; bottom:0; pointer-events:none; background:rgba(245,158,11,.22); border-inline:1px solid rgba(217,119,6,.42); }
+        .dark .human-training-assessment-band { background:rgba(251,191,36,.20); border-inline-color:rgba(251,191,36,.48); }
+        .human-training-assessment-label { position:absolute; z-index:2; top:8px; transform:translateX(-50%); pointer-events:none; white-space:nowrap; padding:3px 7px; border-radius:6px; background:rgba(146,64,14,.92); color:#fff7ed; font-size:.75rem; font-weight:750; line-height:1.2; box-shadow:0 1px 3px rgba(0,0,0,.25); }
+        .human-training-assessment-band[hidden], .human-training-assessment-label[hidden] { display:none; }
     </style>
     <section class="pair-guide pair-review">
         <nav><a href="{{ route('human-training.index') }}">← Human training</a></nav>
@@ -14,16 +21,20 @@
         @if(session('status'))<p class="guide-notice" role="status">{{ session('status') }}</p>@endif
         @if($errors->any())<div class="guide-notice guide-error" role="alert"><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
         <section class="guide-panel"><h2>Closed candles at the decision time</h2>
-            <p class="guide-notice">Future candles are hidden. This chart stays frozen and does not refresh.</p>
+            <p class="guide-notice">The shaded candle is the decision candle. Assess the trend starting immediately after it over the next {{ $snapshot['horizon_candles'] }} candles. Those future candles are hidden, and this chart stays frozen.</p>
             @if($snapshot['gaps'])<p class="guide-notice guide-error">{{ $snapshot['gaps'] }} gaps in history. Missing candles are not filled.</p>@endif
             <div data-human-training-chart data-snapshot="{{ json_encode(['series' => $snapshot['series'], 'decision_at_ms' => $snapshot['decision_at_ms'], 'label' => $review->label], JSON_THROW_ON_ERROR) }}">
                 <p class="review-legend" data-legend>Inspect a candle for its OHLC prices and volume.</p>
-                <div class="review-chart" data-canvas role="img" aria-label="Historical candlesticks ending at the Trend Training decision time"></div>
+                <div class="review-chart human-training-chart-frame" data-chart-frame role="img" aria-label="Historical candlesticks ending at the Trend Training decision time; the shaded final candle is the decision candle">
+                    <div class="human-training-assessment-band" data-assessment-band hidden aria-hidden="true"></div>
+                    <div class="human-training-chart-canvas" data-canvas></div>
+                    <span class="human-training-assessment-label" data-assessment-label hidden aria-hidden="true">Assess from here</span>
+                </div>
                 <button type="button" class="review-control" data-fit>Fit all candles</button>
                 <p class="guide-help" data-status role="status">Loading the frozen chart…</p>
                 <noscript><p>The interactive chart requires JavaScript. Candle values and indicators remain available below.</p></noscript>
             </div>
-            <p class="guide-help">A saved green or red arrow represents your Bull or Bear trend assessment, not a trade. Hold is gray. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
+            <p class="guide-help">The yellow shading is behind the candlestick, so the decision candle remains fully visible. A saved green or red arrow represents your Bull or Bear trend assessment, not a trade. Hold is gray. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
             <details><summary>Recent candle values</summary><div class="review-table-wrap"><table><thead><tr><th>Open time (UTC)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
                 @foreach(array_slice($snapshot['series'], -10) as $candle)<tr><th>{{ gmdate('Y-m-d H:i', $candle['time']) }}</th>@foreach(['open', 'high', 'low', 'close', 'volume'] as $field)<td>{{ $candle[$field] }}</td>@endforeach</tr>@endforeach
             </tbody></table></div></details>
