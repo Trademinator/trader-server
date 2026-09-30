@@ -6,6 +6,7 @@ use App\Domain\Intelligence\CandleTraining;
 use App\Domain\Intelligence\HumanTraining;
 use App\Domain\Intelligence\HumanTrainingExport;
 use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\MarketData\SubscribedPairOptions;
 use App\Http\Controllers\Controller;
 use App\Models\HumanCandleLabel;
 use App\Models\HumanTrainingReview;
@@ -20,7 +21,7 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class HumanTrainingController extends Controller
 {
-    public function index(Request $request, HumanTraining $training, CandleTraining $candleTraining): Response
+    public function index(Request $request, HumanTraining $training, CandleTraining $candleTraining, SubscribedPairOptions $pairOptions): Response
     {
         $selection = $request->validate([
             'exchange' => ['nullable', 'string', 'max:100'],
@@ -29,7 +30,7 @@ class HumanTrainingController extends Controller
         ]);
         $reviews = HumanTrainingReview::query()->where('trainer_id', $request->user()->user_id);
         $pending = (clone $reviews)->whereNull('submitted_at')->where('expires_at', '>', now()->format('Y-m-d H:i:s.v'))->first();
-        $datasets = $training->datasets();
+        $datasets = $pairOptions->datasets($request->user(), $training->datasets(), allSubscribed: true);
         $selectedDataset = null;
 
         if (isset($selection['exchange'], $selection['symbol'], $selection['period'])) {

@@ -62,12 +62,9 @@
             <form method="POST" action="{{ route('human-training.candles.start') }}" data-candle-dataset-form>
                 @csrf
                 <label for="candle-dataset">Market and frozen dataset</label>
-                <select id="candle-dataset" name="dataset" required data-candle-dataset>
-                    @foreach($datasets as $dataset)<option value="{{ $dataset['dataset_id'] }}" @selected($state['manifest']['dataset_id'] === $dataset['dataset_id'])>{{ $dataset['exchange'] }} · {{ $dataset['symbol'] }} · {{ $dataset['period'] }} · {{ number_format($dataset['rows']) }} samples · {{ substr($dataset['dataset_id'], 0, 8) }}</option>@endforeach
-                    @unless(collect($datasets)->contains('dataset_id', $state['manifest']['dataset_id']))
-                        <option value="{{ $state['manifest']['dataset_id'] }}" selected>{{ $state['manifest']['exchange'] }} · {{ $state['manifest']['symbol'] }} · {{ $state['manifest']['period'] }} · current dataset</option>
-                    @endunless
-                </select>
+                <x-subscribed-pair-select name="dataset" id="candle-dataset" :value="$state['manifest']['dataset_id']"
+                    :datasets="$datasets" :current-dataset="$state['manifest']" :all-subscribed="true"
+                    :sort="['exchange', 'pair', 'period']" required data-candle-dataset />
                 <noscript><button class="review-control" type="submit">Switch market</button></noscript>
             </form>
             <p class="guide-help">Latest loaded candle: <span data-replay-time>{{ gmdate('Y-m-d H:i:s', intdiv($state['payload']['microtimestamp'], 1000)) }} UTC</span>. Use the side arrows to move up to 50 candles, or pan toward either edge to load more history. Forward loading stops at the newest candle in this dataset.</p>

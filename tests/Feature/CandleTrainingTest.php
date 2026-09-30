@@ -2,7 +2,11 @@
 
 use App\Domain\Intelligence\CandleTraining;
 use App\Domain\Research\DatasetStore;
+use App\Models\Exchange;
 use App\Models\HumanCandleLabel;
+use App\Models\Market;
+use App\Models\MarketFeed;
+use App\Models\MarketSubscription;
 use App\Models\Ticker;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -323,6 +327,14 @@ it('preselects the dashboard market in both Human Training selectors', function 
     $user = User::factory()->create();
     config(['operations.owner_uuid' => $user->user_id]);
     $manifest = candleTrainingDataset(count: 2);
+    $exchange = Exchange::query()->create(['name' => 'Kraken', 'class' => $manifest['exchange'], 'config' => '{}']);
+    $market = Market::query()->create([
+        'exchange_id' => $exchange->exchange_id, 'symbol' => $manifest['symbol'], 'tick_size' => '0.01',
+    ]);
+    MarketFeed::query()->create(['market_id' => $market->market_id, 'selected_period' => $manifest['period']]);
+    MarketSubscription::query()->create([
+        'user_id' => $user->user_id, 'market_id' => $market->market_id, 'active' => true,
+    ]);
 
     $response = $this->actingAs($user)->get(route('human-training.index', [
         'exchange' => $manifest['exchange'], 'symbol' => $manifest['symbol'], 'period' => $manifest['period'],

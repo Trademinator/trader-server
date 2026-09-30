@@ -14,13 +14,12 @@
                 @if($pending)
                     <a class="guide-button" href="{{ route('human-training.show', $pending->review_id) }}">Continue Trend Training</a>
                 @elseif($datasets === [])
-                    <p>No current semantic dataset is available. The server owner must build market features and run <code>trademinator:knn-build</code> first.</p>
+                    <p>No current semantic dataset is available for an actively subscribed pair. The server owner must build market features and run <code>trademinator:knn-build</code> first.</p>
                 @else
                     <form method="POST" action="{{ route('human-training.store') }}">@csrf
                         <label for="trend-dataset">Market and frozen dataset</label>
-                        <select id="trend-dataset" name="dataset" required>
-                            @foreach($datasets as $dataset)<option value="{{ $dataset['dataset_id'] }}" @selected(old('dataset', $selectedDataset) === $dataset['dataset_id'])>{{ $dataset['exchange'] }} · {{ $dataset['symbol'] }} · {{ $dataset['period'] }} · {{ number_format($dataset['rows']) }} samples · {{ substr($dataset['dataset_id'], 0, 8) }}</option>@endforeach
-                        </select>
+                        <x-subscribed-pair-select name="dataset" id="trend-dataset" :value="$selectedDataset ?? ''"
+                            :datasets="$datasets" :all-subscribed="true" :sort="['exchange', 'pair', 'period']" required />
                         <p class="guide-help">A random unseen snapshot is selected. Future prices, objective outcomes, model output and other trainers’ answers stay hidden while you assess the trend.</p>
                         <button class="guide-button" type="submit">Start Trend Training</button>
                     </form>
@@ -31,13 +30,12 @@
                 <h2>Candle Training</h2>
                 <p>Click individual candles and mark the action you would have taken there. You currently have {{ number_format($candleCompleted) }} saved candle labels.</p>
                 @if($datasets === [])
-                    <p>No current semantic dataset is available. Candle Training uses the same frozen feature datasets as Trend Training.</p>
+                    <p>No current semantic dataset is available for an actively subscribed pair. Candle Training uses the same frozen feature datasets as Trend Training.</p>
                 @else
                     <form method="POST" action="{{ route('human-training.candles.start') }}">@csrf
                         <label for="candle-dataset">Market and frozen dataset</label>
-                        <select id="candle-dataset" name="dataset" required>
-                            @foreach($datasets as $dataset)<option value="{{ $dataset['dataset_id'] }}" @selected(old('dataset', $selectedDataset) === $dataset['dataset_id'])>{{ $dataset['exchange'] }} · {{ $dataset['symbol'] }} · {{ $dataset['period'] }} · {{ number_format($dataset['rows']) }} samples · {{ substr($dataset['dataset_id'], 0, 8) }}</option>@endforeach
-                        </select>
+                        <x-subscribed-pair-select name="dataset" id="candle-dataset" :value="$selectedDataset ?? ''"
+                            :datasets="$datasets" :all-subscribed="true" :sort="['exchange', 'pair', 'period']" required />
                         <p class="guide-help">The replay opens on an unlabelled candle when possible. Selecting an earlier candle truncates the chart there so later candles are not shown while you decide.</p>
                         <button class="guide-button" type="submit">Start Candle Training</button>
                     </form>
