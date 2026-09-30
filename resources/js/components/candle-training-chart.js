@@ -54,6 +54,33 @@ export function candleTrainingMove(first, second, takerFee = null) {
     return { percent, magnitude, perSidePercent, roundTripPercent, comparison };
 }
 
+export function candleActionAllowed(candle, action, allowedActions = null) {
+    if (!candle || !ACTIONS.includes(action)) return false;
+    if (Array.isArray(allowedActions)) return allowedActions.includes(action);
+    const open = Number(candle.open), close = Number(candle.close);
+    if (!Number.isFinite(open) || !Number.isFinite(close)) return false;
+    return action === 'hold' || (action === 'buy' && open > close) || (action === 'sell' && open < close);
+}
+
+export function candleMeasurementLine(first, second) {
+    const move = candleTrainingMove(first, second);
+    if (!move) return { points: [], color: '#64748b', direction: 'flat', text: '—' };
+    const points = [...new Map([first, second].map(row => [Number(row.time), { time: Number(row.time), value: Number(row.close) }])).values()]
+        .sort((a, b) => a.time - b.time);
+    return { points, color: move.percent > 0 ? '#087b6b' : move.percent < 0 ? '#c33e50' : '#64748b',
+        direction: move.percent > 0 ? 'up' : move.percent < 0 ? 'down' : 'flat',
+        text: `${move.percent > 0 ? '+' : ''}${move.percent.toFixed(3)}%` };
+}
+
+export function prependCandleHistory(current, incoming, decisionAtMs) {
+    const firstTime = current[0]?.time ?? Infinity;
+    const older = incoming.filter(row => Number(row.time) < firstTime && Number(row.time) * 1000 < decisionAtMs)
+        .map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)])));
+    const series = [...new Map([...older, ...current].map(row => [Number(row.time), row])).values()]
+        .sort((a, b) => a.time - b.time);
+    return { series, added: series.length - current.length };
+}
+
 export function candleTrainingChartData(snapshot) {
     const series = (snapshot.series ?? []).filter(row => row.time * 1000 < snapshot.decision_at_ms)
         .map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)])));
@@ -63,16 +90,25 @@ export function candleTrainingChartData(snapshot) {
 
     return { ...chartData({ series }), series, labels, markers, decisions: snapshot.decisions ?? {},
         selectedAction: snapshot.selected_action ?? null, stats: snapshot.stats ?? null,
+        allowedActions: snapshot.allowed_actions ?? {}, hasMore: snapshot.has_more === true,
         takerFee: snapshot.taker_fee ?? null, decisionAtMs: Number(snapshot.decision_at_ms) };
 }
 
-export async function mountCandleTrainingChart(root) {
+export async function mountCandleTrainingChart(root, loadLibrary = () => import('lightweight-charts')) {
     const status = root.querySelector('[data-status]');
     const canvas = root.querySelector('[data-canvas]');
     const legend = root.querySelector('[data-legend]');
     const fit = root.querySelector('[data-fit]');
     const menu = root.querySelector('[data-candle-menu]');
-    let chart, observer, markerPlugin;
+    const historyStatus = root.querySelector('[data-history-status]');
+    const historyRetry = root.querySelector('[data-history-retry]');
+    const tooltip = root.querySelector('[data-measure-tooltip]');
+    const datasetSelect = root.querySelector('[data-candle-dataset]');
+    const switchDataset = () => root.querySelector('[data-candle-dataset-form]')?.requestSubmit();
+    datasetSelect?.addEventListener('change', switchDataset);
+    let chart, price, volume, measureLine, observer, markerPlugin, historyTimer, historyRequest;
+    let loadingHistory = false, historyFailed = false, disposed = false, savingLabel = false;
+    let userInteracted = false;
     const data = candleTrainingChartData(JSON.parse(root.dataset.snapshot));
     const labels = new Map(data.labels.map(label => [Number(label.time), label.action]));
     const candles = new Map(data.series.map(candle => [Number(candle.time), candle]));
@@ -90,7 +126,11 @@ export async function mountCandleTrainingChart(root) {
             grid: { vertLines: { color: dark ? '#263348' : '#edf1f5' }, horzLines: { color: dark ? '#263348' : '#edf1f5' } },
             timeScale: { timeVisible: true, secondsVisible: false } };
     };
-    const fitChart = () => chart?.timeScale().fitContent();
+    const fitChart = () => {
+        userInteracted = false;
+        clearTimeout(historyTimer);
+        chart?.timeScale().fitContent();
+    };
     const sortedMarkers = () => {
         const markers = [...labels.entries()].map(([time, action]) => actionMarker(time, action));
         if (selection[0] !== undefined) markers.push(selectionMarker(selection[0], 'A', 'aboveBar'));
@@ -109,16 +149,21 @@ export async function mountCandleTrainingChart(root) {
         const fee = root.querySelector('[data-measure-fee]');
         a.textContent = first ? `${formatTime(first.time)} · close ${formatPrice(first.close, minMove)}` : 'Click a candle';
         b.textContent = second ? `${formatTime(second.time)} · close ${formatPrice(second.close, minMove)}` : 'Click a second candle';
+        const line = candleMeasurementLine(first, second);
+        move.textContent = line.text;
+        move.dataset.measureDirection = line.direction;
+        if (measureLine) {
+            measureLine.applyOptions({ color: line.color });
+            measureLine.setData(line.points);
+        }
+        if (tooltip) tooltip.hidden = true;
         const result = candleTrainingMove(first, second, data.takerFee);
         if (!result) {
-            move.textContent = '—';
             fee.textContent = data.takerFee === null
                 ? 'Published exchange taker fee unavailable.'
                 : `Published taker fee ${(Number(data.takerFee) * 100).toFixed(3)}% per side.`;
             return;
         }
-        const sign = result.percent > 0 ? '+' : '';
-        move.textContent = `${sign}${result.percent.toFixed(3)}% close-to-close`;
         if (result.roundTripPercent === null) {
             fee.textContent = 'Published exchange taker fee unavailable; fee comparison cannot be made.';
             return;
@@ -156,6 +201,83 @@ export async function mountCandleTrainingChart(root) {
         if (newAction && ACTIONS.includes(newAction)) data.stats.counts[newAction] = Number(data.stats.counts[newAction] ?? 0) + 1;
         renderStats();
     };
+    const renderMeasurementTooltip = param => {
+        if (!tooltip) return;
+        tooltip.hidden = true;
+        if (!param.point || param.paneIndex !== 0 || selection.length < 2) return;
+        const first = candles.get(selection[0]), second = candles.get(selection[1]);
+        if (!first || !second) return;
+        const x1 = chart.timeScale().timeToCoordinate(first.time), y1 = price.priceToCoordinate(first.close);
+        const x2 = chart.timeScale().timeToCoordinate(second.time), y2 = price.priceToCoordinate(second.close);
+        if ([x1, x2, y1, y2].some(value => value === null)) return;
+        const dx = x2 - x1, dy = y2 - y1;
+        const lengthSquared = dx * dx + dy * dy;
+        const fraction = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1,
+            ((param.point.x - x1) * dx + (param.point.y - y1) * dy) / lengthSquared));
+        if (Math.hypot(param.point.x - x1 - fraction * dx, param.point.y - y1 - fraction * dy) > 12) return;
+        tooltip.textContent = `A → B: ${candleMeasurementLine(first, second).text}`;
+        tooltip.hidden = false;
+        tooltip.style.left = `${Math.max(0, Math.min(param.point.x + 12, canvas.clientWidth - tooltip.offsetWidth))}px`;
+        tooltip.style.top = `${Math.max(0, param.point.y + canvas.offsetTop - tooltip.offsetHeight - 8)}px`;
+    };
+    const loadOlderHistory = async () => {
+        if (loadingHistory || disposed || !data.hasMore || !chart) return;
+        clearTimeout(historyTimer);
+        loadingHistory = true;
+        historyFailed = false;
+        historyRetry.hidden = true;
+        historyStatus.textContent = 'Loading older candles and your saved labels…';
+        historyRequest = new AbortController();
+        const timeout = setTimeout(() => historyRequest?.abort(), 15000);
+        try {
+            const url = new URL(root.dataset.historyUrl, window.location.href);
+            url.searchParams.set('decision_at_ms', String(data.decisionAtMs));
+            url.searchParams.set('before_ms', String(data.series[0].time * 1000));
+            const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store',
+                headers: { Accept: 'application/json' }, signal: historyRequest.signal });
+            if (!response.ok || response.redirected) {
+                throw new Error(response.status === 429 ? 'History limit reached. Wait a minute, then retry.' : 'Older history could not load. Retry or reload this page.');
+            }
+            const page = await response.json();
+            if (!Array.isArray(page.series) || !Array.isArray(page.labels)) throw new Error('Unexpected history response. Reload this page.');
+            if (disposed) return;
+            const merged = prependCandleHistory(data.series, page.series, data.decisionAtMs);
+            const range = chart.timeScale().getVisibleLogicalRange();
+            data.series = merged.series;
+            Object.assign(data, chartData({ series: data.series }));
+            for (const candle of data.series) candles.set(candle.time, candle);
+            Object.assign(data.decisions, page.decisions);
+            Object.assign(data.allowedActions, page.allowed_actions);
+            for (const label of page.labels) {
+                if (ACTIONS.includes(label.action) && candles.has(Number(label.time))) labels.set(Number(label.time), label.action);
+            }
+            data.hasMore = page.has_more === true && merged.added > 0;
+            price.setData(data.candles);
+            volume.setData(data.volume);
+            renderMarkers();
+            if (range) chart.timeScale().setVisibleLogicalRange({ from: range.from + merged.added, to: range.to + merged.added });
+            historyStatus.textContent = data.hasMore
+                ? `${merged.added} older candles loaded with your saved labels.` : 'Earliest available data reached.';
+        } catch (error) {
+            if (!disposed) {
+                historyFailed = true;
+                historyRetry.hidden = false;
+                historyStatus.textContent = error.name === 'AbortError' ? 'History loading timed out. Please retry.' : error.message;
+            }
+        } finally {
+            clearTimeout(timeout);
+            historyRequest = null;
+            loadingHistory = false;
+        }
+    };
+    const onVisibleRangeChange = range => {
+        if (tooltip) tooltip.hidden = true;
+        clearTimeout(historyTimer);
+        if (userInteracted && range && range.from < 5 && data.hasMore && !loadingHistory && !historyFailed && !disposed) {
+            historyTimer = setTimeout(loadOlderHistory, 180);
+        }
+    };
+    const onWheel = () => { userInteracted = true; closeMenu(); };
     const selectForMeasurement = time => {
         if (!candles.has(Number(time))) return;
         selection = nextCandleSelection(selection, Number(time));
@@ -184,6 +306,7 @@ export async function mountCandleTrainingChart(root) {
         menuTime = null;
     };
     const openMenu = (time, clientX, clientY) => {
+        if (savingLabel) return;
         const decision = data.decisions[String(time)];
         if (!decision) {
             status.textContent = 'This candle is visible for context but has no immutable training row in this dataset.';
@@ -195,6 +318,10 @@ export async function mountCandleTrainingChart(root) {
         menu.querySelector('[data-menu-title]').textContent = `${formatTime(menuTime)}${current ? ` · ${current.toUpperCase()}` : ' · unlabelled'}`;
         const remove = menu.querySelector('[data-menu-action="delete"]');
         if (remove) remove.hidden = current === null;
+        menu.querySelectorAll('[data-menu-action]').forEach(button => {
+            const action = button.dataset.menuAction;
+            button.disabled = action !== 'delete' && !candleActionAllowed(candles.get(menuTime), action, data.allowedActions[String(menuTime)]);
+        });
         menu.hidden = false;
         menu.style.left = `${Math.max(8, clientX)}px`;
         menu.style.top = `${Math.max(8, clientY)}px`;
@@ -205,10 +332,13 @@ export async function mountCandleTrainingChart(root) {
         });
     };
     const requestLabel = async action => {
-        if (menuTime === null || !data.decisions[String(menuTime)]) return;
+        if (savingLabel || menuTime === null || !data.decisions[String(menuTime)]) return;
+        const labelTime = menuTime;
         const decision = Number(data.decisions[String(menuTime)]);
         const deleting = action === 'delete';
+        if (!deleting && !candleActionAllowed(candles.get(labelTime), action, data.allowedActions[String(labelTime)])) return;
         const oldAction = labels.get(menuTime) ?? null;
+        savingLabel = true;
         const buttons = [...menu.querySelectorAll('button')];
         buttons.forEach(button => { button.disabled = true; });
         status.textContent = deleting ? 'Removing human label…' : `Saving ${action.toUpperCase()}…`;
@@ -224,23 +354,21 @@ export async function mountCandleTrainingChart(root) {
                 const message = payload.message ?? Object.values(payload.errors ?? {}).flat()[0] ?? `Request failed (${response.status}).`;
                 throw new Error(message);
             }
-            if (deleting) labels.delete(menuTime);
-            else labels.set(menuTime, action);
+            if (disposed) return;
+            if (deleting) labels.delete(labelTime);
+            else labels.set(labelTime, payload.action);
             adjustStats(oldAction, deleting ? null : action);
             renderMarkers();
-            if (decision === data.decisionAtMs) {
-                root.querySelectorAll('[data-current-action]').forEach(button => {
-                    button.setAttribute('aria-pressed', !deleting && button.value === action ? 'true' : 'false');
-                });
-                const copy = root.querySelector('[data-current-label-copy]');
-                if (copy) copy.textContent = deleting ? 'This candle is currently unlabelled.' : `Current label: ${action.toUpperCase()}. Choose another action to change it.`;
-            }
             status.textContent = payload.message ?? (deleting ? 'Candle label removed.' : `Candle marked ${action.toUpperCase()}.`);
             closeMenu();
         } catch (error) {
             status.textContent = error instanceof Error ? error.message : 'The human label could not be saved.';
         } finally {
-            buttons.forEach(button => { button.disabled = false; });
+            savingLabel = false;
+            buttons.forEach(button => {
+                const value = button.dataset.menuAction;
+                button.disabled = value !== 'delete' && !candleActionAllowed(candles.get(labelTime), value, data.allowedActions[String(labelTime)]);
+            });
         }
     };
     const onContextMenu = event => {
@@ -255,7 +383,10 @@ export async function mountCandleTrainingChart(root) {
         longPressStart = null;
     };
     const onPointerDown = event => {
+        userInteracted = true;
+        closeMenu();
         if (event.pointerType !== 'touch') return;
+        cancelLongPress();
         longPressStart = { x: event.clientX, y: event.clientY };
         longPressTimer = window.setTimeout(() => {
             const time = nearestCandleTime(event.clientX);
@@ -275,17 +406,21 @@ export async function mountCandleTrainingChart(root) {
     };
     const onKeyDown = event => { if (event.key === 'Escape') closeMenu(); };
     try {
-        const library = await import('lightweight-charts');
+        const library = await loadLibrary();
         chart = library.createChart(canvas, { autoSize: true, ...theme() });
-        const price = chart.addSeries(library.CandlestickSeries, { upColor: '#159b83', downColor: '#d64a5e', borderVisible: false, wickUpColor: '#159b83', wickDownColor: '#d64a5e',
+        price = chart.addSeries(library.CandlestickSeries, { upColor: '#159b83', downColor: '#d64a5e', borderVisible: false, wickUpColor: '#159b83', wickDownColor: '#d64a5e',
             priceFormat: { type: 'custom', minMove, formatter: value => formatPrice(value, minMove) } });
-        const volume = chart.addSeries(library.HistogramSeries, { priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false }, 1);
+        volume = chart.addSeries(library.HistogramSeries, { priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false }, 1);
+        measureLine = chart.addSeries(library.LineSeries, { lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+            crosshairMarkerVisible: false, pointMarkersVisible: true, pointMarkersRadius: 4, autoscaleInfoProvider: () => null,
+            priceFormat: { type: 'custom', minMove, formatter: value => formatPrice(value, minMove) } });
         price.setData(data.candles);
         volume.setData(data.volume);
         chart.panes()[1].setHeight(70);
         markerPlugin = library.createSeriesMarkers(price, sortedMarkers());
         chart.subscribeCrosshairMove(param => {
-            const candle = data.series.find(row => row.time === param.time) ?? data.series.at(-1);
+            renderMeasurementTooltip(param);
+            const candle = candles.get(Number(param.time)) ?? data.series.at(-1);
             if (candle) legend.textContent = `${new Date(candle.time * 1000).toISOString().slice(0, 16)} UTC · O ${formatPrice(candle.open, minMove)} · H ${formatPrice(candle.high, minMove)} · L ${formatPrice(candle.low, minMove)} · C ${formatPrice(candle.close, minMove)} · Volume ${formatPrice(candle.volume)}`;
         });
         const clickHandler = param => {
@@ -297,7 +432,10 @@ export async function mountCandleTrainingChart(root) {
         observer = new MutationObserver(() => chart.applyOptions(theme()));
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         fit.addEventListener('click', fitChart);
+        historyRetry.addEventListener('click', loadOlderHistory);
+        chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange);
         canvas.addEventListener('contextmenu', onContextMenu);
+        canvas.addEventListener('wheel', onWheel, { passive: true });
         canvas.addEventListener('pointerdown', onPointerDown);
         canvas.addEventListener('pointermove', onPointerMove);
         canvas.addEventListener('pointerup', cancelLongPress);
@@ -308,14 +446,21 @@ export async function mountCandleTrainingChart(root) {
         fitChart();
         renderMeasurement();
         renderStats();
-        status.textContent = `${data.candles.length} historical closed candles. Left-click selects A/B measurements; right-click a candle for BUY/HOLD/SELL/Delete. Long-press opens the same menu on touch devices.`;
+        status.textContent = 'Left-click selects A/B; hover the line to see the price move. Right-click or long-press a candle to label it. BUY requires a red bar; SELL requires a green bar; HOLD works on any bar.';
         window.addEventListener('pagehide', event => {
             if (event.persisted) return;
+            disposed = true;
+            clearTimeout(historyTimer);
+            historyRequest?.abort();
             observer.disconnect();
             chart.unsubscribeClick(clickHandler);
+            chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange);
             chart.remove();
             fit.removeEventListener('click', fitChart);
+            historyRetry.removeEventListener('click', loadOlderHistory);
+            datasetSelect?.removeEventListener('change', switchDataset);
             canvas.removeEventListener('contextmenu', onContextMenu);
+            canvas.removeEventListener('wheel', onWheel);
             canvas.removeEventListener('pointerdown', onPointerDown);
             canvas.removeEventListener('pointermove', onPointerMove);
             canvas.removeEventListener('pointerup', cancelLongPress);
@@ -331,6 +476,6 @@ export async function mountCandleTrainingChart(root) {
         fit.disabled = true;
         renderStats();
         renderMeasurement();
-        status.textContent = 'The chart could not load. Replay navigation, candle values, indicators and action buttons remain available.';
+        status.textContent = 'The chart could not load. Reload this page to label candles. Replay navigation, candle values and indicators remain available.';
     }
 }

@@ -61,6 +61,7 @@ Route::prefix('human-training')->name('human-training.')->middleware(['auth', 'v
     Route::post('/', [HumanTrainingController::class, 'store'])->middleware('throttle:6,1')->name('store');
     Route::post('export', [HumanTrainingController::class, 'export'])->middleware('can:manage-server')->name('export');
     Route::post('candles', [CandleTrainingController::class, 'store'])->middleware('throttle:12,1')->name('candles.start');
+    Route::get('candles/{dataset}/history', [CandleTrainingController::class, 'history'])->whereUuid('dataset')->name('candles.history');
     Route::get('candles/{dataset}', [CandleTrainingController::class, 'show'])->whereUuid('dataset')->name('candles.show');
     Route::put('candles/{dataset}', [CandleTrainingController::class, 'update'])->whereUuid('dataset')->middleware('throttle:30,1')->name('candles.update');
     Route::delete('candles/{dataset}', [CandleTrainingController::class, 'destroy'])->whereUuid('dataset')->middleware('throttle:30,1')->name('candles.destroy');

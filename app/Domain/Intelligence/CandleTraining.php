@@ -10,6 +10,7 @@ use App\Models\Exchange;
 use App\Models\HumanCandleLabel;
 use App\Models\HumanTrainingSnapshot;
 use App\Models\User;
+use App\Traits\Bc;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
@@ -17,7 +18,11 @@ use Throwable;
 
 final class CandleTraining
 {
+    use Bc;
+
     public const ACTIONS = ['buy', 'hold', 'sell'];
+
+    public const PAGE_SIZE = 50;
 
     public function __construct(
         private DatasetStore $datasets,
@@ -48,51 +53,48 @@ final class CandleTraining
         }
         $payload = $snapshot->verifiedPayload();
         $rowIndex = array_search($row['decision_at_ms'], array_column($rows, 'decision_at_ms'), true);
-        $decisions = [];
-        $available = array_column($rows, null, 'microtimestamp');
-        foreach ($payload['series'] as $candle) {
-            $microtimestamp = $candle['time'] * 1000;
-            if (isset($available[$microtimestamp])) {
-                $decisions[(string) $candle['time']] = $available[$microtimestamp]['decision_at_ms'];
-            }
-        }
-        $decisionValues = array_values($decisions);
-        $fromDecision = $decisionValues === [] ? $row['decision_at_ms'] : min($decisionValues);
-        $visibleLabels = HumanTrainingSnapshot::query()
-            ->where('market_key', $snapshot->market_key)
-            ->where('version', HumanTraining::VERSION)
-            ->whereBetween('decision_at_ms', [$fromDecision, $row['decision_at_ms']])
-            ->whereHas('candleLabels', fn ($query) => $query->where('trainer_id', $trainer->user_id))
-            ->with(['candleLabels' => fn ($query) => $query->where('trainer_id', $trainer->user_id)])
-            ->orderBy('decision_at_ms')->get()
-            ->map(function (HumanTrainingSnapshot $item) use ($available, $manifest): ?array {
-                $label = $item->candleLabels->first();
-                if ($label === null || ! in_array($label->action, self::ACTIONS, true)) {
-                    return null;
-                }
-                $itemPayload = $item->verifiedPayload();
-                $source = $available[$itemPayload['microtimestamp']] ?? null;
-                if ($source === null || $itemPayload['decision_at_ms'] !== $source['decision_at_ms']
-                    || ($itemPayload['feature_version'] ?? null) !== $manifest['feature_version']
-                    || ($itemPayload['keys'] ?? null) !== $manifest['keys']
-                    || ($itemPayload['normalization'] ?? null) !== NormalizedVector::VERSION
-                    || ($itemPayload['horizon_candles'] ?? null) !== $manifest['label_definition']['horizon']
-                    || ($itemPayload['vector'] ?? null) != NormalizedVector::from($source['vector'], $manifest['keys'])
-                    || ($itemPayload['feature_sha256'] ?? null) !== ($source['source']['feature_sha256'] ?? null)) {
-                    return null;
-                }
-
-                return ['time' => intdiv($itemPayload['microtimestamp'], 1000), 'action' => $label->action];
-            })->filter()->values()->all();
+        $payload['series'] = array_values(array_filter($payload['series'],
+            fn (array $candle): bool => $rows[0]['microtimestamp'] <= $candle['time'] * 1000));
+        $chart = $this->chartData($trainer, $manifest, $rows, $payload['series']);
         $label = HumanCandleLabel::query()->where('snapshot_id', $snapshot->snapshot_id)
             ->where('trainer_id', $trainer->user_id)->first();
 
         return ['manifest' => $manifest, 'snapshot' => $snapshot, 'payload' => $payload,
-            'label' => $label, 'visible_labels' => $visibleLabels, 'decisions' => $decisions,
+            'label' => $label, 'visible_labels' => $chart['labels'], 'decisions' => $chart['decisions'],
+            'allowed_actions' => $chart['allowed_actions'],
+            'earliest_time' => intdiv($rows[0]['microtimestamp'], 1000),
+            'earliest_decision_at_ms' => $rows[0]['decision_at_ms'],
+            'has_more' => $payload['series'][0]['time'] * 1000 > $rows[0]['microtimestamp'],
             'label_stats' => $this->labelStats($trainer, $manifest),
             'taker_fee' => $this->takerFee($manifest),
-            'previous_decision_at_ms' => is_int($rowIndex) && $rowIndex > 0 ? $rows[$rowIndex - 1]['decision_at_ms'] : null,
-            'next_decision_at_ms' => is_int($rowIndex) && $rowIndex + 1 < count($rows) ? $rows[$rowIndex + 1]['decision_at_ms'] : null];
+            'previous_decision_at_ms' => is_int($rowIndex) && $rowIndex > 0 ? $rows[max(0, $rowIndex - self::PAGE_SIZE)]['decision_at_ms'] : null,
+            'next_decision_at_ms' => is_int($rowIndex) && $rowIndex + 1 < count($rows) ? $rows[min(count($rows) - 1, $rowIndex + self::PAGE_SIZE)]['decision_at_ms'] : null];
+    }
+
+    /** A bounded page of older candles, with only this trainer's compatible labels. */
+    public function history(User $trainer, string $dataset, int $decisionAtMs, int $beforeMs): array
+    {
+        Gate::forUser($trainer)->authorize('train-intelligence');
+        [$manifest, $rows] = $this->load($dataset);
+        $replay = collect($rows)->firstWhere('decision_at_ms', $decisionAtMs);
+        if ($replay === null || $beforeMs > $replay['microtimestamp']) {
+            throw ValidationException::withMessages(['before_ms' => 'Choose history before the current replay candle.']);
+        }
+        $candidates = array_values(array_filter($rows,
+            fn (array $row): bool => $row['microtimestamp'] < $beforeMs && $row['decision_at_ms'] <= $decisionAtMs));
+        if ($candidates === []) {
+            return ['series' => [], 'labels' => [], 'decisions' => [], 'allowed_actions' => [], 'has_more' => false];
+        }
+        $snapshot = $this->snapshots->snapshotForRow($manifest, $candidates[array_key_last($candidates)]);
+        if ($snapshot === null) {
+            throw ValidationException::withMessages(['before_ms' => 'This history no longer matches the frozen dataset. Choose another dataset or rebuild it.']);
+        }
+        $series = array_slice(array_values(array_filter($snapshot->verifiedPayload()['series'],
+            fn (array $candle): bool => $beforeMs > $candle['time'] * 1000
+                && $rows[0]['microtimestamp'] <= $candle['time'] * 1000)), -self::PAGE_SIZE);
+
+        return ['series' => $series, ...$this->chartData($trainer, $manifest, $rows, $series),
+            'has_more' => $series !== [] && $series[0]['time'] * 1000 > $rows[0]['microtimestamp']];
     }
 
     public function save(User $trainer, string $dataset, int $decisionAtMs, string $action): HumanCandleLabel
@@ -101,6 +103,10 @@ final class CandleTraining
             throw ValidationException::withMessages(['action' => 'Choose BUY, HOLD or SELL.']);
         }
         $state = $this->review($trainer, $dataset, $decisionAtMs);
+        $time = intdiv($state['payload']['microtimestamp'], 1000);
+        if (! in_array($action, $state['allowed_actions'][(string) $time] ?? [], true)) {
+            throw ValidationException::withMessages(['action' => 'BUY requires a red candle (open > close); SELL requires a green candle (open < close). HOLD is allowed on any candle.']);
+        }
 
         return DB::transaction(function () use ($trainer, $state, $action): HumanCandleLabel {
             $label = HumanCandleLabel::query()->where('snapshot_id', $state['snapshot']->snapshot_id)
@@ -124,6 +130,66 @@ final class CandleTraining
         $state = $this->review($trainer, $dataset, $decisionAtMs);
         HumanCandleLabel::query()->where('snapshot_id', $state['snapshot']->snapshot_id)
             ->where('trainer_id', $trainer->user_id)->delete();
+    }
+
+    private function chartData(User $trainer, array $manifest, array $rows, array $series): array
+    {
+        $decisions = [];
+        $allowedActions = [];
+        $visibleTimes = array_flip(array_column($series, 'time'));
+        $available = array_column($rows, null, 'microtimestamp');
+        foreach ($series as $candle) {
+            $allowedActions[(string) $candle['time']] = $this->allowedActions($candle);
+            $microtimestamp = $candle['time'] * 1000;
+            if (isset($available[$microtimestamp])) {
+                $decisions[(string) $candle['time']] = $available[$microtimestamp]['decision_at_ms'];
+            }
+        }
+        $decisionValues = array_values($decisions);
+        $fromDecision = $decisionValues === [] ? 0 : min($decisionValues);
+        $visibleLabels = HumanTrainingSnapshot::query()
+            ->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
+            ->where('version', HumanTraining::VERSION)
+            ->whereBetween('decision_at_ms', [$fromDecision, $decisionValues === [] ? 0 : max($decisionValues)])
+            ->whereHas('candleLabels', fn ($query) => $query->where('trainer_id', $trainer->user_id))
+            ->with(['candleLabels' => fn ($query) => $query->where('trainer_id', $trainer->user_id)])
+            ->orderBy('decision_at_ms')->get()
+            ->map(function (HumanTrainingSnapshot $item) use ($available, $manifest, $visibleTimes): ?array {
+                $label = $item->candleLabels->first();
+                if ($label === null || ! in_array($label->action, self::ACTIONS, true)) {
+                    return null;
+                }
+                $itemPayload = $item->verifiedPayload();
+                $source = $available[$itemPayload['microtimestamp']] ?? null;
+                if (! isset($visibleTimes[intdiv($itemPayload['microtimestamp'], 1000)])
+                    || $source === null || $itemPayload['decision_at_ms'] !== $source['decision_at_ms']
+                    || ($itemPayload['feature_version'] ?? null) !== $manifest['feature_version']
+                    || ($itemPayload['keys'] ?? null) !== $manifest['keys']
+                    || ($itemPayload['normalization'] ?? null) !== NormalizedVector::VERSION
+                    || ($itemPayload['horizon_candles'] ?? null) !== $manifest['label_definition']['horizon']
+                    || ($itemPayload['vector'] ?? null) != NormalizedVector::from($source['vector'], $manifest['keys'])
+                    || ($itemPayload['feature_sha256'] ?? null) !== ($source['source']['feature_sha256'] ?? null)) {
+                    return null;
+                }
+
+                return ['time' => intdiv($itemPayload['microtimestamp'], 1000), 'action' => $label->action];
+            })->filter()->values()->all();
+
+        return ['labels' => $visibleLabels, 'decisions' => $decisions, 'allowed_actions' => $allowedActions];
+    }
+
+    /** @return list<string> */
+    private function allowedActions(array $candle): array
+    {
+        $open = $this->bcconv($candle['open']);
+        $close = $this->bcconv($candle['close']);
+        $direction = bccomp($close, $open, $this->bcdec($open, $close));
+
+        return match ($direction) {
+            -1 => ['buy', 'hold'],
+            1 => ['hold', 'sell'],
+            default => ['hold'],
+        };
     }
 
     private function load(string $dataset): array

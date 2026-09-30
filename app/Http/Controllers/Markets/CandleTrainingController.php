@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Markets;
 
 use App\Domain\Intelligence\CandleTraining;
+use App\Domain\Intelligence\HumanTraining;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -22,14 +23,25 @@ class CandleTrainingController extends Controller
         ]);
     }
 
-    public function show(Request $request, string $dataset, CandleTraining $training): Response
+    public function show(Request $request, string $dataset, CandleTraining $training, HumanTraining $snapshots): Response
     {
         $data = $request->validate(['decision_at_ms' => ['nullable', 'integer', 'min:1']]);
         $state = $training->review($request->user(), $dataset,
             isset($data['decision_at_ms']) ? (int) $data['decision_at_ms'] : null);
 
         return response()->view('markets.candle-training', ['state' => $state,
-            'actions' => CandleTraining::ACTIONS])->header('Cache-Control', 'no-store, private');
+            'datasets' => $snapshots->datasets()])->header('Cache-Control', 'no-store, private');
+    }
+
+    public function history(Request $request, string $dataset, CandleTraining $training): JsonResponse
+    {
+        $data = $request->validate([
+            'decision_at_ms' => ['required', 'integer', 'min:1'],
+            'before_ms' => ['required', 'integer', 'min:1'],
+        ]);
+
+        return response()->json($training->history($request->user(), $dataset,
+            (int) $data['decision_at_ms'], (int) $data['before_ms']))->header('Cache-Control', 'no-store, private');
     }
 
     public function update(Request $request, string $dataset, CandleTraining $training): RedirectResponse|JsonResponse
