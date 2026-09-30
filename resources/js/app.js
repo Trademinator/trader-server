@@ -40,6 +40,12 @@ if (reviewChart) {
 }
 
 const dashboardChart = document.querySelector('[data-dashboard-chart]')
+const humanTrainingChart = document.querySelector('[data-human-training-chart]')
+if (humanTrainingChart) {
+    import('./components/human-training-chart').then(({ mountHumanTrainingChart }) => mountHumanTrainingChart(humanTrainingChart)).catch(() => {
+        humanTrainingChart.querySelector('[data-status]').textContent = 'The chart could not load. Candle values and indicators remain available.'
+    })
+}
 const dashboardSuggestions = document.querySelector('[data-dashboard-suggestions]')
 if (dashboardChart || dashboardSuggestions) {
     import('./components/dashboard').then(({ mountDashboardChart, loadDashboardSuggestions }) => {

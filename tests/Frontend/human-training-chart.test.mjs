@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { trainingChartData } from '../../resources/js/components/human-training-chart.js';
+
+const candle = time => ({ time, open: '10.5', high: '12', low: '9', close: '11', volume: '100' });
+
+test('training chart excludes candles starting at or beyond the decision cutoff', () => {
+    const data = trainingChartData({ decision_at_ms: 120000, series: [candle(0), candle(60), candle(120), candle(180)] });
+    assert.deepEqual(data.candles.map(row => row.time), [0, 60]);
+    assert.equal(data.candles[0].open, 10.5);
+    assert.deepEqual(data.markers, []);
+});
+
+test('saved human labels have their own provenance and marker direction', () => {
+    for (const [label, shape] of [['bull', 'arrowUp'], ['super_bull', 'arrowUp'], ['bear', 'arrowDown'], ['super_bear', 'arrowDown'], ['hold', 'circle']]) {
+        const data = trainingChartData({ decision_at_ms: 120000, series: [candle(60)], label });
+        assert.equal(data.markers[0].shape, shape);
+        assert.equal(data.markers[0].time, 60);
+        assert.match(data.markers[0].text, /^Human:/);
+    }
+    assert.deepEqual(trainingChartData({ decision_at_ms: 120000, series: [candle(60)], label: 'skip' }).markers, []);
+});

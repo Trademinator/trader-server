@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Markets\DashboardSuggestionController;
+use App\Http\Controllers\Markets\HumanTrainingController;
 use App\Http\Controllers\Markets\IntelligenceController;
 use App\Http\Controllers\Markets\SubscriptionController;
 use App\Http\Controllers\Markets\SuggestionController;
@@ -53,6 +54,14 @@ Route::middleware(['auth'])->group(function () {
 });
 
 require __DIR__.'/auth.php';
+
+Route::prefix('human-training')->name('human-training.')->middleware(['auth', 'verified', 'can:train-intelligence', 'throttle:30,1'])->group(function () {
+    Route::get('/', [HumanTrainingController::class, 'index'])->name('index');
+    Route::post('/', [HumanTrainingController::class, 'store'])->middleware('throttle:6,1')->name('store');
+    Route::post('export', [HumanTrainingController::class, 'export'])->middleware('can:manage-server')->name('export');
+    Route::get('{review}', [HumanTrainingController::class, 'show'])->whereUuid('review')->name('show');
+    Route::put('{review}', [HumanTrainingController::class, 'update'])->whereUuid('review')->name('update');
+});
 
 Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-owner', 'throttle:60,1'])->group(function () {
     Route::get('/', [ReportController::class, 'index'])->name('overview');

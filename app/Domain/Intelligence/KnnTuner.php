@@ -66,7 +66,7 @@ final class KnnTuner
         $folds = [];
         $matrix = array_fill_keys(['buy', 'hodl', 'sell'], array_fill_keys(['buy', 'hodl', 'sell'], 0));
         foreach ($cases as $case) {
-            $result = $this->knn->vote($case['neighbors'], $k);
+            $result = $case['result'] ?? $this->knn->vote($case['neighbors'], $k);
             $row = $case['row'];
             $action = $result['action'];
             $matrix[$row['label']][$action]++;
@@ -110,5 +110,16 @@ final class KnnTuner
         ]);
 
         return $eligible[0]['k'] ?? null;
+    }
+
+    /** Score an auxiliary classifier against the same objective targets and gates. */
+    public function evaluatePredictions(array $rows, array $predictions, array $settings): array
+    {
+        $cases = [];
+        foreach ($rows as $i => $row) {
+            $cases[] = ['row' => $row, 'fold' => 1, 'result' => $predictions[$i]];
+        }
+
+        return $this->score($cases, 0, $settings);
     }
 }

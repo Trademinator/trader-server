@@ -60,6 +60,9 @@ class OperationsServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Gate::define('manage-server', fn (User $user): bool => $user->isOwner() && $user->suspended_at === null);
+        Gate::define('train-intelligence', fn (User $user): bool => config('human_training.enabled')
+            && $user->suspended_at === null && $user->hasVerifiedEmail()
+            && ($user->isOwner() || in_array(strtolower($user->user_id), array_map('strtolower', config('human_training.trainer_uuids')), true)));
         TrustProxies::at(config('operations.trusted_proxies'));
         TrustProxies::withHeaders(Request::HEADER_X_FORWARDED_FOR | Request::HEADER_X_FORWARDED_PROTO | Request::HEADER_X_FORWARDED_PORT);
         $this->observeRequests();

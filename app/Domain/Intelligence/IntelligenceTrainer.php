@@ -18,6 +18,7 @@ final class IntelligenceTrainer
         private ModelStore $models,
         private PatternTrainer $patterns,
         private LeadLagIntelligence $leadLag,
+        private HumanGuidance $humanGuidance,
     ) {}
 
     public function train(string $dataset, ?float $deadline = null, ?string $generation = null): array
@@ -99,8 +100,22 @@ final class IntelligenceTrainer
             $selection = $tuner->tune($training, $settings, $deadline);
             $evaluation = $selection['k'] === null ? null
                 : $tuner->evaluate(array_slice($training, -$settings['train_size']), $test, $selection['k'], $settings, $deadline);
+            $human = $this->humanGuidance->compare($manifest, $rows, $settings, $deadline);
+            $humanExcluded = 0;
+            if ($human['bundle']['influence']) {
+                $humanExcluded = count($rows) - count($human['rows']);
+                $rows = $human['rows'];
+                $selection = $human['selection'];
+                $evaluation = $human['holdout'];
+                $training = $human['training'];
+                $test = $human['test'];
+                $cutoff = $human['cutoff'];
+            }
             $ready = $selection['k'] !== null && ($evaluation['eligible'] ?? false);
             $availableAt = max(array_column($rows, 'label_available_at_ms') ?: [0]);
+            if ($human['bundle']['influence']) {
+                $availableAt = max($availableAt, $human['bundle']['reviews_submitted_by_ms']);
+            }
             $knowledge = array_map(fn (array $row): array => [
                 'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
                 'vector' => $row['vector'], 'label' => $row['label'], 'feature_weights' => $row['feature_weights'] ?? [],
@@ -111,6 +126,7 @@ final class IntelligenceTrainer
                 'period' => $manifest['period'], 'feature_version' => FeatureEngine::VERSION,
                 'normalization' => NormalizedVector::VERSION, 'keys' => $manifest['keys'],
                 'lead_lag' => $leadLagBundle, 'lead_lag_keys' => $leadLagBundle['keys'],
+                'human_guidance' => $human['bundle'], 'human_keys' => $human['bundle']['keys'],
                 'regime_settings' => ['super_confidence' => 0.8, 'super_effective_neighbors' => 6.0],
                 'pattern_keys' => $patternKeys, 'label_definition' => $manifest['label_definition'],
                 'trained_as_of_ms' => $manifest['as_of_ms'], 'available_at_ms' => $availableAt,
@@ -121,7 +137,8 @@ final class IntelligenceTrainer
                 'pattern_settings' => $patternSettings,
                 'training_data' => [
                     'schema' => $manifest['schema'], 'source_rows' => $sourceRows,
-                    'usable_rows' => count($rows), 'pattern_excluded_rows' => $sourceRows - count($rows) - $leadLagExcluded,
+                    'usable_rows' => count($rows), 'pattern_excluded_rows' => $sourceRows - count($rows) - $leadLagExcluded - $humanExcluded,
+                    'human_excluded_rows' => $humanExcluded,
                     'lead_lag_excluded_rows' => $leadLagExcluded,
                     'skipped' => $manifest['skipped'] ?? [],
                     'tuning_rows' => count($training), 'holdout_rows' => count($test),

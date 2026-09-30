@@ -907,3 +907,19 @@ Signature: `trademinator:portable-import {path} {--validate-only}`
 Description: Validate or import a portable gzip JSONL package without silently overwriting conflicts.
 
 Run with `--validate-only` before mutation. Identical records are accepted on re-import; differing records fail instead of being overwritten.
+
+## trademinator:human-training-export
+
+Signature: `trademinator:human-training-export {path : New private JSONL output file}`
+
+Description: Export versioned human training snapshots and reviews without account secrets
+
+Arguments: `path` is a new JSONL filename in an existing writable private directory. No options, aliases or defaults. Existing files are never overwritten. Requires the M4.4 migrations and a trusted operator shell; web export additionally requires the server owner.
+
+```bash
+php artisan trademinator:human-training-export storage/app/private/human-training-2026-09-30.jsonl
+```
+
+Streams submitted reviews and their frozen snapshots in batches of 100, with a versioned manifest and SHA-256 footer covering all previous JSONL bytes. Financial candle values remain decimal strings; normalized features remain JSON numbers. UUID trainer provenance and optional notes are included, but account secrets, names and emails are excluded. The output is private (0600); incomplete files are removed on failure. A zero-review export contains a manifest and checksum. Import is not supported. There is no new schedule or queue requirement.
+
+M4.4 human-guided training is automatically considered by the existing `trademinator:knn-build` command and scheduled model builds. Its signature remains unchanged. The report now includes `human_guidance`, with sample readiness, chronology boundaries, annotation cutoff, provenance digest, machine-only / human-only / combined comparisons and influence status. Human labels never replace the objective semantic labels. Failed auxiliary validation leaves machine-only intelligence active. See [M-PLAN.md](M-PLAN.md#m44-acceptance-and-operation) for access settings, minimum evidence and deployment behavior.

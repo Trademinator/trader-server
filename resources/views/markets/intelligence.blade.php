@@ -33,6 +33,14 @@
         </section>
         @include('markets.intelligence-readiness')
         @include('markets.intelligence-lead-lag')
+        @if(isset($report['human_guidance']))
+            <section class="guide-panel"><h2>Human-guided learning</h2>
+                <p>{{ ($report['human_guidance']['influence'] ?? false) ? 'Validated human opinion features contribute to this model.' : 'This model uses machine-only evidence.' }}</p>
+                <p>{{ number_format($report['human_guidance']['samples'] ?? 0) }} matching consensus snapshots · {{ str_replace('_', ' ', $report['human_guidance']['status']) }}</p>
+                <p class="guide-help">Human labels stay separate from objective outcomes. Combined models must improve both chronological tuning and holdout results. Opinion agreement is not a probability of profit.</p>
+                @can('train-intelligence')<a href="{{ route('human-training.index') }}">Open human training</a>@endcan
+            </section>
+        @endif
         <section class="guide-panel">
             <h2>Emerging patterns</h2>
             @if ($signal['patterns'] === [])

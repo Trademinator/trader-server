@@ -25,6 +25,7 @@ final class MarketIntelligence
         private PatternCatalog $catalog,
         private PatternTrainer $patterns,
         private LeadLagIntelligence $leadLag,
+        private HumanGuidance $humanGuidance,
     ) {}
 
     public function build(string $exchange, string $symbol, string $period, ?string $dataset = null,
@@ -140,6 +141,7 @@ final class MarketIntelligence
             return [...WeightedKnn::abstain('missing_selected_features'), ...$context];
         }
         $vector = NormalizedVector::from($vector, $model['keys']);
+        $humanVector = $vector;
         $context['patterns_evaluated'] = true;
         $context['patterns'] = $this->patterns->predict($model['patterns'], $vector,
             $this->catalog->candidates($history, $period), $current->available_at_ms);
@@ -160,6 +162,17 @@ final class MarketIntelligence
             $context['lead_lag'] = $leadLag['signals'];
         }
         $settings = $model['settings'];
+        if (($model['human_keys'] ?? []) !== []) {
+            $human = $model['human_guidance'];
+            if (! config('human_training.enabled') || ($human['version'] ?? null) !== HumanGuidance::VERSION
+                || ! ($human['influence'] ?? false) || ($human['reviews_submitted_by_ms'] ?? PHP_INT_MAX) >= $current->available_at_ms) {
+                return [...WeightedKnn::abstain('human_guidance_unavailable'), ...$context];
+            }
+            $humanFeatures = $this->humanGuidance->features($human, $humanVector);
+            $weights = [...($weights ?: array_fill(0, count($vector), 1.0)), ...array_fill(0, count($humanFeatures), 1.0)];
+            $vector = [...$vector, ...$humanFeatures];
+            $context['human_guidance'] = ['status' => 'validated', 'opinion_shares' => array_combine(HumanTraining::LABELS, $humanFeatures)];
+        }
         $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
         $result = $knn->predict($model['knowledge'], $vector, $model['k'], $current->available_at_ms, $weights);
 

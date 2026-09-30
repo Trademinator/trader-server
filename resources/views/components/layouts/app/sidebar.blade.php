@@ -22,6 +22,11 @@
                         {{ __('Markets') }}
                     </x-navlist.item>
                 </x-navlist.group>
+                @can('train-intelligence')
+                    <x-navlist.item before="phosphor-chart-line" :href="route('human-training.index')" :current="request()->routeIs('human-training.*')">
+                        {{ __('Human training') }}
+                    </x-navlist.item>
+                @endcan
                 @can('manage-server')
                     <x-navlist.group :heading="__('Server owner')">
                         <x-navlist.item before="phosphor-gear-fine" :href="route('owner.overview')" :current="request()->routeIs('owner.*')">
