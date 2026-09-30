@@ -97,10 +97,12 @@
                     <a class="review-control candle-step" data-step-previous
                         @if($state['previous_decision_at_ms']) href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['previous_decision_at_ms']]) }}" @else aria-disabled="true" tabindex="-1" @endif
                         aria-label="Back up to 50 candles" title="Back up to 50 candles">&lt;</a>
-                    <div class="candle-chart-stage">
-                        <div class="review-chart" data-canvas role="img" aria-label="Historical candlesticks with human training markers and A/B measurement selections"></div>
+                    <x-market-candlestick class="candle-chart-stage"
+                        canvas-class="review-chart"
+                        aria-label="Historical candlesticks with human training markers and A/B measurement selections"
+                        :show-status="false" :show-legend="false">
                         <div class="candle-measure-tooltip" data-measure-tooltip hidden role="tooltip"></div>
-                    </div>
+                    </x-market-candlestick>
                     <a class="review-control candle-step" data-step-next
                         @if($state['next_decision_at_ms']) href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['next_decision_at_ms']]) }}" @else aria-disabled="true" tabindex="-1" @endif
                         aria-label="Forward up to 50 candles" title="Forward up to 50 candles">&gt;</a>

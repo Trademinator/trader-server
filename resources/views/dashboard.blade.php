@@ -57,20 +57,34 @@
             @php($progress = $details['progress'])
             @php($chart = $details['chart'])
             <section id="market-detail" class="guide-panel" aria-labelledby="market-title">
-                <div class="flex flex-wrap justify-between items-start gap-3"><div><h2 id="market-title">{{ $market->symbol }} · {{ $market->exchange->name }}</h2><p>Closed {{ $chart['period'] ?? 'pending' }} candles · {{ explode('/', $market->symbol)[1] ?? '' }} per {{ explode('/', $market->symbol)[0] }} · UTC</p></div>
-                    <a class="dashboard-button" href="{{ route('markets.intelligence', $selected->getKey()) }}">Full intelligence report</a></div>
-                <div data-dashboard-chart data-url="{{ route('dashboard.chart', $selected->getKey()) }}" data-subscription="{{ $selected->getKey() }}" data-chart="{{ json_encode($chart, JSON_THROW_ON_ERROR) }}" data-tick-size="{{ $market->tick_size }}">
-                    <div class="flex flex-wrap items-center gap-4 my-3"><button type="button" class="dashboard-button" data-refresh>Refresh chart</button><button type="button" class="dashboard-button" data-fit>Fit candles</button><label><input type="checkbox" data-markers checked> Show Server signals</label><label><input type="checkbox" data-auto checked> Refresh every minute</label></div>
-                    <p class="guide-help" role="status" aria-live="polite" data-status>Loading chart…</p><p class="guide-help" data-legend>Closed exchange candles and recorded Server signals.</p>
-                    <div class="dashboard-chart" data-canvas role="img" aria-label="{{ $market->symbol }} price history with recorded Server signal markers"></div>
+                <div class="flex flex-wrap justify-between items-start gap-3"><div><h2 id="market-title">{{ $market->symbol }} · {{ $market->exchange->name }}</h2><p>Closed {{ $chart['period'] ?? 'pending' }} candles · {{ explode('/', $market->symbol)[1] ?? '' }} per {{ explode('/', $market->symbol)[0] }} · UTC</p></div></div>
+                <x-market-candlestick
+                    data-dashboard-chart
+                    :data-url="route('dashboard.chart', $selected->getKey())"
+                    :data-history-url="route('dashboard.chart.history', $selected->getKey())"
+                    :data-subscription="$selected->getKey()"
+                    :data-chart="json_encode($chart, JSON_THROW_ON_ERROR)"
+                    :data-tick-size="$market->tick_size"
+                    :refresh="true" :fit="true" :earliest="true"
+                    :server-signals="true"
+                    :human-training="auth()->user()->can('train-intelligence')"
+                    :auto-refresh="true"
+                    :aria-label="$market->symbol.' price history with recorded Server and human-training markers'"
+                    legend="Closed exchange candles and recorded Server signals.">
                     <noscript><p>Enable JavaScript for the interactive chart. Recent candle values and the signal journal remain available.</p></noscript>
-                </div>
+                </x-market-candlestick>
                 <p class="guide-help">↑ BUY · ↓ SELL · ● HOLD · ■ Waiting for evidence. These are Server observations. Client execution is unknown.</p>
                 <p class="guide-help">Markers appear at the first candle opening at or after the signal was recorded, once that candle closes. Exact recording and source times are in the journal. Historical signals are never recalculated with a newer model.</p>
                 <p class="guide-help">TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a> · Market data collected by Trademinator.</p>
                 <details class="mt-3"><summary>Recent closed candle values</summary><div class="dashboard-table-wrap"><table><thead><tr><th>Open time (UTC)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
                     @forelse (array_reverse(array_slice($chart['series'], -10)) as $candle)<tr><td>{{ $time($candle['time'] * 1000) }}</td><td>{{ $number($candle['open'], 8) }}</td><td>{{ $number($candle['high'], 8) }}</td><td>{{ $number($candle['low'], 8) }}</td><td>{{ $number($candle['close'], 8) }}</td><td>{{ $number($candle['volume'], 8) }}</td></tr>@empty<tr><td colspan="6">No closed candles yet.</td></tr>@endforelse
                 </tbody></table></div></details>
+                <div class="flex flex-wrap justify-end gap-3 mt-4">
+                    @can('train-intelligence')
+                        <a class="dashboard-button" href="{{ route('human-training.index', ['exchange' => $market->exchange->class, 'symbol' => $market->symbol, 'period' => $chart['period']]) }}">Train</a>
+                    @endcan
+                    <a class="dashboard-button" href="{{ route('markets.intelligence', $selected->getKey()) }}">Full intelligence report</a>
+                </div>
             </section>
             <section class="guide-panel" aria-labelledby="readiness-title">
                 <h2 id="readiness-title">Intelligence readiness · {{ $market->symbol }}</h2>

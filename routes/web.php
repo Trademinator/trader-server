@@ -22,6 +22,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('dashboard/markets/{subscription}/chart', [DashboardController::class, 'chart'])
         ->middleware('throttle:30,1')->name('dashboard.chart');
+    Route::get('dashboard/markets/{subscription}/chart/history', [DashboardController::class, 'history'])
+        ->middleware('throttle:30,1')->name('dashboard.chart.history');
     Route::get('dashboard/suggestions', [DashboardSuggestionController::class, 'index'])
         ->middleware('throttle:12,1')->name('dashboard.suggestions');
     Route::post('dashboard/suggestions/dismiss', [DashboardSuggestionController::class, 'store'])

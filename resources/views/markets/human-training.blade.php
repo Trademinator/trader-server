@@ -19,7 +19,7 @@
                     <form method="POST" action="{{ route('human-training.store') }}">@csrf
                         <label for="trend-dataset">Market and frozen dataset</label>
                         <select id="trend-dataset" name="dataset" required>
-                            @foreach($datasets as $dataset)<option value="{{ $dataset['dataset_id'] }}" @selected(old('dataset') === $dataset['dataset_id'])>{{ $dataset['exchange'] }} · {{ $dataset['symbol'] }} · {{ $dataset['period'] }} · {{ number_format($dataset['rows']) }} samples · {{ substr($dataset['dataset_id'], 0, 8) }}</option>@endforeach
+                            @foreach($datasets as $dataset)<option value="{{ $dataset['dataset_id'] }}" @selected(old('dataset', $selectedDataset) === $dataset['dataset_id'])>{{ $dataset['exchange'] }} · {{ $dataset['symbol'] }} · {{ $dataset['period'] }} · {{ number_format($dataset['rows']) }} samples · {{ substr($dataset['dataset_id'], 0, 8) }}</option>@endforeach
                         </select>
                         <p class="guide-help">A random unseen snapshot is selected. Future prices, objective outcomes, model output and other trainers’ answers stay hidden while you assess the trend.</p>
                         <button class="guide-button" type="submit">Start Trend Training</button>
@@ -36,7 +36,7 @@
                     <form method="POST" action="{{ route('human-training.candles.start') }}">@csrf
                         <label for="candle-dataset">Market and frozen dataset</label>
                         <select id="candle-dataset" name="dataset" required>
-                            @foreach($datasets as $dataset)<option value="{{ $dataset['dataset_id'] }}">{{ $dataset['exchange'] }} · {{ $dataset['symbol'] }} · {{ $dataset['period'] }} · {{ number_format($dataset['rows']) }} samples · {{ substr($dataset['dataset_id'], 0, 8) }}</option>@endforeach
+                            @foreach($datasets as $dataset)<option value="{{ $dataset['dataset_id'] }}" @selected(old('dataset', $selectedDataset) === $dataset['dataset_id'])>{{ $dataset['exchange'] }} · {{ $dataset['symbol'] }} · {{ $dataset['period'] }} · {{ number_format($dataset['rows']) }} samples · {{ substr($dataset['dataset_id'], 0, 8) }}</option>@endforeach
                         </select>
                         <p class="guide-help">The replay opens on an unlabelled candle when possible. Selecting an earlier candle truncates the chart there so later candles are not shown while you decide.</p>
                         <button class="guide-button" type="submit">Start Candle Training</button>

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Markets;
 use App\Domain\Intelligence\CandleTraining;
 use App\Domain\Intelligence\HumanTraining;
 use App\Domain\Intelligence\HumanTrainingExport;
+use App\Domain\MarketData\CandleTimeframe;
 use App\Http\Controllers\Controller;
 use App\Models\HumanCandleLabel;
 use App\Models\HumanTrainingReview;
@@ -21,10 +22,28 @@ class HumanTrainingController extends Controller
 {
     public function index(Request $request, HumanTraining $training, CandleTraining $candleTraining): Response
     {
+        $selection = $request->validate([
+            'exchange' => ['nullable', 'string', 'max:100'],
+            'symbol' => ['nullable', 'string', 'max:100'],
+            'period' => ['nullable', Rule::in(CandleTimeframe::SUPPORTED)],
+        ]);
         $reviews = HumanTrainingReview::query()->where('trainer_id', $request->user()->user_id);
         $pending = (clone $reviews)->whereNull('submitted_at')->where('expires_at', '>', now()->format('Y-m-d H:i:s.v'))->first();
+        $datasets = $training->datasets();
+        $selectedDataset = null;
 
-        return response()->view('markets.human-training', ['datasets' => $training->datasets(),
+        if (isset($selection['exchange'], $selection['symbol'], $selection['period'])) {
+            foreach ($datasets as $dataset) {
+                if (($dataset['exchange'] ?? null) === $selection['exchange']
+                    && ($dataset['symbol'] ?? null) === $selection['symbol']
+                    && ($dataset['period'] ?? null) === $selection['period']) {
+                    $selectedDataset = $dataset['dataset_id'];
+                    break;
+                }
+            }
+        }
+
+        return response()->view('markets.human-training', ['datasets' => $datasets, 'selectedDataset' => $selectedDataset,
             'pending' => $pending, 'completed' => (clone $reviews)->whereIn('label', HumanTraining::LABELS)->count(),
             'candleCompleted' => $candleTraining->count($request->user()),
             'statistics' => Gate::allows('manage-server') ? $this->statistics() : null,

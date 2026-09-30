@@ -1,4 +1,5 @@
 import { chartData, formatPrice } from './market-review-chart.js';
+import { historyPanDirection, mergeCandleHistory } from './candlestick-history.js';
 
 const ACTIONS = ['buy', 'hold', 'sell'];
 
@@ -73,21 +74,11 @@ export function candleMeasurementLine(first, second) {
 }
 
 export function prependCandleHistory(current, incoming, decisionAtMs) {
-    const firstTime = current[0]?.time ?? Infinity;
-    const older = incoming.filter(row => Number(row.time) < firstTime && Number(row.time) * 1000 < decisionAtMs)
-        .map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)])));
-    const series = [...new Map([...older, ...current].map(row => [Number(row.time), row])).values()]
-        .sort((a, b) => a.time - b.time);
-    return { series, added: series.length - current.length };
+    return mergeCandleHistory(current, incoming, 'older', decisionAtMs);
 }
 
 export function appendCandleHistory(current, incoming, latestDecisionAtMs) {
-    const lastTime = current.at(-1)?.time ?? -Infinity;
-    const newer = incoming.filter(row => Number(row.time) > lastTime && Number(row.time) * 1000 < latestDecisionAtMs)
-        .map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)])));
-    const series = [...new Map([...current, ...newer].map(row => [Number(row.time), row])).values()]
-        .sort((a, b) => a.time - b.time);
-    return { series, added: series.length - current.length };
+    return mergeCandleHistory(current, incoming, 'newer', latestDecisionAtMs);
 }
 
 export function candleTrainingChartData(snapshot) {
@@ -326,12 +317,8 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         const previousRange = lastVisibleRange;
         lastVisibleRange = range;
         if (!userInteracted || !range || !previousRange || loadingHistory || historyFailed || disposed) return;
-        const movement = range.from + range.to - previousRange.from - previousRange.to;
-        if (movement < 0 && range.from < 5 && data.hasMore) {
-            historyTimer = setTimeout(() => loadHistory('older'), 180);
-        } else if (movement > 0 && range.to > data.series.length - 6 && data.hasNewer) {
-            historyTimer = setTimeout(() => loadHistory('newer'), 180);
-        }
+        const direction = historyPanDirection(range, previousRange, data.series.length, data.hasMore, data.hasNewer);
+        if (direction) historyTimer = setTimeout(() => loadHistory(direction), 180);
     };
     const onWheel = () => { userInteracted = true; closeMenu(); };
     const selectForMeasurement = time => {

@@ -100,3 +100,47 @@ it('keeps the previous visit boundary stable during refresh and counts only this
     $this->get('/dashboard')->assertOk()->assertViewHas('changeCount', 1);
     expect($owner->fresh()->dashboard_seen_at_ms)->toBe(now()->getTimestampMs());
 });
+it('paginates dashboard candles in both directions within the captured browsing ceiling', function () {
+    $this->travelTo('2026-09-30 12:30:00 UTC');
+    $owner = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->getKey(), 'dashboard.chart_page_size' => 10, 'human_training.enabled' => true]);
+    $signal = MarketSignal::factory()->create();
+    $market = $signal->market;
+    MarketFeed::query()->create(['market_id' => $market->getKey(), 'selected_period' => '1m', 'status' => 'active']);
+    $sub = MarketSubscription::query()->create(['user_id' => $owner->getKey(), 'market_id' => $market->getKey(), 'active' => true]);
+
+    $start = now()->subMinutes(30)->getTimestampMs();
+    for ($i = 0; $i < 20; $i++) {
+        $price = 100 + $i;
+        Ticker::query()->create(['exchange' => $market->exchange->class, 'symbol' => $market->symbol, 'period' => '1m',
+            'microtimestamp' => $start + $i * 60000,
+            'payload' => json_encode(['open' => $price, 'close' => $price, 'high' => $price, 'low' => $price, 'volume' => 1])]);
+    }
+
+    $initial = $this->actingAs($owner)->getJson(route('dashboard.chart', $sub->getKey()))->assertOk()->json('chart');
+    $until = $initial['last_closed_at_ms'];
+    expect($until)->not->toBeNull();
+
+    $earliest = $this->getJson(route('dashboard.chart.history', $sub->getKey()).'?'.http_build_query([
+        'direction' => 'earliest', 'until_ms' => $until,
+    ]))->assertOk()->assertJsonCount(10, 'chart.series')->assertJsonPath('chart.has_older', false)
+        ->assertJsonPath('chart.has_newer', true)->json('chart');
+
+    Ticker::query()->create(['exchange' => $market->exchange->class, 'symbol' => $market->symbol, 'period' => '1m',
+        'microtimestamp' => $until,
+        'payload' => json_encode(['open' => 999, 'close' => 999, 'high' => 999, 'low' => 999, 'volume' => 1])]);
+
+    $newer = $this->getJson(route('dashboard.chart.history', $sub->getKey()).'?'.http_build_query([
+        'direction' => 'newer',
+        'anchor_ms' => $earliest['series'][array_key_last($earliest['series'])]['time'] * 1000,
+        'until_ms' => $until,
+    ]))->assertOk()->assertJsonCount(10, 'chart.series')->assertJsonPath('chart.has_newer', false)->json('chart');
+
+    expect(max(array_column($newer['series'], 'time')) * 1000)->toBeLessThan($until);
+
+    $this->get(route('dashboard', ['subscription' => $sub->getKey()]))->assertOk()
+        ->assertSee('Earliest data')->assertSee('Show human training')->assertSee('>Train<', false)
+        ->assertSee('Full intelligence report');
+});
+
+

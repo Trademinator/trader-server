@@ -7,6 +7,8 @@ use App\Domain\MarketData\MarketChart;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 final class DashboardController extends Controller
 {
@@ -35,11 +37,44 @@ final class DashboardController extends Controller
         return response()->view('dashboard', $data)->header('Cache-Control', 'private, no-store');
     }
 
-    public function chart(Request $request, string $subscription, DashboardData $dashboard, MarketChart $chart): JsonResponse
+    public function chart(Request $request, string $subscription, DashboardData $dashboard): JsonResponse
     {
         $item = $dashboard->subscriptions($request->user())->findOrFail($subscription);
 
         return response()->json(['subscription_id' => $item->getKey(), 'symbol' => $item->market->symbol,
-            'chart' => $chart->data($item->market)])->header('Cache-Control', 'private, no-store');
+            'chart' => $dashboard->chart($request->user(), $item->market)])->header('Cache-Control', 'private, no-store');
+    }
+
+    public function history(Request $request, string $subscription, DashboardData $dashboard, MarketChart $chart): JsonResponse
+    {
+        $data = $request->validate([
+            'direction' => ['required', Rule::in(['older', 'newer', 'earliest'])],
+            'anchor_ms' => ['nullable', 'integer', 'min:1'],
+            'until_ms' => ['required', 'integer', 'min:1'],
+        ]);
+        if ($data['until_ms'] > now()->getTimestampMs()) {
+            throw ValidationException::withMessages(['until_ms' => 'The chart history ceiling cannot be in the future.']);
+        }
+        if ($data['direction'] !== 'earliest' && ! isset($data['anchor_ms'])) {
+            throw ValidationException::withMessages(['anchor_ms' => 'Continue from the edge of the currently loaded chart.']);
+        }
+        if (isset($data['anchor_ms']) && $data['anchor_ms'] >= $data['until_ms']) {
+            throw ValidationException::withMessages(['anchor_ms' => 'The chart history cursor must stay before the browsing ceiling.']);
+        }
+
+        $item = $dashboard->subscriptions($request->user())->findOrFail($subscription);
+        $page = $chart->page($item->market, $data['direction'], $data['anchor_ms'] ?? null, $data['until_ms'],
+            (int) config('dashboard.chart_page_size', 90));
+
+        if ($page['series'] !== []) {
+            $from = $page['series'][0]['time'] * 1000;
+            $to = $page['series'][array_key_last($page['series'])]['time'] * 1000;
+            $page['human_labels'] = $dashboard->humanLabels($request->user(), $item->market, $from, $to);
+        } else {
+            $page['human_labels'] = [];
+        }
+
+        return response()->json(['subscription_id' => $item->getKey(), 'symbol' => $item->market->symbol, 'chart' => $page])
+            ->header('Cache-Control', 'private, no-store');
     }
 }

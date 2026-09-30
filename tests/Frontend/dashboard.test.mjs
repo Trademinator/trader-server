@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { signalMarkers } from '../../resources/js/components/dashboard.js';
+import { humanMarkers, signalMarkers } from '../../resources/js/components/dashboard.js';
+import { historyPanDirection, mergeCandleHistory } from '../../resources/js/components/candlestick-history.js';
 import { chartData, formatPrice } from '../../resources/js/components/market-review-chart.js';
 
 const series = [60, 120, 240].map(time => ({ time, open: 100, high: 103, low: 98, close: 102, volume: 50 }));
@@ -22,11 +23,40 @@ test('places observations no earlier than recording time, keeps gaps and disting
     assert.deepEqual(signalMarkers({ series: [], signals: [{ recorded_at_ms: 60000 }] }), []);
 });
 
+
+test('draws this trainers human candle labels separately from Server observations', () => {
+    const markers = humanMarkers({ series, human_labels: [
+        { time: 60, action: 'buy' },
+        { time: 120, action: 'hold' },
+        { time: 240, action: 'sell' },
+        { time: 999, action: 'buy' },
+    ] });
+    assert.deepEqual(markers.map(({ time, text, shape }) => ({ time, text, shape })), [
+        { time: 60, text: 'H BUY', shape: 'arrowUp' },
+        { time: 120, text: 'H HOLD', shape: 'circle' },
+        { time: 240, text: 'H SELL', shape: 'arrowDown' },
+    ]);
+});
+
+test('uses the same directional edge rule as Candle Training and preserves existing bars while filling', () => {
+    assert.equal(historyPanDirection({ from: -1, to: 2 }, { from: 0, to: 3 }, 20, true, false), 'older');
+    assert.equal(historyPanDirection({ from: 14, to: 20 }, { from: 13, to: 19 }, 20, false, true), 'newer');
+    assert.equal(historyPanDirection({ from: 14, to: 20 }, { from: 13, to: 19 }, 20, false, false), null);
+
+    const newer = mergeCandleHistory(series, [
+        { time: 240, open: 1, high: 1, low: 1, close: 999, volume: 1 },
+        { time: 300, open: 103, high: 104, low: 102, close: 103, volume: 1 },
+    ], 'newer', 301000);
+    assert.deepEqual(newer.series.map(row => row.time), [60, 120, 240, 300]);
+    assert.equal(newer.series[2].close, 102);
+    assert.equal(newer.added, 1);
+});
+
 async function harness() {
     const { readFileSync } = await import('node:fs');
     const { runInNewContext } = await import('node:vm');
     const source = readFileSync(new URL('../../resources/js/components/dashboard.js', import.meta.url), 'utf8')
-        .replace(/^import .*;\n/, '').replaceAll('export ', '').replace("await import('lightweight-charts')", 'await loadChartLibrary()');
+        .replace(/^import .*;\n/gm, '').replaceAll('export ', '').replace("await import('lightweight-charts')", 'await loadChartLibrary()');
     const elements = new Map();
     const root = { dataset: { chart: JSON.stringify({ series, signals: [], period: '1m', checked_at_ms: 300000, stale: false }),
         subscription: 'own-subscription', url: '/chart', tickSize: '0.01' },
@@ -41,7 +71,7 @@ async function harness() {
         timeScale: () => ({ fitContent() {}, getVisibleLogicalRange: () => null, setVisibleLogicalRange() {} }) };
     let response = { ok: true, json: async () => ({ subscription_id: 'own-subscription', chart: JSON.parse(root.dataset.chart) }) };
     let scheduled = 0;
-    const context = { chartData, formatPrice, Intl, Math, Number, JSON, Date, Array, Error, AbortController,
+    const context = { chartData, formatPrice, historyPanDirection, mergeCandleHistory, Intl, Math, Number, JSON, Date, Array, Error, AbortController,
         loadChartLibrary: async () => ({ createChart: () => chart, createSeriesMarkers: () => ({ setMarkers() {} }) }),
         document: { hidden: false, documentElement: { classList: { contains: () => false } }, addEventListener() {}, removeEventListener() {} },
         window: { addEventListener() {}, removeEventListener() {} }, MutationObserver: class { observe() {} disconnect() {} },
@@ -86,7 +116,7 @@ async function searchHarness({ owner = true } = {}) {
     const { readFileSync } = await import('node:fs');
     const { runInNewContext } = await import('node:vm');
     const source = readFileSync(new URL('../../resources/js/components/dashboard.js', import.meta.url), 'utf8')
-        .replace(/^import .*;\n/, '').replaceAll('export ', '');
+        .replace(/^import .*;\n/gm, '').replaceAll('export ', '');
     const element = () => ({ value: '', textContent: '', innerHTML: 'initial cards', listeners: {}, attributes: {},
         addEventListener(name, callback) { this.listeners[name] = callback; },
         removeEventListener(name) { delete this.listeners[name]; },

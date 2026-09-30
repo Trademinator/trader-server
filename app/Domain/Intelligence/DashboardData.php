@@ -8,6 +8,7 @@ use App\Domain\MarketData\MarketCatalog;
 use App\Domain\MarketData\MarketCatalogException;
 use App\Domain\MarketData\MarketChart;
 use App\Domain\MarketSuggestions\MarketDiscovery;
+use App\Models\HumanCandleLabel;
 use App\Models\Market;
 use App\Models\MarketSignal;
 use App\Models\MarketSubscription;
@@ -66,6 +67,44 @@ final class DashboardData
         return compact('subscriptions', 'cards', 'selectedId', 'search');
     }
 
+    public function chart(User $user, Market $market, int $limit = 360): array
+    {
+        $chart = $this->charts->data($market, $limit);
+        $first = $chart['series'][0]['time'] ?? null;
+        $lastIndex = array_key_last($chart['series']);
+        $last = $lastIndex === null ? null : $chart['series'][$lastIndex]['time'];
+        $chart['human_labels'] = $first === null || $last === null
+            ? [] : $this->humanLabels($user, $market, $first * 1000, $last * 1000);
+
+        return $chart;
+    }
+
+    public function humanLabels(User $user, Market $market, int $fromMs, int $toMs): array
+    {
+        $period = $market->feed?->selected_period;
+        if (! $user->can('train-intelligence') || ! in_array($period, CandleTimeframe::SUPPORTED, true) || $toMs < $fromMs) {
+            return [];
+        }
+
+        $fromDecision = $this->timeframe->next($fromMs, $period);
+        $toDecision = $this->timeframe->next($toMs, $period);
+        $labels = HumanCandleLabel::query()
+            ->join('human_training_snapshots as snapshots', 'snapshots.snapshot_id', '=', 'human_candle_labels.snapshot_id')
+            ->where('human_candle_labels.trainer_id', $user->user_id)
+            ->where('snapshots.market_key', ModelStore::marketKey($market->exchange->class, $market->symbol, $period))
+            ->where('snapshots.version', HumanTraining::VERSION)
+            ->whereBetween('snapshots.decision_at_ms', [$fromDecision, $toDecision])
+            ->whereIn('human_candle_labels.action', ['buy', 'hold', 'sell'])
+            ->orderByDesc('human_candle_labels.updated_at')
+            ->get(['snapshots.decision_at_ms', 'human_candle_labels.action']);
+
+        return $labels->map(fn ($label): array => [
+            'time' => intdiv($this->timeframe->previous((int) $label->decision_at_ms, $period), 1000),
+            'action' => $label->action,
+        ])->filter(fn (array $label): bool => $label['time'] * 1000 >= $fromMs && $label['time'] * 1000 <= $toMs)
+            ->unique('time')->sortBy('time')->values()->all();
+    }
+
     private function reports(array $keys): Collection
     {
         return DB::table('intelligence_heads as heads')->join('intelligence_models as models', 'models.model_id', '=', 'heads.model_id')
@@ -111,7 +150,7 @@ final class DashboardData
             $progress = Cache::remember($cacheKey, 60, fn () => $this->readiness->describe($market->exchange->class,
                 $market->symbol, $market->feed?->selected_period, $market->feed, $report, $current));
             $details = ['subscription' => $selected, 'report' => $report, 'signal' => $signal, 'signal_fresh' => $fresh,
-                'progress' => $progress, 'chart' => $this->charts->data($market),
+                'progress' => $progress, 'chart' => $this->chart($user, $market),
                 'history' => MarketSignal::query()->where('market_id', $market->getKey())
                     ->orderByDesc('recorded_at_ms')->orderByDesc('market_signal_id')->limit(20)->get()];
         }

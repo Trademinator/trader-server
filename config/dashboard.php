@@ -6,4 +6,5 @@ return [
     'discovery_limit' => 12,
     'discovery_max_age_seconds' => 7200,
     'page_size' => 12,
+    'chart_page_size' => 90,
 ];

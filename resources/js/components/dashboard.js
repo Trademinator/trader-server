@@ -1,4 +1,5 @@
 import { chartData, formatPrice } from './market-review-chart.js';
+import { historyPanDirection, mergeCandleHistory } from './candlestick-history.js';
 
 export function mountDashboardMarkets(root) {
     const form = root.querySelector('[data-market-search]');
@@ -113,45 +114,112 @@ export function signalMarkers(chart) {
     }).sort((a, b) => a.time - b.time);
 }
 
+export function humanMarkers(chart) {
+    const candles = new Set((chart.series ?? []).map(row => Number(row.time)));
+    return (chart.human_labels ?? []).flatMap(label => {
+        const time = Number(label.time);
+        const action = String(label.action ?? '');
+        if (!candles.has(time) || !['buy', 'hold', 'sell'].includes(action)) return [];
+        const buy = action === 'buy';
+        const sell = action === 'sell';
+
+        return [{
+            id: `human-${time}`,
+            time,
+            position: buy ? 'belowBar' : 'aboveBar',
+            color: buy ? '#087b6b' : sell ? '#c33e50' : '#64748b',
+            shape: buy ? 'arrowUp' : sell ? 'arrowDown' : 'circle',
+            text: `H ${action.toUpperCase()}`,
+            size: 1,
+        }];
+    }).sort((a, b) => a.time - b.time);
+}
+
 export async function mountDashboardChart(root) {
     const canvas = root.querySelector('[data-canvas]');
     const status = root.querySelector('[data-status]');
     const legend = root.querySelector('[data-legend]');
     const refreshButton = root.querySelector('[data-refresh]');
     const fitButton = root.querySelector('[data-fit]');
+    const earliestButton = root.querySelector('[data-earliest]');
+    const historyStatus = root.querySelector('[data-history-status]');
+    const historyRetry = root.querySelector('[data-history-retry]');
     const showMarkers = root.querySelector('[data-markers]');
+    const showHuman = root.querySelector('[data-human-training]');
     const automatic = root.querySelector('[data-auto]');
     let data = JSON.parse(root.dataset.chart);
-    let chart, price, volume, markers, observer, timer, request, timeout;
-    let disposed = false, stopped = false, busy = false, previousPeriod = null;
+    data.human_labels ??= [];
+    data.has_older ??= false;
+    data.has_newer ??= false;
+
+    let chart, price, volume, markers, observer, timer, request, timeout, historyTimer, historyRequest;
+    let disposed = false, stopped = false, busy = false, historyBusy = false, historyFailed = false;
+    let userInteracted = false, previousPeriod = null, lastVisibleRange = null, retryDirection = 'older';
+    let browsingHistory = false;
+    let historyCeilingMs = Number(data.last_closed_at_ms) || null;
     const tickSize = Number(root.dataset.tickSize) || 0.00000001;
+
     const theme = () => {
         const dark = document.documentElement.classList.contains('dark');
         return { layout: { background: { type: 'solid', color: dark ? '#111827' : '#ffffff' }, textColor: dark ? '#e5edf5' : '#172c43', attributionLogo: true },
             grid: { vertLines: { color: dark ? '#263348' : '#edf1f5' }, horzLines: { color: dark ? '#263348' : '#edf1f5' } },
             timeScale: { timeVisible: true, secondsVisible: false } };
     };
-    const updateMarkers = () => markers?.setMarkers(showMarkers.checked ? signalMarkers(data) : []);
-    const draw = () => {
+    const mergeSignals = (current = [], incoming = []) => [...new Map([...current, ...incoming].map(item => [item.id, item])).values()]
+        .sort((a, b) => Number(a.recorded_at_ms) - Number(b.recorded_at_ms));
+    const mergeHuman = (current = [], incoming = []) => [...new Map([...current, ...incoming].map(item => [Number(item.time), {
+        time: Number(item.time), action: item.action,
+    }])).values()].sort((a, b) => a.time - b.time);
+    const updateMarkers = () => {
+        if (!markers) return;
+        markers.setMarkers([
+            ...(showMarkers?.checked ? signalMarkers(data) : []),
+            ...(showHuman?.checked ? humanMarkers(data) : []),
+        ].sort((a, b) => Number(a.time) - Number(b.time) || String(a.id).localeCompare(String(b.id))));
+    };
+    const updateStatus = () => {
+        const checked = Number.isFinite(Number(data.checked_at_ms))
+            ? `Checked ${new Date(Number(data.checked_at_ms)).toISOString().replace('T', ' ').slice(0, 19)} UTC.`
+            : '';
+        status.textContent = `${data.stale ? 'History is stale or awaiting collection. ' : 'Stored closed candles are current. '}`
+            + `${data.gaps ? 'Gaps in loaded history; missing intervals are not filled. ' : ''}`
+            + `${data.invalid_candles ? 'Invalid candles were omitted. ' : ''}${checked}`;
+    };
+    const draw = ({ fit = false, offset = 0 } = {}) => {
         const values = chartData(data);
         const range = chart.timeScale().getVisibleLogicalRange();
         price.setData(values.candles);
         volume.setData(values.volume);
         updateMarkers();
-        if (previousPeriod !== data.period || range === null) chart.timeScale().fitContent();
-        else chart.timeScale().setVisibleLogicalRange(range);
+
+        if (fit || previousPeriod !== data.period || range === null) {
+            chart.timeScale().fitContent();
+        } else {
+            chart.timeScale().setVisibleLogicalRange({ from: range.from + offset, to: range.to + offset });
+        }
+        lastVisibleRange = chart.timeScale().getVisibleLogicalRange();
         previousPeriod = data.period;
         canvas.hidden = values.candles.length === 0;
+        earliestButton.disabled = historyCeilingMs === null || !root.dataset.historyUrl;
         const latest = data.series.at(-1);
-        legend.textContent = latest ? `Latest closed price ${formatPrice(latest.close, tickSize)} · ${data.series.length} candles · ${data.period}` : 'No closed candles collected yet.';
-        status.textContent = `${data.stale ? 'History is stale or awaiting collection. ' : 'Stored closed candles are current. '}${data.gaps ? 'Gaps in history; missing intervals are not filled. ' : ''}${data.invalid_candles ? 'Invalid candles were omitted. ' : ''}Checked ${new Date(data.checked_at_ms).toISOString().replace('T', ' ').slice(0, 19)} UTC.`;
+        legend.textContent = latest
+            ? `Latest loaded price ${formatPrice(latest.close, tickSize)} · ${data.series.length} candles · ${data.period}`
+            : 'No closed candles collected yet.';
+        updateStatus();
     };
     const schedule = () => {
         clearTimeout(timer);
-        if (!disposed && !stopped && automatic.checked && !document.hidden) timer = setTimeout(refresh, 60000);
+        if (!disposed && !stopped && automatic.checked && !document.hidden) {
+            timer = setTimeout(() => refresh(false), 60000);
+        }
     };
-    async function refresh() {
+    async function refresh(resetToLatest = false) {
         if (disposed || stopped || busy) return;
+        if (browsingHistory && !resetToLatest) {
+            schedule();
+            return;
+        }
+
         busy = true;
         refreshButton.disabled = true;
         request = new AbortController();
@@ -162,6 +230,9 @@ export async function mountDashboardChart(root) {
                 stopped = true;
                 automatic.checked = false;
                 automatic.disabled = true;
+                data.series = [];
+                data.signals = [];
+                data.human_labels = [];
                 price.setData([]);
                 volume.setData([]);
                 markers.setMarkers([]);
@@ -170,12 +241,25 @@ export async function mountDashboardChart(root) {
             if (response.status === 429) throw new Error('Refresh limit reached. Try again in a minute.');
             if (!response.ok) throw new Error('Refresh failed. Showing the last successful sample.');
             const result = await response.json();
-            if (result.subscription_id !== root.dataset.subscription || !Array.isArray(result.chart?.series)) throw new Error('Unexpected chart response. Reload the dashboard.');
+            if (result.subscription_id !== root.dataset.subscription || !Array.isArray(result.chart?.series)) {
+                throw new Error('Unexpected chart response. Reload the dashboard.');
+            }
             if (disposed) return;
+
             data = result.chart;
-            draw();
+            data.human_labels ??= [];
+            data.has_older ??= false;
+            data.has_newer ??= false;
+            historyCeilingMs = Number(data.last_closed_at_ms) || null;
+            browsingHistory = false;
+            historyFailed = false;
+            userInteracted = false;
+            if (historyRetry) historyRetry.hidden = true;
+            if (historyStatus) historyStatus.textContent = '';
+            draw({ fit: true });
         } catch (error) {
-            if (!disposed) status.textContent = error.name === 'AbortError' ? 'Refresh timed out. Showing the last successful sample.' : error.message;
+            if (!disposed) status.textContent = error.name === 'AbortError'
+                ? 'Refresh timed out. Showing the last successful sample.' : error.message;
         } finally {
             clearTimeout(timeout);
             request = null;
@@ -184,30 +268,158 @@ export async function mountDashboardChart(root) {
             schedule();
         }
     }
+    const applyHistoryPage = (page, direction) => {
+        if (page.period !== data.period || !Array.isArray(page.series) || !Array.isArray(page.signals)
+            || !Array.isArray(page.human_labels)) {
+            throw new Error('Unexpected history response. Reload the dashboard.');
+        }
+
+        if (direction === 'earliest') {
+            data = {
+                ...data,
+                ...page,
+                series: page.series,
+                signals: page.signals,
+                human_labels: page.human_labels,
+                stale: data.stale,
+                last_closed_at_ms: historyCeilingMs,
+            };
+            browsingHistory = true;
+            userInteracted = false;
+            draw({ fit: true });
+            return page.series.length;
+        }
+
+        const merged = mergeCandleHistory(data.series, page.series, direction, historyCeilingMs);
+        data.series = merged.series;
+        data.signals = mergeSignals(data.signals, page.signals);
+        data.human_labels = mergeHuman(data.human_labels, page.human_labels);
+        data.gaps = Math.max(Number(data.gaps ?? 0), Number(page.gaps ?? 0));
+        data.invalid_candles = Number(data.invalid_candles ?? 0) + Number(page.invalid_candles ?? 0);
+        if (direction === 'older') data.has_older = page.has_older === true && merged.added > 0;
+        else data.has_newer = page.has_newer === true && merged.added > 0;
+        browsingHistory = true;
+        draw({ offset: direction === 'older' ? merged.added : 0 });
+
+        return merged.added;
+    };
+    async function loadHistory(direction = 'older') {
+        const newer = direction === 'newer';
+        if (disposed || historyBusy || historyCeilingMs === null || !root.dataset.historyUrl) return;
+        if (direction === 'older' && !data.has_older) return;
+        if (newer && !data.has_newer) return;
+
+        clearTimeout(historyTimer);
+        historyBusy = true;
+        historyFailed = false;
+        retryDirection = direction;
+        if (historyRetry) historyRetry.hidden = true;
+        if (historyStatus) historyStatus.textContent = direction === 'earliest'
+            ? 'Loading the earliest stored candles…'
+            : `Loading ${direction} candles…`;
+        historyRequest = new AbortController();
+        const historyTimeout = setTimeout(() => historyRequest?.abort(), 15000);
+        try {
+            const url = new URL(root.dataset.historyUrl, window.location.href);
+            url.searchParams.set('direction', direction);
+            url.searchParams.set('until_ms', String(historyCeilingMs));
+            if (direction !== 'earliest') {
+                const edge = newer ? data.series.at(-1) : data.series[0];
+                if (!edge) return;
+                url.searchParams.set('anchor_ms', String(Number(edge.time) * 1000));
+            }
+
+            const response = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin',
+                cache: 'no-store', signal: historyRequest.signal });
+            if ([401, 403, 404, 419].includes(response.status) || response.redirected) {
+                throw new Error('Your session or active subscription has changed. Reload the dashboard.');
+            }
+            if (response.status === 429) throw new Error('History limit reached. Wait a minute, then retry.');
+            if (!response.ok) throw new Error('History could not load. Retry or reload the dashboard.');
+
+            const result = await response.json();
+            if (result.subscription_id !== root.dataset.subscription) throw new Error('Unexpected history response. Reload the dashboard.');
+            const added = applyHistoryPage(result.chart, direction);
+            if (historyStatus) {
+                if (direction === 'earliest') {
+                    historyStatus.textContent = data.has_newer
+                        ? 'Earliest stored data loaded. Drag right to fill newer candles from this browsing snapshot.'
+                        : 'Earliest stored data loaded.';
+                } else if (direction === 'older') {
+                    historyStatus.textContent = data.has_older
+                        ? `${added} older candles loaded.` : 'Earliest available data reached.';
+                } else {
+                    historyStatus.textContent = data.has_newer
+                        ? `${added} newer candles loaded.` : 'Newest candle from this browsing snapshot reached.';
+                }
+            }
+        } catch (error) {
+            if (!disposed) {
+                historyFailed = true;
+                if (historyRetry) historyRetry.hidden = false;
+                if (historyStatus) historyStatus.textContent = error.name === 'AbortError'
+                    ? 'History loading timed out. Please retry.' : error.message;
+            }
+        } finally {
+            clearTimeout(historyTimeout);
+            historyRequest = null;
+            historyBusy = false;
+        }
+    }
+
+    const retryHistory = () => loadHistory(retryDirection);
+    const onVisibleRangeChange = range => {
+        clearTimeout(historyTimer);
+        const previousRange = lastVisibleRange;
+        lastVisibleRange = range;
+        if (!userInteracted || !range || !previousRange || historyBusy || historyFailed || disposed) return;
+        const direction = historyPanDirection(range, previousRange, data.series.length, data.has_older, data.has_newer);
+        if (direction) historyTimer = setTimeout(() => loadHistory(direction), 180);
+    };
+    const onInteraction = () => { userInteracted = true; };
     const visibility = () => { if (document.hidden) clearTimeout(timer); else schedule(); };
-    const fit = () => chart?.timeScale().fitContent();
+    const fit = () => {
+        userInteracted = false;
+        clearTimeout(historyTimer);
+        chart?.timeScale().fitContent();
+        lastVisibleRange = chart?.timeScale().getVisibleLogicalRange() ?? null;
+    };
+    const manualRefresh = () => refresh(true);
+    const earliest = () => loadHistory('earliest');
     const dispose = () => {
         disposed = true;
         clearTimeout(timer);
         clearTimeout(timeout);
+        clearTimeout(historyTimer);
         request?.abort();
+        historyRequest?.abort();
         observer?.disconnect();
+        chart?.timeScale().unsubscribeVisibleLogicalRangeChange?.(onVisibleRangeChange);
         chart?.remove();
-        refreshButton.removeEventListener('click', refresh);
+        refreshButton.removeEventListener('click', manualRefresh);
         fitButton.removeEventListener('click', fit);
+        earliestButton.removeEventListener('click', earliest);
+        historyRetry?.removeEventListener('click', retryHistory);
         showMarkers.removeEventListener('change', updateMarkers);
+        showHuman?.removeEventListener('change', updateMarkers);
         automatic.removeEventListener('change', schedule);
+        canvas.removeEventListener('wheel', onInteraction);
+        canvas.removeEventListener('pointerdown', onInteraction);
         document.removeEventListener('visibilitychange', visibility);
         window.removeEventListener('pagehide', pagehide);
     };
     const pagehide = event => { if (event.persisted) clearTimeout(timer); else dispose(); };
     window.addEventListener('pagehide', pagehide);
+
     try {
         const library = await import('lightweight-charts');
         if (disposed) return dispose;
         chart = library.createChart(canvas, { autoSize: true, ...theme() });
-        price = chart.addSeries(library.CandlestickSeries, { upColor: '#159b83', downColor: '#d64a5e', borderVisible: false, wickUpColor: '#159b83', wickDownColor: '#d64a5e', priceFormat: { type: 'custom', minMove: tickSize, formatter: value => formatPrice(value, tickSize) } });
-        volume = chart.addSeries(library.HistogramSeries, { priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false }, 1);
+        price = chart.addSeries(library.CandlestickSeries, { upColor: '#159b83', downColor: '#d64a5e', borderVisible: false,
+            wickUpColor: '#159b83', wickDownColor: '#d64a5e',
+            priceFormat: { type: 'custom', minMove: tickSize, formatter: value => formatPrice(value, tickSize) } });
+        volume = chart.addSeries(library.HistogramSeries, { priceFormat: { type: 'volume' }, priceLineVisible: false,
+            lastValueVisible: false }, 1);
         chart.panes()[1].setHeight(80);
         markers = library.createSeriesMarkers(price, []);
         chart.subscribeCrosshairMove(({ time }) => {
@@ -216,10 +428,17 @@ export async function mountDashboardChart(root) {
         });
         observer = new MutationObserver(() => chart?.applyOptions(theme()));
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+        chart.timeScale().subscribeVisibleLogicalRangeChange?.(onVisibleRangeChange);
+        canvas.addEventListener('wheel', onInteraction, { passive: true });
+        canvas.addEventListener('pointerdown', onInteraction);
         draw();
-        refreshButton.addEventListener('click', refresh);
+
+        refreshButton.addEventListener('click', manualRefresh);
         fitButton.addEventListener('click', fit);
+        earliestButton.addEventListener('click', earliest);
+        historyRetry?.addEventListener('click', retryHistory);
         showMarkers.addEventListener('change', updateMarkers);
+        showHuman?.addEventListener('change', updateMarkers);
         automatic.addEventListener('change', schedule);
         document.addEventListener('visibilitychange', visibility);
         schedule();
@@ -228,6 +447,7 @@ export async function mountDashboardChart(root) {
         canvas.hidden = true;
         status.textContent = 'The chart could not load. The candle table and recorded signal journal remain available.';
     }
+
     return dispose;
 }
 

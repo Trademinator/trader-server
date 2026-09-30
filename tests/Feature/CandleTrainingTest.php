@@ -318,3 +318,17 @@ it('rejects ambiguous forward and backward history cursors', function () {
         'after_ms' => IntelligenceFixtures::START + 10 * 60000,
     ]))->assertUnprocessable()->assertJsonValidationErrors(['before_ms', 'after_ms']);
 });
+it('preselects the dashboard market in both Human Training selectors', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $user = User::factory()->create();
+    config(['operations.owner_uuid' => $user->user_id]);
+    $manifest = candleTrainingDataset(count: 2);
+
+    $response = $this->actingAs($user)->get(route('human-training.index', [
+        'exchange' => $manifest['exchange'], 'symbol' => $manifest['symbol'], 'period' => $manifest['period'],
+    ]))->assertOk()->assertViewHas('selectedDataset', $manifest['dataset_id']);
+
+    expect(substr_count($response->getContent(), 'value="'.$manifest['dataset_id'].'" selected'))->toBe(2);
+});
+
+
