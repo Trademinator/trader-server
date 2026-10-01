@@ -1,3 +1,4 @@
+import { chartTimeOptions, formatTimestamp, subscribeTimeDisplay } from './time-display.js';
 import { chartData, formatPrice } from './market-review-chart.js';
 import { historyPanDirection, mergeCandleHistory } from './candlestick-history.js';
 
@@ -179,7 +180,8 @@ export async function mountDashboardChart(root) {
     data.has_older ??= false;
     data.has_newer ??= false;
 
-    let chart, price, volume, markers, observer, timer, request, timeout, historyTimer, historyRequest;
+    let chart, price, volume, markers, observer, timer, request, timeout, historyTimer, historyRequest, unsubscribeTime;
+    let inspectedCandle, lastTimedStatus;
     let disposed = false, stopped = false, busy = false, historyBusy = false, historyFailed = false;
     let userInteracted = false, previousPeriod = null, lastVisibleRange = null, retryDirection = 'older';
     let browsingHistory = false;
@@ -208,12 +210,13 @@ export async function mountDashboardChart(root) {
         ].sort((a, b) => Number(a.time) - Number(b.time) || String(a.id).localeCompare(String(b.id))));
     };
     const updateStatus = () => {
-        const checked = Number.isFinite(Number(data.checked_at_ms))
-            ? `Checked ${new Date(Number(data.checked_at_ms)).toISOString().replace('T', ' ').slice(0, 19)} UTC.`
+        const checked = data.checked_at_ms != null && Number.isFinite(Number(data.checked_at_ms))
+            ? `Checked ${formatTimestamp(Number(data.checked_at_ms))}.`
             : '';
         status.textContent = `${data.stale ? 'History is stale or awaiting collection. ' : 'Stored closed candles are current. '}`
             + `${data.gaps ? 'Gaps in loaded history; missing intervals are not filled. ' : ''}`
             + `${data.invalid_candles ? 'Invalid candles were omitted. ' : ''}${checked}`;
+        lastTimedStatus = status.textContent;
     };
     const draw = ({ fit = false, offset = 0 } = {}) => {
         const values = chartData(data);
@@ -231,6 +234,7 @@ export async function mountDashboardChart(root) {
         previousPeriod = data.period;
         canvas.hidden = values.candles.length === 0;
         earliestButton.disabled = historyCeilingMs === null || !root.dataset.historyUrl;
+        inspectedCandle = null;
         const latest = data.series.at(-1);
         legend.textContent = latest
             ? `Latest loaded price ${formatPrice(latest.close, tickSize)} · ${data.series.length} candles · ${data.period}`
@@ -427,6 +431,7 @@ export async function mountDashboardChart(root) {
         clearTimeout(historyTimer);
         request?.abort();
         historyRequest?.abort();
+        unsubscribeTime?.();
         observer?.disconnect();
         chart?.timeScale().unsubscribeVisibleLogicalRangeChange?.(onVisibleRangeChange);
         chart?.remove();
@@ -457,10 +462,21 @@ export async function mountDashboardChart(root) {
             lastValueVisible: false }, 1);
         chart.panes()[1].setHeight(80);
         markers = library.createSeriesMarkers(price, []);
+        const renderLegend = () => {
+            const candle = inspectedCandle;
+            if (candle) legend.textContent = `${formatTimestamp(candle.time * 1000, { precision: 'minutes' })} · O ${formatPrice(candle.open, tickSize)} H ${formatPrice(candle.high, tickSize)} L ${formatPrice(candle.low, tickSize)} C ${formatPrice(candle.close, tickSize)}`;
+        };
         chart.subscribeCrosshairMove(({ time }) => {
-            const candle = data.series.find(row => row.time === time);
-            if (candle) legend.textContent = `${new Date(candle.time * 1000).toISOString().slice(0, 16)} UTC · O ${formatPrice(candle.open, tickSize)} H ${formatPrice(candle.high, tickSize)} L ${formatPrice(candle.low, tickSize)} C ${formatPrice(candle.close, tickSize)}`;
+            inspectedCandle = data.series.find(row => row.time === time) ?? inspectedCandle;
+            renderLegend();
         });
+        const renderTime = () => {
+            chart.applyOptions(chartTimeOptions());
+            renderLegend();
+            if (status.textContent === lastTimedStatus) updateStatus();
+        };
+        unsubscribeTime = subscribeTimeDisplay(renderTime);
+        renderTime();
         observer = new MutationObserver(() => chart?.applyOptions(theme()));
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         chart.timeScale().subscribeVisibleLogicalRangeChange?.(onVisibleRangeChange);

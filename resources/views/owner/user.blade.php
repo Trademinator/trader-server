@@ -1,6 +1,6 @@
 <x-owner.layout :title="'User: '.$user->name">
     <section class="owner-panel">
-        <dl class="owner-details"><dt>UUID</dt><dd><code>{{ $user->user_id }}</code></dd><dt>Status</dt><dd>{{ $user->isOwner() ? 'Owner' : ($user->suspended_at ? 'Suspended' : 'Active') }}</dd><dt>Email verification</dt><dd>{{ $user->email_verified_at ?? 'Unverified' }}</dd><dt>Last sign-in</dt><dd>{{ $user->last_login_at ?? 'Not recorded' }}</dd><dt>Last activity</dt><dd>{{ $user->last_seen_at ?? 'Not recorded' }}</dd></dl>
+        <dl class="owner-details"><dt>UUID</dt><dd><code>{{ $user->user_id }}</code></dd><dt>Status</dt><dd>{{ $user->isOwner() ? 'Owner' : ($user->suspended_at ? 'Suspended' : 'Active') }}</dd><dt>Email verification</dt><dd><x-display-time :value="$user->email_verified_at" fallback="Unverified" /></dd><dt>Last sign-in</dt><dd><x-display-time :value="$user->last_login_at" fallback="Not recorded" /></dd><dt>Last activity</dt><dd><x-display-time :value="$user->last_seen_at" fallback="Not recorded" /></dd></dl>
         @unless($user->isOwner())
             <h3>Edit profile</h3>
             <form class="owner-filters" method="POST" action="{{ route('owner.users.update', $user) }}">@csrf @method('PUT')

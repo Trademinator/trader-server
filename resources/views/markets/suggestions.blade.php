@@ -15,7 +15,7 @@
         @if ($results !== null)
             <section id="pair-results" aria-labelledby="results-heading" class="guide-panel">
                 <h2 id="results-heading">Pairs that fit your preferences</h2>
-                <p>{{ collect($exchanges)->firstWhere('value', $answers['exchange'])['label'] ?? $answers['exchange'] }} · {{ $results['generated_at'] }}</p>
+                <p>{{ collect($exchanges)->firstWhere('value', $answers['exchange'])['label'] ?? $answers['exchange'] }} · <x-display-time :value="$results['generated_at']" precision="minutes" /></p>
                 <p class="guide-notice">{{ $results['access']['message'] }}</p>
                 @if ($results['access']['source'])<a href="{{ $results['access']['source'] }}" target="_blank" rel="noopener noreferrer">Regional review source</a>@endif
                 <p class="guide-help">Ranked by funding and goal match, then historical screening. “Explore only” means important evidence or answers are missing. Neither label is a buy/sell signal. Account fees, order-book depth and execution costs are not verified.</p>
@@ -25,7 +25,7 @@
                         <p><strong>Why it appears</strong></p>
                         <ul>@foreach ($item['reasons'] as $reason)<li>{{ $reason }}</li>@endforeach</ul>
                         @if ($item['evidence']['known'])
-                            <p><strong>Historical evidence:</strong> {{ $item['evidence']['candles'] }} completed {{ $item['evidence']['period'] }} candles, {{ $item['evidence']['from'] }}–{{ $item['evidence']['through'] }} UTC, measured in {{ $item['risk_currency'] }}.</p>
+                            <p><strong>Historical evidence:</strong> {{ $item['evidence']['candles'] }} completed {{ $item['evidence']['period'] }} candles, <x-display-time :value="$item['evidence']['from']" precision="minutes" />–<x-display-time :value="$item['evidence']['through']" precision="minutes" />, measured in {{ $item['risk_currency'] }}.</p>
                             <p>Largest close-to-close decline from a prior peak: {{ number_format($item['evidence']['drawdown'] * 100, 1) }}%. Largest absolute move over the chosen holding window: {{ number_format($item['evidence']['largest_move'] * 100, 1) }}%.</p>
                             <p class="guide-help">These describe this sample only. They omit extremes between closes and do not limit future losses. Candle volume is not a measure of order-book depth.</p>
                         @endif

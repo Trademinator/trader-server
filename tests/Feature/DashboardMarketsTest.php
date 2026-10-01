@@ -106,3 +106,44 @@ it('does not flag healthy ready feeds or current in-progress collection as needi
     $response = $this->getJson('/dashboard')->assertJsonPath('attention_count', 1);
     expect($response->json('html'))->toContain('lease expired', 'trademinator:dispatch-market-feeds');
 });
+
+
+it('collapses an expired queued retry and its dependent symptoms into one recovery item', function () {
+    $this->travelTo('2026-10-01 11:30:00 UTC');
+    $user = User::factory()->create();
+    config(['operations.owner_uuid' => $user->getKey()]);
+    $sub = followedDashboardMarket($user, 'BTC/USDC', 'ndax', '1m');
+    $sub->market->feed->update([
+        'selected_period' => null,
+        'status' => 'queued',
+        'lease_until' => now()->subMinute(),
+        'last_error' => 'No candle period meets the quality, coverage and historical-depth thresholds yet.',
+    ]);
+
+    $response = $this->actingAs($user)->getJson('/dashboard')->assertJsonPath('attention_count', 1);
+    $html = $response->json('html');
+
+    expect($html)
+        ->toContain('lease expired', 'Previous attempt:', 'No candle period meets the quality, coverage and historical-depth thresholds yet.')
+        ->not->toContain('Collector queued:', 'No reliable candle period has been selected.');
+    expect(substr_count($html, 'trademinator:dispatch-market-feeds'))->toBe(1)
+        ->and(substr_count($html, 'queue:work --queue=default'))->toBe(1);
+});
+
+it('does not repeat a pending period-selection error as a second missing-period warning', function () {
+    $user = User::factory()->create();
+    config(['operations.owner_uuid' => $user->getKey()]);
+    $sub = followedDashboardMarket($user, 'BTC/USDC', 'ndax', '1m');
+    $sub->market->feed->update([
+        'selected_period' => null,
+        'status' => 'pending',
+        'lease_until' => null,
+        'last_error' => 'No candle period meets the quality, coverage and historical-depth thresholds yet.',
+    ]);
+
+    $html = $this->actingAs($user)->getJson('/dashboard')->assertJsonPath('attention_count', 1)->json('html');
+
+    expect(substr_count($html, 'No candle period meets the quality, coverage and historical-depth thresholds yet.'))->toBe(1)
+        ->and($html)->not->toContain('No reliable candle period has been selected.')
+        ->and($html)->toContain('trademinator:dispatch-market-feeds');
+});

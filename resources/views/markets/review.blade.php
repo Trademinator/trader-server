@@ -84,7 +84,7 @@
 
             <section class="guide-panel" aria-labelledby="risk-heading">
                 <h2 id="risk-heading">Historical risk screen</h2>
-                <p>Screened at {{ $results['generated_at'] }}. Chart refreshes do not rewrite this explanation. <a data-no-instant href="{{ $reviewUrl }}">Recalculate the full review</a> to update it.</p>
+                <p>Screened at <x-display-time :value="$results['generated_at']" precision="minutes" />. Chart refreshes do not rewrite this explanation. <a data-no-instant href="{{ $reviewUrl }}">Recalculate the full review</a> to update it.</p>
                 <div class="review-metrics">
                     <div class="review-metric">Largest peak-to-close decline<strong>{{ $evidence['known'] ? number_format($evidence['drawdown'] * 100, 2).'%' : 'Unknown' }}</strong><span class="guide-help">Across the whole sample</span></div>
                     <div class="review-metric">Largest holding-window move<strong>{{ $evidence['known'] ? number_format($evidence['largest_move'] * 100, 2).'%' : 'Unknown' }}</strong><span class="guide-help">Absolute change, either direction</span></div>

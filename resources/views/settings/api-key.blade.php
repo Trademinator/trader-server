@@ -12,7 +12,9 @@
 
         <x-form method="post" action="{{ route('settings.api-key.store') }}" class="space-y-5">
             <x-input type="text" name="label" :label="__('Label')" required maxlength="80" autocomplete="off" placeholder="Desktop Client" />
-            <x-input type="datetime-local" name="expires_at" :label="__('Optional expiry')" autocomplete="off" />
+            <x-input type="datetime-local" name="expires_at" :label="__('Optional expiry')" autocomplete="off" data-time-input aria-describedby="expiry-timezone" />
+            <input type="hidden" name="expires_timezone" value="{{ old('expires_timezone', auth()->user()->timezone ?? 'UTC') }}" data-input-timezone>
+            <p id="expiry-timezone" class="text-sm">{{ __('Expiry time is in') }} <x-timezone-label />.</p>
             <div class="flex items-center gap-4">
                 <x-button>{{ __('Create key') }}</x-button>
                 <x-action-message class="me-3" on="api-key-created">{{ __('Created.') }}</x-action-message>
@@ -27,9 +29,9 @@
                     <tr class="border-t border-slate-200 dark:border-slate-700">
                         <td class="p-2">{{ $key->label }}</td>
                         <td class="p-2"><code>{{ $key->prefix }}…</code></td>
-                        <td class="p-2">{{ $key->created_at?->utc()->format('Y-m-d H:i') ?? '—' }}</td>
-                        <td class="p-2">{{ $key->last_used_at?->utc()->format('Y-m-d H:i') ?? 'Never' }}</td>
-                        <td class="p-2">{{ $key->expires_at?->utc()->format('Y-m-d H:i') ?? 'No expiry' }}</td>
+                        <td class="p-2"><x-display-time :value="$key->created_at" precision="minutes" fallback="—" /></td>
+                        <td class="p-2"><x-display-time :value="$key->last_used_at" precision="minutes" fallback="Never" /></td>
+                        <td class="p-2"><x-display-time :value="$key->expires_at" precision="minutes" fallback="No expiry" /></td>
                         <td class="p-2">{{ $key->revoked_at ? 'Revoked' : ($key->expires_at?->isPast() ? 'Expired' : 'Active') }}</td>
                         <td class="p-2 text-right">
                             @if (!$key->revoked_at && !($key->expires_at?->isPast()))

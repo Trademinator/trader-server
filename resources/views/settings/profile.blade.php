@@ -2,7 +2,7 @@
 <section class="w-full">
     @include('partials.settings-heading')
 
-    <x-settings.layout :heading="__('Profile')" :subheading="__('Update your name and email address')">
+    <x-settings.layout :heading="__('Profile')" :subheading="__('Update your name, email address and timezone')">
         <x-form method="put" action="{{ route('settings.profile.update') }}" class="my-6 w-full space-y-6">
             <x-input type="text" :label="__('Name')" :value="$user->name" name="name" required autofocus autocomplete="name" />
 
@@ -27,6 +27,18 @@
                     </div>
                 @endif
             </div>
+
+            <x-field>
+                <x-label for="timezone">{{ __('Timezone') }}</x-label>
+                <x-select name="timezone" :value="$user->timezone" aria-describedby="timezone-help" class="dark:bg-gray-900 dark:text-gray-100">
+                    <option value="" @selected(old('timezone', $user->timezone) === null || old('timezone', $user->timezone) === '')>{{ __('Automatic (browser timezone)') }}</option>
+                    @foreach ($timezones as $timezone)
+                        <option value="{{ $timezone }}" @selected(old('timezone', $user->timezone) === $timezone)>{{ str_replace('_', ' ', $timezone) }}</option>
+                    @endforeach
+                </x-select>
+                <x-error for="timezone" />
+                <p id="timezone-help" class="text-sm text-gray-500 dark:text-gray-400">{{ __('Local time uses this timezone, including daylight-saving changes. Automatic uses the timezone of your browser. The Local / UTC switch changes how times are displayed across pages.') }}</p>
+            </x-field>
 
             <div class="flex items-center gap-4">
                 <div class="flex items-center justify-end">

@@ -11,7 +11,7 @@
                 <tr><td><a href="{{ route('owner.users.show', $user) }}">{{ $user->name }}</a><small>{{ $user->email }}</small><small><code>{{ $user->user_id }}</code></small></td>
                     <td><span class="owner-badge">{{ $user->isOwner() ? 'Owner' : ($user->suspended_at ? 'Suspended' : 'Active') }}</span><small>{{ $user->email_verified_at ? 'Verified email' : 'Email unverified' }}</small></td>
                     <td>{{ $user->active_subscriptions_count }} active / {{ $user->subscriptions_count }} total</td>
-                    <td>{{ $user->last_login_at ?? 'Not recorded' }}<small>{{ $user->last_seen_at ?? 'No recorded activity' }}</small></td><td>{{ $user->created_at }}</td></tr>
+                    <td><x-display-time :value="$user->last_login_at" fallback="Not recorded" /><small><x-display-time :value="$user->last_seen_at" fallback="No recorded activity" /></small></td><td><x-display-time :value="$user->created_at" /></td></tr>
             @empty<tr><td colspan="5">No matching users.</td></tr>@endforelse
         </tbody></table></div>
         {{ $users->links() }}

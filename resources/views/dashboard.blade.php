@@ -1,6 +1,5 @@
 <x-layouts.app :title="__('Dashboard')">
     @php
-        $time = fn ($ms) => $ms === null ? 'Not available' : gmdate('Y-m-d H:i:s', (int) ($ms / 1000)).' UTC';
         $number = fn ($value, $digits = 2) => $value === null ? 'Unknown' : number_format($value, $digits);
     @endphp
     @include('markets.guide-styles')
@@ -21,7 +20,7 @@
             @can('manage-server')
             <button type="button" class="dashboard-stat" data-attention-toggle aria-controls="attention" aria-expanded="false"><span>Needs attention</span><strong data-attention-count>{{ $cards->where('attention', true)->count() }}</strong><small>Collection or history on this page</small></button>
             @endcan
-            <a class="dashboard-stat" href="#changes"><span>New signal changes</span><strong>{{ $changeCount }}</strong><small>Since {{ $time($since) }}</small></a>
+            <a class="dashboard-stat" href="#changes"><span>New signal changes</span><strong>{{ $changeCount }}</strong><small>Since <x-display-time :value="$since" unit="milliseconds" /></small></a>
         </div>
         <section class="guide-panel" aria-labelledby="conditions-title">
             <div class="flex flex-wrap items-center justify-between gap-3"><h2 id="conditions-title">Market conditions</h2><span class="guide-badge">CoinGecko context</span></div>
@@ -31,7 +30,7 @@
                     <p><span class="dashboard-muted">Bitcoin dominance</span><br><strong>{{ $number($conditions['btc_dominance']) }}%</strong></p>
                     <p><span class="dashboard-muted">Global volume · 24h</span><br><strong>{{ $number($conditions['volume_usd'] === null ? null : $conditions['volume_usd'] / 1000000000) }} billion USD</strong></p>
                 </div>
-                <p class="guide-help">Observed {{ $time($conditions['observed_at_ms']) }}. Broad market context; chart prices below come from the selected exchange.</p>
+                <p class="guide-help">Observed <x-display-time :value="$conditions['observed_at_ms']" unit="milliseconds" />. Broad market context; chart prices below come from the selected exchange.</p>
                 @if ($conditions['categories'])<div class="flex flex-wrap gap-2 mt-3" aria-label="Largest category movements in the available sample">@foreach ($conditions['categories'] as $category)
                     <span class="guide-badge">{{ $category['name'] }} · {{ $number($category['change_24h']) }}% market cap / 24h</span>
                 @endforeach</div>@endif
@@ -57,7 +56,7 @@
             @php($progress = $details['progress'])
             @php($chart = $details['chart'])
             <section id="market-detail" class="guide-panel" aria-labelledby="market-title">
-                <div class="flex flex-wrap justify-between items-start gap-3"><div><h2 id="market-title">{{ $market->symbol }} · {{ $market->exchange->name }}</h2><p>Closed {{ $chart['period'] ?? 'pending' }} candles · {{ explode('/', $market->symbol)[1] ?? '' }} per {{ explode('/', $market->symbol)[0] }} · UTC</p></div></div>
+                <div class="flex flex-wrap justify-between items-start gap-3"><div><h2 id="market-title">{{ $market->symbol }} · {{ $market->exchange->name }}</h2><p>Closed {{ $chart['period'] ?? 'pending' }} candles · {{ explode('/', $market->symbol)[1] ?? '' }} per {{ explode('/', $market->symbol)[0] }} · <x-timezone-label /></p></div></div>
                 <x-market-candlestick
                     data-dashboard-chart
                     :data-url="route('dashboard.chart', $selected->getKey())"
@@ -77,8 +76,8 @@
                 <p class="guide-help">Server: ↑ BUY · ↓ SELL · ● HOLD · ■ Waiting. Client: C BUY/C SELL decisions and FILL markers include reported fill price. Client reports are shown only when the authenticated user submitted them.</p>
                 <p class="guide-help">Markers appear at the first candle opening at or after the event was recorded. Historical Server signals are never recalculated with a newer model; Client reports remain linked to the original signal.</p>
                 <p class="guide-help">TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a> · Market data collected by Trademinator.</p>
-                <details class="mt-3"><summary>Recent closed candle values</summary><div class="dashboard-table-wrap"><table><thead><tr><th>Open time (UTC)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
-                    @forelse (array_reverse(array_slice($chart['series'], -10)) as $candle)<tr><td>{{ $time($candle['time'] * 1000) }}</td><td>{{ $number($candle['open'], 8) }}</td><td>{{ $number($candle['high'], 8) }}</td><td>{{ $number($candle['low'], 8) }}</td><td>{{ $number($candle['close'], 8) }}</td><td>{{ $number($candle['volume'], 8) }}</td></tr>@empty<tr><td colspan="6">No closed candles yet.</td></tr>@endforelse
+                <details class="mt-3"><summary>Recent closed candle values</summary><div class="dashboard-table-wrap"><table><thead><tr><th>Open time (<x-timezone-label />)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
+                    @forelse (array_reverse(array_slice($chart['series'], -10)) as $candle)<tr><td><x-display-time :value="$candle['time'] * 1000" unit="milliseconds" /></td><td>{{ $number($candle['open'], 8) }}</td><td>{{ $number($candle['high'], 8) }}</td><td>{{ $number($candle['low'], 8) }}</td><td>{{ $number($candle['close'], 8) }}</td><td>{{ $number($candle['volume'], 8) }}</td></tr>@empty<tr><td colspan="6">No closed candles yet.</td></tr>@endforelse
                 </tbody></table></div></details>
                 <div class="flex flex-wrap justify-end gap-3 mt-4">
                     @can('train-intelligence')
@@ -99,7 +98,7 @@
                         @if ($details['report'])<p class="guide-help">Model {{ $details['report']['model_id'] }}</p>@endif</div>
                     <div><h3>3. Validation</h3><p>{{ ($details['report']['status'] ?? null) === 'ready' ? 'The recorded model passed its validation gates.' : 'Awaiting a model that passes validation.' }}</p><p class="guide-help">Enough rows permit evaluation; they do not guarantee a usable signal.</p></div>
                 </div>
-                @if ($progress['eta'])<p><strong>Earliest data estimate: {{ $progress['eta']->utc()->format('Y-m-d H:i:s') }} UTC</strong></p>@endif
+                @if ($progress['eta'])<p><strong>Earliest data estimate: <x-display-time :value="$progress['eta']" /></strong></p>@endif
                 <p class="guide-help">{{ $progress['eta_note'] }} Validated-model ETA: unknown.</p>
                 @if ($progress['issues'])<ul class="list-disc pl-5 mt-3">@foreach ($progress['issues'] as $issue)<li>{{ $issue }}</li>@endforeach</ul>@endif
                 @if ($details['signal'] && $details['signal_fresh'])
@@ -108,18 +107,18 @@
                 @else<p class="guide-notice mt-4">No current recorded signal is available. Collection and the scheduled signal recorder must run before a fresh observation appears.</p>@endif
             </section>
             <section class="guide-panel" aria-labelledby="journal-title"><h2 id="journal-title">Recorded signal journal · {{ $market->symbol }}</h2><p>Latest 20 Server observations with any Client reports linked to the exact immutable signal. No report means Unknown.</p>
-                <div class="dashboard-table-wrap"><table><thead><tr><th>Recorded (UTC)</th><th>Server decision</th><th>Explanation and evidence</th><th>Client execution</th></tr></thead><tbody>
+                <div class="dashboard-table-wrap"><table><thead><tr><th>Recorded (<x-timezone-label />)</th><th>Server decision</th><th>Explanation and evidence</th><th>Client execution</th></tr></thead><tbody>
                     @forelse ($details['history'] as $signal)
                         @php($reports = $details['client_reports']->get($signal->getKey(), collect()))
                         @php($latestReport = $reports->last())
-                        <tr><td>{{ $time($signal->recorded_at_ms) }}</td><td>{{ \App\Domain\Intelligence\SignalJournal::label($signal->action, $signal->reason) }}</td><td>{{ $signal->payload['explanation'] ?? \App\Domain\Intelligence\SignalJournal::explain($signal->reason) }}<details><summary>Trace this observation</summary><p>Source candle closed: {{ $time($signal->decision_at_ms) }}<br>Period: {{ $signal->period }}<br>Model: {{ $signal->model_id ?? 'None' }}<br>Signal: {{ $signal->getKey() }}<br>Horizon: {{ $signal->payload['horizon_candles'] ?? 'Unknown' }} candles<br>Confidence score: {{ $signal->reason === 'supported' ? $number(($signal->payload['confidence'] ?? 0) * 100, 1).'%' : 'Not supported' }}</p></details></td><td>
+                        <tr><td><x-display-time :value="$signal->recorded_at_ms" unit="milliseconds" /></td><td>{{ \App\Domain\Intelligence\SignalJournal::label($signal->action, $signal->reason) }}</td><td>{{ $signal->payload['explanation'] ?? \App\Domain\Intelligence\SignalJournal::explain($signal->reason) }}<details><summary>Trace this observation</summary><p>Source candle closed: <x-display-time :value="$signal->decision_at_ms" unit="milliseconds" /><br>Period: {{ $signal->period }}<br>Model: {{ $signal->model_id ?? 'None' }}<br>Signal: {{ $signal->getKey() }}<br>Horizon: {{ $signal->payload['horizon_candles'] ?? 'Unknown' }} candles<br>Confidence score: {{ $signal->reason === 'supported' ? $number(($signal->payload['confidence'] ?? 0) * 100, 1).'%' : 'Not supported' }}</p></details></td><td>
                             @if ($latestReport)
                                 <strong>{{ strtoupper($latestReport->event) }}@if($latestReport->side) · {{ strtoupper($latestReport->side) }}@endif</strong><br>
-                                <span>{{ $time($latestReport->occurred_at_ms) }}</span>
+                                <span><x-display-time :value="$latestReport->occurred_at_ms" unit="milliseconds" /></span>
                                 @if ($latestReport->event === 'fill')<br><span>Price {{ $number($latestReport->price, 8) }} · Qty {{ $number($latestReport->quantity, 8) }}</span>@endif
                                 @if ($latestReport->reason)<br><span>{{ $latestReport->reason }}</span>@endif
                                 @if ($latestReport->protective)<br><span>Protective / exit report</span>@endif
-                                @if ($reports->count() > 1)<details><summary>{{ $reports->count() }} Client reports</summary>@foreach($reports as $report)<p>{{ strtoupper($report->event) }} · {{ $time($report->occurred_at_ms) }}@if($report->price) · {{ $number($report->price, 8) }}@endif</p>@endforeach</details>@endif
+                                @if ($reports->count() > 1)<details><summary>{{ $reports->count() }} Client reports</summary>@foreach($reports as $report)<p>{{ strtoupper($report->event) }} · <x-display-time :value="$report->occurred_at_ms" unit="milliseconds" />@if($report->price) · {{ $number($report->price, 8) }}@endif</p>@endforeach</details>@endif
                             @else
                                 Unknown
                             @endif
@@ -129,8 +128,8 @@
             </section>
         @endif
         <div class="grid gap-5 lg:grid-cols-2">
-            <section class="guide-panel" id="changes" aria-labelledby="changes-title"><h2 id="changes-title">Changes since your last visit</h2><p class="guide-help">Since {{ $time($since) }} · Showing up to 20 changes across active subscriptions.</p>
-                @forelse ($timeline as $event)<p class="dashboard-attention-row"><strong>{{ $event->market->symbol }} · {{ $event->market->exchange->name }}</strong><span>{{ \App\Domain\Intelligence\SignalJournal::label($event->action, $event->reason) }} · {{ $time($event->recorded_at_ms) }}</span></p>@empty<p>No new recorded signal changes. Normal collection can continue without a directional signal.</p>@endforelse
+            <section class="guide-panel" id="changes" aria-labelledby="changes-title"><h2 id="changes-title">Changes since your last visit</h2><p class="guide-help">Since <x-display-time :value="$since" unit="milliseconds" /> · Showing up to 20 changes across active subscriptions.</p>
+                @forelse ($timeline as $event)<p class="dashboard-attention-row"><strong>{{ $event->market->symbol }} · {{ $event->market->exchange->name }}</strong><span>{{ \App\Domain\Intelligence\SignalJournal::label($event->action, $event->reason) }} · <x-display-time :value="$event->recorded_at_ms" unit="milliseconds" /></span></p>@empty<p>No new recorded signal changes. Normal collection can continue without a directional signal.</p>@endforelse
             </section>
             <section class="guide-panel" aria-labelledby="coverage-title"><h2 id="coverage-title">Subscription coverage</h2>
                 @forelse ($overlap as $asset => $count)<p>{{ $asset }} appears as the base asset in {{ $count }} markets on this page.</p>@empty<p>No repeated base assets among the markets shown.</p>@endforelse

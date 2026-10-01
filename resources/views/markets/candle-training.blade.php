@@ -67,7 +67,7 @@
                     :sort="['exchange', 'pair', 'period']" required data-candle-dataset />
                 <noscript><button class="review-control" type="submit">Switch market</button></noscript>
             </form>
-            <p class="guide-help">Latest loaded candle: <span data-replay-time>{{ gmdate('Y-m-d H:i:s', intdiv($state['payload']['microtimestamp'], 1000)) }} UTC</span>. Use the side arrows to move up to 50 candles, or pan toward either edge to load more history. Forward loading stops at the newest candle in this dataset.</p>
+            <p class="guide-help">Latest loaded candle: <span data-replay-time><x-display-time :value="$state['payload']['microtimestamp']" unit="milliseconds" /></span>. Use the side arrows to move up to 50 candles, or pan toward either edge to load more history. Forward loading stops at the newest candle in this dataset.</p>
             <p class="guide-notice"><strong>Left-click</strong> candles to measure A→B. The third click discards A and shifts B→A. <strong>Right-click</strong> a candle for BUY/HOLD/SELL/Delete; on touch, long-press it.</p>
             @if($state['payload']['gaps'])<p class="guide-notice guide-error">{{ $state['payload']['gaps'] }} gaps in history. Missing candles are not filled.</p>@endif
 
@@ -104,7 +104,7 @@
                         @if($state['next_decision_at_ms']) href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['next_decision_at_ms']]) }}" @else aria-disabled="true" tabindex="-1" @endif
                         aria-label="Forward up to 50 candles" title="Forward up to 50 candles">&gt;</a>
                 </div>
-                <p class="guide-help">Earliest available data: <a href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['earliest_window_decision_at_ms']]) }}">{{ gmdate('Y-m-d H:i:s', $state['earliest_time']) }} UTC</a> · in this frozen dataset</p>
+                <p class="guide-help">Earliest available data: <a href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['earliest_window_decision_at_ms']]) }}"><x-display-time :value="$state['earliest_time']" unit="seconds" /></a> · in this frozen dataset</p>
                 <button type="button" class="review-control" data-fit>Fit visible candles</button>
                 <p class="guide-help" data-history-status role="status"></p>
                 <button type="button" class="review-control" data-history-retry hidden>Retry loading candles</button>
@@ -129,19 +129,19 @@
         </section>
 
         <div class="guide-grid">
-            <section class="guide-panel"><h2>Indicators and context</h2><p class="guide-help">Features for the initial candle at {{ gmdate('Y-m-d H:i:s', intdiv($state['payload']['microtimestamp'], 1000)) }} UTC. Each chart label stores the features from the candle you label.</p>
+            <section class="guide-panel"><h2>Indicators and context</h2><p class="guide-help">Features for the initial candle at <x-display-time :value="$state['payload']['microtimestamp']" unit="milliseconds" />. Each chart label stores the features from the candle you label.</p>
                 <dl>@foreach($state['payload']['features'] as $key => $value)<dt>{{ $key }}</dt><dd>{{ is_numeric($value) ? number_format($value, 5) : 'Unavailable' }}</dd>@endforeach</dl>
             </section>
             <section class="guide-panel"><h2>Partial patterns</h2>
                 @forelse($state['payload']['patterns'] as $pattern)<p><strong>{{ ucwords(str_replace('_', ' ', $pattern['type'])) }}</strong><br>Stage {{ $pattern['stage'] }}/{{ $pattern['length'] }} · {{ number_format(100 * $pattern['progress']) }}% complete · similarity {{ number_format(100 * $pattern['similarity']) }}%</p>
                 @empty<p>No supported partial pattern in this snapshot.</p>@endforelse
-                <p class="guide-help">Patterns for the initial candle at {{ gmdate('Y-m-d H:i:s', intdiv($state['payload']['microtimestamp'], 1000)) }} UTC. Pattern outcomes stay hidden.</p>
+                <p class="guide-help">Patterns for the initial candle at <x-display-time :value="$state['payload']['microtimestamp']" unit="milliseconds" />. Pattern outcomes stay hidden.</p>
             </section>
         </div>
 
         <section class="guide-panel">
-            <details><summary>Initial window: recent candle values</summary><div class="review-table-wrap"><table><thead><tr><th>Open time (UTC)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
-                @foreach(array_slice($state['payload']['series'], -10) as $candle)<tr><th>{{ gmdate('Y-m-d H:i', $candle['time']) }}</th>@foreach(['open', 'high', 'low', 'close', 'volume'] as $field)<td>{{ $candle[$field] }}</td>@endforeach</tr>@endforeach
+            <details><summary>Initial window: recent candle values</summary><div class="review-table-wrap"><table><thead><tr><th>Open time (<x-timezone-label />)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
+                @foreach(array_slice($state['payload']['series'], -10) as $candle)<tr><th><x-display-time :value="$candle['time']" unit="seconds" precision="minutes" /></th>@foreach(['open', 'high', 'low', 'close', 'volume'] as $field)<td>{{ $candle[$field] }}</td>@endforeach</tr>@endforeach
             </tbody></table></div></details>
         </section>
     </section>

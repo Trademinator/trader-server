@@ -50,7 +50,7 @@ class GeoLocation
             $metadata = $reader->metadata();
 
             return ['status' => str_contains($metadata->databaseType, 'City') ? 'ready' : 'wrong_database',
-                'built_at' => gmdate('Y-m-d', $metadata->buildEpoch)];
+                'built_at' => gmdate('Y-m-d\TH:i:s\Z', $metadata->buildEpoch)];
         } catch (Throwable) {
             return ['status' => 'unreadable', 'built_at' => null];
         } finally {

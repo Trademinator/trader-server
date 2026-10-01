@@ -1,3 +1,4 @@
+import { chartTimeOptions, formatTimestamp, subscribeTimeDisplay, configureTimeDisplay, setTimeMode } from '../../resources/js/components/time-display.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chartData, formatPrice } from '../../resources/js/components/market-review-chart.js';
@@ -32,7 +33,7 @@ async function chartHarness(series = []) {
     const { readFileSync } = await import('node:fs');
     const { runInNewContext } = await import('node:vm');
     const source = readFileSync(new URL('../../resources/js/components/market-review-chart.js', import.meta.url), 'utf8')
-        .replaceAll('export ', '').replace("await import('lightweight-charts')", 'await loadChartLibrary()');
+        .replace(/^import .*;\n/gm, '').replaceAll('export ', '').replace("await import('lightweight-charts')", 'await loadChartLibrary()');
     const elements = new Map();
     const element = () => ({ textContent: '', disabled: true, checked: true, hidden: true,
         classList: { toggle() {} }, listeners: {},
@@ -53,7 +54,7 @@ async function chartHarness(series = []) {
     let response = { ok: true, json: async () => ({ review_type: 'preference', symbol: 'BTC/CAD', checked_at: '2026-09-27T00:03:00Z', evidence: JSON.parse(root.dataset.evidence) }) };
     let scheduled = 0;
     const context = {
-        Intl, Math, Number, JSON, Date, Array, Error, AbortController,
+        chartTimeOptions, formatTimestamp, subscribeTimeDisplay, Intl, Math, Number, JSON, Date, Array, Error, AbortController,
         loadChartLibrary: async () => ({ createChart: () => chart, CandlestickSeries: 'candle', HistogramSeries: 'volume' }),
         document: { hidden: false, documentElement: { classList: { contains: () => false } },
             querySelectorAll: () => [subscribe], addEventListener() {}, removeEventListener() {} },

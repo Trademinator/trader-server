@@ -1,4 +1,3 @@
-@php($time = fn ($ms) => $ms === null ? 'Not available' : gmdate('Y-m-d H:i:s', (int) ($ms / 1000)).' UTC')
             <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 @forelse ($cards as $card)
                     @php($subscription = $card['subscription'])
@@ -9,7 +8,7 @@
                         @else<p class="dashboard-muted my-3">Chart awaiting continuous price history</p>@endif
                         <div class="flex flex-wrap justify-between gap-2"><strong>{{ $card['label'] }}</strong><span>{{ $card['ready'] ? 'Model validated' : 'Learning / awaiting validation' }}</span></div>
                         @if ($card['attention'])<p class="dashboard-warning">Collection or history needs attention</p>@endif
-                        <p class="guide-help">Last candle closed: {{ $time($card['chart']['last_closed_at_ms']) }}</p>
+                        <p class="guide-help">Last candle closed: <x-display-time :value="$card['chart']['last_closed_at_ms']" unit="milliseconds" /></p>
                         @if ($card['ready'])<span class="dashboard-validated-check" role="img" aria-label="Validated model" title="Validated model">✓</span>@endif
                     </a>
                 @empty
@@ -27,7 +26,7 @@
                 <div class="dashboard-attention-row">
                     <a href="{{ route('dashboard', ['subscription' => $card['subscription']->getKey()]) }}#market-detail">{{ $card['subscription']->market->exchange->name }} · {{ $card['subscription']->market->symbol }} · {{ $card['subscription']->market->feed?->selected_period ?? 'Period pending' }}</a>
                     @foreach ($card['issues'] as $issue)
-                        <div><p>{{ $issue['message'] }}</p>
+                        <div><p>{{ $issue['message'] }} @if(isset($issue['last_closed_at_ms'])) Last valid candle closed at <x-display-time :value="$issue['last_closed_at_ms']" unit="milliseconds" />. @endif</p>
                             @foreach ($issue['commands'] as $command)<pre class="dashboard-command"><code>{{ $command }}</code></pre>@endforeach
                         </div>
                     @endforeach

@@ -16,17 +16,17 @@
         <p class="guide-help">{{ number_format($progress['history']['closed']) }} current-version closed feature rows in the recent build window; {{ number_format($progress['history']['complete']) }} contain every selected feature. {{ number_format($progress['history']['immature']) }} complete rows are reserved for inference or still waiting for their {{ $progress['horizon'] }}-candle outcome.</p>
         <p class="guide-help">Potential rows are an upper bound before source-candle checks, semantic warm-up, pattern and lead/lag exclusions. The actual model counts below come from the last training run.</p>
         @if ($progress['history']['latest_ms'])
-            <p>Latest closed feature: <time datetime="{{ \Carbon\CarbonImmutable::createFromTimestampMs($progress['history']['latest_ms'])->toIso8601String() }}">{{ \Carbon\CarbonImmutable::createFromTimestampMs($progress['history']['latest_ms'])->utc()->format('Y-m-d H:i:s') }} UTC</time></p>
+            <p>Latest closed feature: <x-display-time :value="$progress['history']['latest_ms']" unit="milliseconds" /></p>
         @endif
     @endif
     <h3>ETA</h3>
     @if ($progress['eta'])
-        <p><strong>Earliest data estimate: {{ $progress['eta']->diffForHumans() }}</strong> · <time datetime="{{ $progress['eta']->toIso8601String() }}">{{ $progress['eta']->format('Y-m-d H:i:s') }} UTC</time></p>
+        <p><strong>Earliest data estimate: {{ $progress['eta']->diffForHumans() }}</strong> · <x-display-time :value="$progress['eta']" /></p>
     @endif
     <p>{{ $progress['eta_note'] }}</p>
     <p><strong>Validated-model ETA: unknown.</strong> Reaching the row minimum permits evaluation; it does not guarantee acceptable precision, coverage or similar neighbors.</p>
     @if ($progress['next_training'])
-        <p>Next weekly training dispatch: <time datetime="{{ $progress['next_training']->toIso8601String() }}">{{ $progress['next_training']->format('Y-m-d H:i:s') }} UTC</time> ({{ $progress['next_training']->diffForHumans() }}). This is a schedule, not confirmation that a worker is running.</p>
+        <p>Next weekly training dispatch: <x-display-time :value="$progress['next_training']" /> ({{ $progress['next_training']->diffForHumans() }}). This is a schedule, not confirmation that a worker is running.</p>
     @endif
     <p class="guide-help">M4 jobs require a worker draining the <code>{{ $progress['queue'] }}</code> queue. Training is separate from M2 feature collection. Refresh this page to update the live counts; model counts change only after a rebuild.</p>
     @if ($period)

@@ -5,9 +5,12 @@ namespace App\Http\Controllers\Settings;
 use App\Domain\Operations\ActionLog;
 use App\Http\Controllers\Controller;
 use App\Models\ClientApiKey;
+use Carbon\CarbonImmutable;
+use DateTimeZone;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class ApiKeyController extends Controller
 {
@@ -24,8 +27,10 @@ class ApiKeyController extends Controller
     {
         $data = $request->validate([
             'label' => ['required', 'string', 'max:80'],
-            'expires_at' => ['nullable', 'date', 'after:now'],
+            'expires_at' => ['nullable', 'string', 'date'],
+            'expires_timezone' => ['sometimes', 'required', 'string', 'timezone:all_with_bc'],
         ]);
+        $expiresAt = $this->expiry($data['expires_at'] ?? null, $data['expires_timezone'] ?? null);
         $active = ClientApiKey::query()->where('user_id', $request->user()->user_id)
             ->whereNull('revoked_at')->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))->count();
         abort_if($active >= config('client.max_keys'), 422, 'Revoke or let an existing Client API key expire before creating another.');
@@ -40,7 +45,7 @@ class ApiKeyController extends Controller
             'label' => $data['label'],
             'prefix' => $prefix,
             'secret_hash' => hash('sha256', $secret),
-            'expires_at' => $data['expires_at'] ?? null,
+            'expires_at' => $expiresAt,
         ]);
         $log->write('client.api_key_created', ['subject_id' => $request->user()->user_id, 'outcome' => 'completed']);
 
@@ -58,5 +63,41 @@ class ApiKeyController extends Controller
         }
 
         return redirect()->route('settings.api-key.edit')->with('status', 'api-key-revoked');
+    }
+
+    private function expiry(?string $value, ?string $timezone): ?CarbonImmutable
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $instant = CarbonImmutable::parse($value, 'UTC');
+        if ($timezone !== null) {
+            if (! preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/', $value)) {
+                throw ValidationException::withMessages(['expires_at' => 'Enter a date and time in the displayed timezone.']);
+            }
+
+            $wallTimestamp = $instant->getTimestamp();
+            $zone = new DateTimeZone($timezone);
+            $transitions = $zone->getTransitions($wallTimestamp - 172800, $wallTimestamp + 172800);
+            $offsets = $transitions === false ? [$zone->getOffset($instant)] : array_column($transitions, 'offset');
+            $matches = [];
+            foreach (array_unique($offsets) as $offset) {
+                $candidate = CarbonImmutable::createFromTimestamp($wallTimestamp - $offset, 'UTC');
+                if ($candidate->setTimezone($zone)->format('Y-m-d H:i:s') === $instant->format('Y-m-d H:i:s')) {
+                    $matches[] = $candidate;
+                }
+            }
+            if (count($matches) !== 1) {
+                throw ValidationException::withMessages(['expires_at' => 'This clock time is skipped or repeated by a timezone change. Choose another time, or switch to UTC.']);
+            }
+            $instant = $matches[0];
+        }
+
+        if (! $instant->isFuture()) {
+            throw ValidationException::withMessages(['expires_at' => 'The expiry must be in the future.']);
+        }
+
+        return $instant->utc();
     }
 }

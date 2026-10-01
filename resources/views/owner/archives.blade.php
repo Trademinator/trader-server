@@ -46,7 +46,7 @@
             <tr>
                 <td>{{ $item->logical_type }}</td>
                 <td>{{ $item->exchange }} {{ $item->symbol }} {{ $item->period }}</td>
-                <td>{{ gmdate('Y-m-d', intdiv($item->range_start_ms, 1000)) }} → {{ gmdate('Y-m-d', intdiv($item->range_end_ms, 1000)) }}</td>
+                <td><x-display-time :value="$item->range_start_ms" unit="milliseconds" /> → <x-display-time :value="$item->range_end_ms" unit="milliseconds" /></td>
                 <td>{{ number_format($item->row_count) }}</td>
                 <td>{{ $item->verification_state }} @if($item->verification_error)<small>{{ $item->verification_error }}</small>@endif</td>
                 <td><code>{{ $item->path }}</code></td>

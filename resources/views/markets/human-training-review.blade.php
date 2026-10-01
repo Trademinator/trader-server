@@ -17,7 +17,7 @@
     <section class="pair-guide pair-review">
         <nav><a href="{{ route('human-training.index') }}">← Human training</a></nav>
         <header class="guide-hero"><p class="review-eyebrow">Trend Training · {{ $snapshot['exchange'] }} · {{ $snapshot['symbol'] }} · {{ $snapshot['period'] }}</p>
-            <h1>Trend Training</h1><p>Assess the expected market trend over the next {{ $snapshot['horizon_candles'] }} candles from {{ gmdate('Y-m-d H:i:s', intdiv($snapshot['decision_at_ms'], 1000)) }} UTC.</p></header>
+            <h1>Trend Training</h1><p>Assess the expected market trend over the next {{ $snapshot['horizon_candles'] }} candles from <x-display-time :value="$snapshot['decision_at_ms']" unit="milliseconds" />.</p></header>
         @if(session('status'))<p class="guide-notice" role="status">{{ session('status') }}</p>@endif
         @if($errors->any())<div class="guide-notice guide-error" role="alert"><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
         <section class="guide-panel"><h2>Closed candles at the decision time</h2>
@@ -35,8 +35,8 @@
                 <noscript><p>The interactive chart requires JavaScript. Candle values and indicators remain available below.</p></noscript>
             </div>
             <p class="guide-help">The yellow shading is behind the candlestick, so the decision candle remains fully visible. A saved green or red arrow represents your Bull or Bear trend assessment, not a trade. Hold is gray. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
-            <details><summary>Recent candle values</summary><div class="review-table-wrap"><table><thead><tr><th>Open time (UTC)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
-                @foreach(array_slice($snapshot['series'], -10) as $candle)<tr><th>{{ gmdate('Y-m-d H:i', $candle['time']) }}</th>@foreach(['open', 'high', 'low', 'close', 'volume'] as $field)<td>{{ $candle[$field] }}</td>@endforeach</tr>@endforeach
+            <details><summary>Recent candle values</summary><div class="review-table-wrap"><table><thead><tr><th>Open time (<x-timezone-label />)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
+                @foreach(array_slice($snapshot['series'], -10) as $candle)<tr><th><x-display-time :value="$candle['time']" unit="seconds" precision="minutes" /></th>@foreach(['open', 'high', 'low', 'close', 'volume'] as $field)<td>{{ $candle[$field] }}</td>@endforeach</tr>@endforeach
             </tbody></table></div></details>
         </section>
         <div class="guide-grid">
@@ -53,9 +53,9 @@
             @if($review->submitted_at)
                 <p><strong>{{ ucwords(str_replace('_', ' ', $review->label)) }}</strong> · {{ $review->confidence === null ? 'Confidence not supplied' : $review->confidence.'% self-rated confidence' }}</p>
                 @if($review->reason)<p>{{ $review->reason }}</p>@endif
-                <p class="guide-help">Saved {{ $review->submitted_at->utc()->format('Y-m-d H:i:s') }} UTC. Submitted Trend Training labels cannot be changed.</p>
+                <p class="guide-help">Saved <x-display-time :value="$review->submitted_at" />. Submitted Trend Training labels cannot be changed.</p>
                 <h3>Model observation available at that time</h3>
-                @if($snapshot['model_observation'])<p>{{ strtoupper($snapshot['model_observation']['action'] === 'hodl' ? 'hold' : $snapshot['model_observation']['action']) }} · {{ str_replace('_', ' ', $snapshot['model_observation']['reason']) }} · recorded {{ gmdate('Y-m-d H:i:s', intdiv($snapshot['model_observation']['recorded_at_ms'], 1000)) }} UTC</p>
+                @if($snapshot['model_observation'])<p>{{ strtoupper($snapshot['model_observation']['action'] === 'hodl' ? 'hold' : $snapshot['model_observation']['action']) }} · {{ str_replace('_', ' ', $snapshot['model_observation']['reason']) }} · recorded <x-display-time :value="$snapshot['model_observation']['recorded_at_ms']" unit="milliseconds" /></p>
                 @else<p>No model observation had been recorded by this decision time.</p>@endif
                 <a class="guide-button" href="{{ route('human-training.index') }}">Choose another Trend Training snapshot</a>
             @elseif(! $review->expires_at->isFuture())
@@ -69,7 +69,7 @@
                     <div class="guide-grid"><label for="confidence">Confidence (optional, 0–100)<input id="confidence" name="confidence" type="number" min="0" max="100" step="1" value="{{ old('confidence') }}"></label>
                         <label for="reason">Reason (optional)<textarea id="reason" name="reason" rows="3" maxlength="2000">{{ old('reason') }}</textarea></label></div>
                     <div class="guide-inline"><button type="submit" class="guide-button">Save trend assessment</button><button type="submit" class="review-control" name="label" value="skip">Skip this snapshot</button></div>
-                    <p class="guide-help">Expires {{ $review->expires_at->utc()->format('H:i:s') }} UTC. Model output and other trainers’ answers are hidden while you decide.</p>
+                    <p class="guide-help">Expires <x-display-time :value="$review->expires_at" />. Model output and other trainers’ answers are hidden while you decide.</p>
                 </form>
             @endif
         </section>

@@ -12,7 +12,7 @@
         </form>
         <p class="owner-muted">{{ number_format($items->total()) }} matching subscriptions</p>
         <div class="owner-scroll"><table class="owner-table"><thead><tr><th>Market</th><th>User</th><th>State</th><th>Collector / period</th><th>Last successful pull</th></tr></thead><tbody>
-            @forelse($items as $item)<tr><td><a href="{{ route('owner.markets.show', $item->market) }}">{{ $item->market->exchange->class }} · {{ $item->market->symbol }}</a></td><td><a href="{{ route('owner.users.show', $item->user) }}">{{ $item->user->name }}</a><small>{{ $item->user->email }}</small></td><td>{{ $item->active ? 'Active' : 'Inactive' }}</td><td>{{ $item->market->feed?->status ?? 'No feed' }} / {{ $item->market->feed?->selected_period ?? 'Pending' }}</td><td>{{ $item->market->feed?->last_pulled_at ?? 'Never' }}</td></tr>@empty<tr><td colspan="5">No matching subscriptions.</td></tr>@endforelse
+            @forelse($items as $item)<tr><td><a href="{{ route('owner.markets.show', $item->market) }}">{{ $item->market->exchange->class }} · {{ $item->market->symbol }}</a></td><td><a href="{{ route('owner.users.show', $item->user) }}">{{ $item->user->name }}</a><small>{{ $item->user->email }}</small></td><td>{{ $item->active ? 'Active' : 'Inactive' }}</td><td>{{ $item->market->feed?->status ?? 'No feed' }} / {{ $item->market->feed?->selected_period ?? 'Pending' }}</td><td><x-display-time :value="$item->market->feed?->last_pulled_at" fallback="Never" /></td></tr>@empty<tr><td colspan="5">No matching subscriptions.</td></tr>@endforelse
         </tbody></table></div>{{ $items->links() }}
     </section>
 </x-owner.layout>

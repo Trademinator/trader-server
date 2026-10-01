@@ -37,5 +37,12 @@
             <p>{{ $report['lead_lag']['peers_omitted_by_cap'] }} additional peers were omitted by the configured build limit.</p>
         @endif
     @endif
-    <p class="guide-help">Sample counts alone do not establish a relationship. Direction, baseline improvement and persistence must pass. Eligible shared markets are reevaluated daily at 03:45 in the application timezone when daily refresh is enabled; the intelligence worker must run. No reliable passing-model ETA exists.</p>
+    <p class="guide-help">Sample counts alone do not establish a relationship. Direction, baseline improvement and persistence must pass. Eligible shared markets are reevaluated daily when daily refresh is enabled; the intelligence worker must run. No reliable passing-model ETA exists.</p>
+    @php
+        $nextLeadLag = \Carbon\CarbonImmutable::now(config('app.timezone'))->setTime(3, 45);
+        if ($nextLeadLag->isPast()) {
+            $nextLeadLag = $nextLeadLag->addDay();
+        }
+    @endphp
+    <p class="guide-help">Next daily lead/lag dispatch: <x-display-time :value="$nextLeadLag" />.</p>
 </section>

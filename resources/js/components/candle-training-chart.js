@@ -1,3 +1,4 @@
+import { chartTimeOptions, formatTimestamp, subscribeTimeDisplay } from './time-display.js';
 import { chartData, formatPrice } from './market-review-chart.js';
 import { historyPanDirection, mergeCandleHistory } from './candlestick-history.js';
 
@@ -115,7 +116,8 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     const datasetSelect = root.querySelector('[data-candle-dataset]');
     const switchDataset = () => root.querySelector('[data-candle-dataset-form]')?.requestSubmit();
     datasetSelect?.addEventListener('change', switchDataset);
-    let chart, price, volume, measureLine, observer, markerPlugin, historyTimer, historyRequest;
+    let chart, price, volume, measureLine, observer, markerPlugin, historyTimer, historyRequest, unsubscribeTime;
+    let inspectedCandle;
     let loadingHistory = false, historyFailed = false, disposed = false, savingLabel = false;
     let userInteracted = false;
     let lastVisibleRange = null, retryDirection = 'older';
@@ -150,7 +152,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             .sort((a, b) => Number(a.time) - Number(b.time) || String(a.id).localeCompare(String(b.id)));
     };
     const renderMarkers = () => markerPlugin?.setMarkers(sortedMarkers());
-    const formatTime = time => new Date(Number(time) * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+    const formatTime = time => formatTimestamp(Number(time) * 1000, { precision: 'minutes' });
     const renderMeasurement = () => {
         const first = selection[0] === undefined ? null : candles.get(selection[0]);
         const second = selection[1] === undefined ? null : candles.get(selection[1]);
@@ -485,11 +487,28 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         volume.setData(data.volume);
         chart.panes()[1].setHeight(70);
         markerPlugin = library.createSeriesMarkers(price, sortedMarkers());
+        const renderLegend = () => {
+            const candle = inspectedCandle ?? data.series.at(-1);
+            if (candle) legend.textContent = `${formatTime(candle.time)} · O ${formatPrice(candle.open, minMove)} · H ${formatPrice(candle.high, minMove)} · L ${formatPrice(candle.low, minMove)} · C ${formatPrice(candle.close, minMove)} · Volume ${formatPrice(candle.volume)}`;
+        };
         chart.subscribeCrosshairMove(param => {
             renderMeasurementTooltip(param);
-            const candle = candles.get(Number(param.time)) ?? data.series.at(-1);
-            if (candle) legend.textContent = `${new Date(candle.time * 1000).toISOString().slice(0, 16)} UTC · O ${formatPrice(candle.open, minMove)} · H ${formatPrice(candle.high, minMove)} · L ${formatPrice(candle.low, minMove)} · C ${formatPrice(candle.close, minMove)} · Volume ${formatPrice(candle.volume)}`;
+            inspectedCandle = candles.get(Number(param.time));
+            renderLegend();
         });
+        const renderTime = () => {
+            chart.applyOptions(chartTimeOptions());
+            renderLegend();
+            renderMeasurement();
+            const replayTime = root.querySelector('[data-replay-time]');
+            if (replayTime && data.series.length) replayTime.textContent = formatTime(data.series.at(-1).time);
+            if (menuTime !== null) {
+                const current = labels.get(menuTime);
+                menu.querySelector('[data-menu-title]').textContent = `${formatTime(menuTime)}${current ? ` · ${current.toUpperCase()}` : ' · unlabelled'}`;
+            }
+        };
+        unsubscribeTime = subscribeTimeDisplay(renderTime);
+        renderTime();
         const clickHandler = param => {
             if (suppressNextClick) { suppressNextClick = false; return; }
             if (param.time === undefined || param.time === null) return;
@@ -519,6 +538,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             disposed = true;
             clearTimeout(historyTimer);
             historyRequest?.abort();
+            unsubscribeTime?.();
             observer.disconnect();
             chart.unsubscribeClick(clickHandler);
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange);
@@ -537,6 +557,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             cancelLongPress();
         }, { once: true });
     } catch {
+        unsubscribeTime?.();
         observer?.disconnect();
         chart?.remove();
         canvas.hidden = true;

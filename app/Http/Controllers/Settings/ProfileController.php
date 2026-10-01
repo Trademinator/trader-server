@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Settings;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use DateTimeZone;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -16,6 +17,7 @@ class ProfileController extends Controller
     {
         return view('settings.profile', [
             'user' => $request->user(),
+            'timezones' => DateTimeZone::listIdentifiers(DateTimeZone::ALL),
         ]);
     }
 
@@ -25,6 +27,7 @@ class ProfileController extends Controller
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
+            'timezone' => ['sometimes', 'nullable', 'string', 'timezone:all'],
             'email' => [
                 'required',
                 'string',

@@ -22,7 +22,7 @@
                 <div class="review-metric">Effective neighbors<strong>{{ number_format($signal['effective_neighbors'], 1) }}</strong></div>
             </div>
             @if (isset($signal['decision_at_ms']))
-                <p>Closed-candle decision time: {{ \Carbon\CarbonImmutable::createFromTimestampMs($signal['decision_at_ms'])->utc()->format('Y-m-d H:i:s') }} UTC</p>
+                <p>Closed-candle decision time: <x-display-time :value="$signal['decision_at_ms']" unit="milliseconds" /></p>
             @endif
             <p class="guide-help">Confidence describes weighted historical agreement and similarity. It is not a calibrated probability of profit. Bull / Bear follow supported directional signals; Super also requires at least 80% confidence and six effective neighbors. The client applies trading fees, balances and execution rules.</p>
             @if ($progress['evidence_evaluated'])
@@ -70,7 +70,7 @@
                     <dt>Status</dt><dd>{{ $report['status'] === 'ready' ? 'Validated' : 'Abstaining' }}</dd>
                     <dt>Selected K</dt><dd>{{ $report['k'] ?? 'No eligible value' }}</dd>
                     <dt>Knowledge rows</dt><dd>{{ number_format($report['knowledge_rows']) }} out of {{ number_format($progress['settings']['train_size']) }} retained neighbors</dd>
-                    <dt>Training cutoff</dt><dd>{{ \Carbon\CarbonImmutable::createFromTimestampMs($report['trained_as_of_ms'])->utc()->format('Y-m-d H:i:s') }} UTC</dd>
+                    <dt>Training cutoff</dt><dd><x-display-time :value="$report['trained_as_of_ms']" unit="milliseconds" /></dd>
                     @if ($report['holdout'])
                         <dt>Later-period precision</dt><dd>{{ number_format($report['holdout']['semantic_precision'] * 100, 1) }}%</dd>
                         <dt>Directional coverage</dt><dd>{{ number_format($report['holdout']['coverage'] * 100, 1) }}%</dd>

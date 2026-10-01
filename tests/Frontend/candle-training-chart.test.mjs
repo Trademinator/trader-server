@@ -1,3 +1,4 @@
+import { configureTimeDisplay, setTimeMode } from '../../resources/js/components/time-display.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appendCandleHistory, candleActionAllowed, candleMeasurementLine, candleTimeAtLogicalIndex, candleTrainingChartData, candleTrainingMove, nextCandleSelection, prependCandleHistory } from '../../resources/js/components/candle-training-chart.js';
@@ -142,7 +143,7 @@ async function mountedChart(t, fetchResponse, snapshot = {}) {
         setVisibleLogicalRange(range) { this.range = range; }, fitContent() {},
         timeToCoordinate: time => Number(time) * 10, coordinateToTime: x => x / 10,
         subscribeVisibleLogicalRangeChange(callback) { this.onRange = callback; }, unsubscribeVisibleLogicalRangeChange() {} };
-    const chart = { timeScale: () => scale, panes: () => [{}, { setHeight() {} }], applyOptions() {}, remove() {},
+    const chart = { timeScale: () => scale, panes: () => [{}, { setHeight() {} }], applyOptions(options) { this.options = options; }, remove() {},
         addSeries() { const series = { data: [], options: {}, setData(data) { this.data = data; }, applyOptions(options) { this.options = options; }, priceToCoordinate: value => value }; plots.push(series); return series; },
         subscribeCrosshairMove(callback) { this.onCrosshair = callback; }, subscribeClick(callback) { this.onClick = callback; }, unsubscribeClick() {} };
     const markers = { data: [], setMarkers(data) { this.data = data; } };
@@ -309,4 +310,29 @@ test('a failed forward request retries in the same direction and rejects data be
     assert.equal(requests.length, 2);
     assert.ok(requests.every(request => new URL(request.url).searchParams.get('after_ms') === '4000'));
     assert.deepEqual(plots[0].data.map(row => row.time), [3, 4]);
+});
+
+
+test('switching local and UTC updates chart labels and selections without moving candles or markers', async t => {
+    configureTimeDisplay({ timezone: 'America/Toronto' });
+    const { nodes, chart, scale, plots, markers, requests } = await mountedChart(t, () => { throw new Error('Switching time must not fetch data'); });
+    chart.onClick({ time: 3 });
+    chart.onClick({ time: 4 });
+    chart.onCrosshair({ time: 3 });
+    nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 30, clientY: 40, preventDefault() {}, stopPropagation() {} });
+    const candles = structuredClone(plots[0].data);
+    const labels = structuredClone(markers.data);
+    const range = structuredClone(scale.range);
+    assert.match(nodes.get('[data-measure-a]').textContent, /1969-12-31 19:00 UTC-05:00/);
+    assert.match(nodes.get('[data-menu-title]').textContent, /UTC-05:00/);
+    setTimeMode('utc');
+    assert.match(nodes.get('[data-legend]').textContent, /1970-01-01 00:00 UTC/);
+    assert.match(nodes.get('[data-replay-time]').textContent, /1970-01-01 00:00 UTC/);
+    assert.match(nodes.get('[data-measure-a]').textContent, /1970-01-01 00:00 UTC/);
+    assert.match(nodes.get('[data-menu-title]').textContent, /1970-01-01 00:00 UTC/);
+    assert.equal(chart.options.localization.timeFormatter(3), '1970-01-01 00:00 UTC');
+    assert.deepEqual(plots[0].data, candles);
+    assert.deepEqual(markers.data, labels);
+    assert.deepEqual(scale.range, range);
+    assert.equal(requests.length, 0);
 });

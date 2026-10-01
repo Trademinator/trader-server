@@ -1,3 +1,4 @@
+import { chartTimeOptions, formatTimestamp, subscribeTimeDisplay, configureTimeDisplay, setTimeMode } from '../../resources/js/components/time-display.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { humanMarkers, signalMarkers } from '../../resources/js/components/dashboard.js';
@@ -71,7 +72,7 @@ async function harness() {
         timeScale: () => ({ fitContent() {}, getVisibleLogicalRange: () => null, setVisibleLogicalRange() {} }) };
     let response = { ok: true, json: async () => ({ subscription_id: 'own-subscription', chart: JSON.parse(root.dataset.chart) }) };
     let scheduled = 0;
-    const context = { chartData, formatPrice, historyPanDirection, mergeCandleHistory, Intl, Math, Number, JSON, Date, Array, Error, AbortController,
+    const context = { chartTimeOptions, formatTimestamp, subscribeTimeDisplay, chartData, formatPrice, historyPanDirection, mergeCandleHistory, Intl, Math, Number, JSON, Date, Array, Error, AbortController,
         loadChartLibrary: async () => ({ createChart: () => chart, createSeriesMarkers: () => ({ setMarkers() {} }) }),
         document: { hidden: false, documentElement: { classList: { contains: () => false } }, addEventListener() {}, removeEventListener() {} },
         window: { addEventListener() {}, removeEventListener() {} }, MutationObserver: class { observe() {} disconnect() {} },

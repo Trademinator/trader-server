@@ -2,6 +2,7 @@
 
 return [
     'enabled' => env('FEATURES_ENABLED', true),
+    'queue' => env('FEATURES_QUEUE', 'features'),
     'coingecko' => [
         'enabled' => env('COINGECKO_ENABLED', false),
         'api_key' => env('COINGECKO_API_KEY'),

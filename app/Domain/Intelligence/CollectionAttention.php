@@ -7,7 +7,7 @@ use App\Models\Market;
 
 final class CollectionAttention
 {
-    /** @return list<array{message: string, commands: list<string>}> */
+    /** @return list<array{message: string, commands: list<string>, last_closed_at_ms?: int|null}> */
     public function describe(Market $market, array $chart): array
     {
         $issues = [];
@@ -38,7 +38,8 @@ final class CollectionAttention
         } elseif ($chart['stale']) {
             $last = $chart['last_closed_at_ms'];
             $issues[] = ['message' => $last === null ? 'No valid closed '.$feed->selected_period.' candles are available.'
-                : 'Price history is stale. Last valid candle closed at '.gmdate('Y-m-d H:i:s', (int) ($last / 1000)).' UTC.',
+                : 'Price history is stale.',
+                'last_closed_at_ms' => $last,
                 'commands' => [$dispatch, $worker]];
         }
         if ($chart['gaps'] > 0 || $chart['invalid_candles'] > 0) {

@@ -1,3 +1,4 @@
+import { chartTimeOptions, formatTimestamp, subscribeTimeDisplay } from './time-display.js';
 import { chartData, formatPrice } from './market-review-chart.js';
 
 export function trainingChartData(snapshot) {
@@ -41,7 +42,8 @@ export async function mountHumanTrainingChart(root) {
     const assessmentLabel = root.querySelector('[data-assessment-label]');
     const legend = root.querySelector('[data-legend]');
     const fit = root.querySelector('[data-fit]');
-    let chart, observer, resizeObserver;
+    let chart, observer, resizeObserver, unsubscribeTime;
+    let inspectedCandle;
     const data = trainingChartData(JSON.parse(root.dataset.snapshot));
     const smallestPrice = Math.min(...data.candles.map(candle => candle.low));
     const minMove = Number.isFinite(smallestPrice) && smallestPrice > 0
@@ -87,10 +89,17 @@ export async function mountHumanTrainingChart(root) {
         volume.setData(data.volume);
         chart.panes()[1].setHeight(70);
         library.createSeriesMarkers(price, data.markers);
+        const renderLegend = () => {
+            const candle = inspectedCandle ?? data.series.at(-1);
+            if (candle) legend.textContent = `${formatTimestamp(candle.time * 1000, { precision: 'minutes' })} · O ${formatPrice(candle.open, minMove)} · H ${formatPrice(candle.high, minMove)} · L ${formatPrice(candle.low, minMove)} · C ${formatPrice(candle.close, minMove)} · Volume ${formatPrice(candle.volume)}`;
+        };
         chart.subscribeCrosshairMove(param => {
-            const candle = data.series.find(row => row.time === param.time) ?? data.series.at(-1);
-            if (candle) legend.textContent = `${new Date(candle.time * 1000).toISOString().slice(0, 16)} UTC · O ${formatPrice(candle.open, minMove)} · H ${formatPrice(candle.high, minMove)} · L ${formatPrice(candle.low, minMove)} · C ${formatPrice(candle.close, minMove)} · Volume ${formatPrice(candle.volume)}`;
+            inspectedCandle = data.series.find(row => row.time === param.time);
+            renderLegend();
         });
+        const renderTime = () => { chart.applyOptions(chartTimeOptions()); renderLegend(); };
+        unsubscribeTime = subscribeTimeDisplay(renderTime);
+        renderTime();
         chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleAssessment);
         resizeObserver = new ResizeObserver(scheduleAssessment);
         resizeObserver.observe(frame);
@@ -104,6 +113,7 @@ export async function mountHumanTrainingChart(root) {
         status.textContent = `${data.candles.length} historical closed candles. The shaded candle is the decision candle; assess the trend starting immediately after it. Future candles are hidden.`;
         window.addEventListener('pagehide', event => {
             if (event.persisted) return;
+            unsubscribeTime?.();
             observer.disconnect();
             resizeObserver.disconnect();
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleAssessment);
@@ -111,6 +121,7 @@ export async function mountHumanTrainingChart(root) {
             fit.removeEventListener('click', fitChart);
         }, { once: true });
     } catch {
+        unsubscribeTime?.();
         observer?.disconnect();
         resizeObserver?.disconnect();
         chart?.remove();

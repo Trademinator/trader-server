@@ -1,3 +1,4 @@
+import { chartTimeOptions, formatTimestamp, subscribeTimeDisplay } from './time-display.js';
 export function formatPrice(value, tickSize = 0.00000001) {
     const decimals = Math.min(18, Math.max(0, Math.ceil(-Math.log10(tickSize)) + 2));
     return new Intl.NumberFormat('en', { maximumFractionDigits: decimals }).format(value);
@@ -24,7 +25,8 @@ export async function mountReviewChart(root) {
     const automatic = root.querySelector('[data-chart-auto]');
     const tickSize = Number(root.dataset.tickSize) || 0.00000001;
     let evidence = JSON.parse(root.dataset.evidence);
-    let chart, price, volume, library, themeObserver, timer, request, timeout;
+    let chart, price, volume, library, themeObserver, timer, request, timeout, unsubscribeTime;
+    let inspectedCandle, checkedAt, lastTimedStatus;
     let disposed = false;
     let stopped = false;
     let busy = false;
@@ -41,8 +43,9 @@ export async function mountReviewChart(root) {
         };
     };
     const showCandle = candle => {
+        inspectedCandle = candle;
         legend.textContent = candle
-            ? `${new Date(candle.time * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC · O ${formatPrice(candle.open, tickSize)} · H ${formatPrice(candle.high, tickSize)} · L ${formatPrice(candle.low, tickSize)} · C ${formatPrice(candle.close, tickSize)} ${root.dataset.quote} · Volume ${formatPrice(candle.volume)}`
+            ? `${formatTimestamp(candle.time * 1000, { precision: 'minutes' })} · O ${formatPrice(candle.open, tickSize)} · H ${formatPrice(candle.high, tickSize)} · L ${formatPrice(candle.low, tickSize)} · C ${formatPrice(candle.close, tickSize)} ${root.dataset.quote} · Volume ${formatPrice(candle.volume)}`
             : 'Move over a candle to inspect its open, high, low, close and volume.';
     };
     const draw = () => {
@@ -64,6 +67,14 @@ export async function mountReviewChart(root) {
                 const candle = evidence.series.find(item => item.time === param.time);
                 showCandle(candle ?? evidence.series.at(-1));
             });
+            const renderTime = () => {
+                chart.applyOptions(chartTimeOptions());
+                showCandle(inspectedCandle ?? evidence.series.at(-1));
+                showFreshness();
+                if (checkedAt && status.textContent === lastTimedStatus) showChecked();
+            };
+            unsubscribeTime = subscribeTimeDisplay(renderTime);
+            renderTime();
             themeObserver = new MutationObserver(() => chart?.applyOptions(theme()));
             themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         }
@@ -80,9 +91,16 @@ export async function mountReviewChart(root) {
         hadCandles = data.candles.length > 0;
         plottedPeriod = evidence.period;
         showCandle(evidence.series.at(-1));
+        showFreshness();
+    };
+    const showFreshness = () => {
         freshness.textContent = evidence.last_closed_at
-            ? `${evidence.candles} closed ${evidence.period} candles · ${evidence.from}–${evidence.through} UTC · Last candle closed ${evidence.last_closed_at} · ${formatPrice(evidence.age_seconds / 60, 1)} minutes ago${evidence.stale ? ' · STALE HISTORY' : ''}${evidence.continuous === false ? ' · GAPS IN HISTORY; missing intervals are not filled' : ''}`
+            ? `${evidence.candles} closed ${evidence.period} candles · ${formatTimestamp(evidence.from, { precision: 'minutes' })}–${formatTimestamp(evidence.through, { precision: 'minutes' })} · Last candle closed ${formatTimestamp(evidence.last_closed_at)} · ${formatPrice(evidence.age_seconds / 60, 1)} minutes ago${evidence.stale ? ' · STALE HISTORY' : ''}${evidence.continuous === false ? ' · GAPS IN HISTORY; missing intervals are not filled' : ''}`
             : 'No closed candles available yet. Collection may still be pending or inactive.';
+    };
+    const showChecked = () => {
+        status.textContent = `Checked ${formatTimestamp(checkedAt)}. Chart updated from stored data; recalculate the full review to update its explanation.`;
+        lastTimedStatus = status.textContent;
     };
     const stopForChangedReview = () => {
         stopped = true;
@@ -126,7 +144,8 @@ export async function mountReviewChart(root) {
             if (disposed) return;
             evidence = data.evidence;
             draw();
-            status.textContent = `Checked ${new Date(data.checked_at).toISOString().replace('T', ' ').slice(0, 19)} UTC. Chart updated from stored data; recalculate the full review to update its explanation.`;
+            checkedAt = data.checked_at;
+            showChecked();
         } catch (error) {
             if (!disposed) {
                 status.textContent = error.name === 'AbortError'
@@ -148,6 +167,7 @@ export async function mountReviewChart(root) {
         clearTimeout(timer);
         clearTimeout(timeout);
         request?.abort();
+        unsubscribeTime?.();
         themeObserver?.disconnect();
         chart?.remove();
         chart = null;

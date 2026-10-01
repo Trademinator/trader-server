@@ -4,6 +4,10 @@ import ajax from '@imacrayon/alpine-ajax'
 import Popover from './components/popover'
 import 'bootstrap/js/dist/collapse'
 import Tooltip from 'bootstrap/js/dist/tooltip'
+import { mountTimeDisplay } from './components/time-display'
+
+const disposeTimeDisplay = mountTimeDisplay()
+window.addEventListener('pagehide', event => { if (!event.persisted) disposeTimeDisplay() })
 
 Alpine.plugin(ajax)
 Alpine.data('popover', Popover)
