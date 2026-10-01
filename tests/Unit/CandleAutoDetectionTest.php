@@ -42,6 +42,25 @@ it('uses only the transaction-cost floor in remove_unprofitable_transactions', f
         ->and($tickers[1])->not->toHaveKey('action');
 });
 
+
+it('requires movement strictly greater than twice the one-side taker fee', function () {
+    $atFloor = [
+        [...autoCandle('101', '100'), 'action' => 'buy'],
+        [...autoCandle('100', '100.2'), 'action' => 'sell'],
+    ];
+    candleAutoDetector()->remove_unprofitable_transactions($atFloor, '0.001');
+    expect($atFloor[0])->not->toHaveKey('action')
+        ->and($atFloor[1])->not->toHaveKey('action');
+
+    $aboveFloor = [
+        [...autoCandle('101', '100'), 'action' => 'buy'],
+        [...autoCandle('100', '100.21'), 'action' => 'sell'],
+    ];
+    candleAutoDetector()->remove_unprofitable_transactions($aboveFloor, '0.001');
+    expect($aboveFloor[0]['action'])->toBe('buy')
+        ->and($aboveFloor[1]['action'])->toBe('sell');
+});
+
 it('labels only completely flat dojis as HOLD in the doji cleanup pass', function () {
     $tickers = [
         autoCandle('10', '10', '11', '9'),

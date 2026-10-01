@@ -60,11 +60,16 @@ trait CandleAutoDetection
         return $tickers;
     }
 
-    // Remove BUY -> SELL pairs whose CLOSE movement cannot clear round-trip taker fees.
+    // Remove BUY -> SELL pairs whose CLOSE movement cannot clear twice the one-side taker fee.
     // Deliberately no ATR here: this pass is only the economic floor.
     public function remove_unprofitable_transactions(array &$tickers, mixed $taker_fee): array
     {
-        $minProfit = $this->candle_auto_transaction_cost_floor($taker_fee);
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $fee = $this->bcconv($taker_fee);
+        if (bccomp($fee, '0', $scale) < 0 || bccomp($fee, '1', $scale) >= 0) {
+            throw new \InvalidArgumentException('Taker fee must be a decimal fraction between zero and one.');
+        }
+        $minProfit = bcmul($fee, '2', $scale);
         $index = 0;
 
         while (($firstBuyIndex = $this->candle_auto_find_next_action_index($tickers, 'buy', $index)) !== null) {
@@ -88,7 +93,7 @@ trait CandleAutoDetection
                 EXCHANGE_ROUND_DECIMALS * 2
             );
             if (bccomp($buyClose, $sellClose, EXCHANGE_ROUND_DECIMALS * 2) >= 0
-                || bccomp($profit, $minProfit, EXCHANGE_ROUND_DECIMALS * 2) < 0) {
+                || bccomp($profit, $minProfit, EXCHANGE_ROUND_DECIMALS * 2) <= 0) {
                 unset($tickers[$firstBuyIndex]['action'], $tickers[$firstSellIndex]['action']);
             }
         }
