@@ -79,15 +79,15 @@ it('passes the requested candle limit to CCXT for one bounded page', function ()
     expect($repository->fetch('BTC/USD', '1m', $from, $from, 10))->toHaveCount(1);
 });
 
-it('continues past an empty Coinbase batch and finds later candles', function () {
+it('uses bounded Coinbase until windows and continues past an empty batch', function () {
     $from = 1_700_000_000;
     $start = $from * 1000;
     $next = $start + 100 * 60_000;
     $tickerRepository = Mockery::mock(TickerRepository::class);
     $tickerRepository->shouldReceive('fetch')->once()
-        ->with('BTC/USD', '1m', $start, 100, ['end' => $next])->andReturn([]);
+        ->with('BTC/USD', '1m', $start, 100, ['until' => $next])->andReturn([]);
     $tickerRepository->shouldReceive('fetch')->once()
-        ->with('BTC/USD', '1m', $next, 100, ['end' => $next])
+        ->with('BTC/USD', '1m', $next, 100, ['until' => $next + 100 * 60_000])
         ->andReturn([['microtimestamp' => $next, 'open' => '1', 'high' => '2', 'low' => '1', 'close' => '2', 'volume' => '1']]);
     $tickerRepository->shouldReceive('saveTickers')->once()->andReturn(1);
 

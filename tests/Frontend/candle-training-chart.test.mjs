@@ -1,9 +1,20 @@
 import { configureTimeDisplay, setTimeMode } from '../../resources/js/components/time-display.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendCandleHistory, candleActionAllowed, candleMeasurementLine, candleTimeAtLogicalIndex, candleTrainingChartData, candleTrainingMove, nextCandleSelection, prependCandleHistory } from '../../resources/js/components/candle-training-chart.js';
+import { appendCandleHistory, candleActionAllowed, candleMeasurementLine, candleTimeAtLogicalIndex, candleTrainingChartData, candleTrainingMilestone, candleTrainingMove, nextCandleSelection, prependCandleHistory } from '../../resources/js/components/candle-training-chart.js';
 
 const candle = (time, close = '11') => ({ time, open: '10.5', high: '12', low: '9', close, volume: '100' });
+
+test('Candle Training milestone colours use absolute per-action counts', () => {
+    assert.equal(candleTrainingMilestone(0), 'red');
+    assert.equal(candleTrainingMilestone(99), 'red');
+    assert.equal(candleTrainingMilestone(100), 'orange');
+    assert.equal(candleTrainingMilestone(299), 'orange');
+    assert.equal(candleTrainingMilestone(300), 'green');
+    assert.equal(candleTrainingMilestone(749), 'green');
+    assert.equal(candleTrainingMilestone(750), 'blue');
+    assert.equal(candleTrainingMilestone(1500), 'blue');
+});
 
 test('Candle Training hides future candles and renders only explicit BUY HOLD SELL markers', () => {
     const data = candleTrainingChartData({

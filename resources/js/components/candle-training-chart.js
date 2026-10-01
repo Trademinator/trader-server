@@ -3,6 +3,15 @@ import { chartData, formatPrice } from './market-review-chart.js';
 import { historyPanDirection, mergeCandleHistory } from './candlestick-history.js';
 
 const ACTIONS = ['buy', 'hold', 'sell'];
+const LABEL_MILESTONE_TARGET = 750;
+
+export function candleTrainingMilestone(count) {
+    const value = Number(count);
+    if (!Number.isFinite(value) || value < 100) return 'red';
+    if (value < 300) return 'orange';
+    if (value < LABEL_MILESTONE_TARGET) return 'green';
+    return 'blue';
+}
 
 function actionMarker(time, action) {
     return {
@@ -191,22 +200,20 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         data.stats.total = total;
         for (const action of ACTIONS) {
             const count = Number(data.stats.counts?.[action] ?? 0);
-            const percent = total === 0 ? 0 : count * 100 / total;
             const countNode = root.querySelector(`[data-stat-count="${action}"]`);
-            const percentNode = root.querySelector(`[data-stat-percent="${action}"]`);
             const progress = root.querySelector(`[data-stat-progress="${action}"]`);
             if (countNode) countNode.textContent = String(count);
-            if (percentNode) percentNode.textContent = `${percent.toFixed(1)}%`;
-            if (progress) { progress.max = Math.max(1, total); progress.value = count; }
+            if (progress) {
+                const milestone = candleTrainingMilestone(count);
+                progress.max = LABEL_MILESTONE_TARGET;
+                progress.value = Math.min(Math.max(0, count), LABEL_MILESTONE_TARGET);
+                progress.dataset.milestone = milestone;
+                progress.title = `${count} labels · ${milestone.toUpperCase()} milestone`;
+                progress.setAttribute('aria-label', `${action.toUpperCase()} label milestone progress: ${count} labels`);
+            }
         }
-        const minimum = Math.min(...ACTIONS.map(action => Number(data.stats.counts?.[action] ?? 0)));
-        const least = ACTIONS.filter(action => Number(data.stats.counts?.[action] ?? 0) === minimum).map(action => action.toUpperCase());
-        const balanced = root.querySelector('[data-balanced-samples]');
-        const hint = root.querySelector('[data-balance-hint]');
         const totalNode = root.querySelector('[data-stat-total]');
-        if (balanced) balanced.textContent = String(minimum * ACTIONS.length);
         if (totalNode) totalNode.textContent = String(total);
-        if (hint) hint.textContent = total === 0 ? 'No labels yet.' : `Least represented: ${least.join(', ')}. Model training uses equal counts from all three classes; do not force a label just to balance the totals.`;
     };
     const adjustStats = (oldAction, newAction) => {
         if (!data.stats || oldAction === newAction) return;

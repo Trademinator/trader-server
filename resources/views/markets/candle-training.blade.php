@@ -22,7 +22,18 @@
         .candle-training-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:14px 0; }
         .candle-training-stat { border:1px solid #cbd5e1; border-radius:8px; padding:10px; min-width:0; }
         .candle-training-stat strong { display:flex; justify-content:space-between; gap:8px; }
-        .candle-training-stat progress { width:100%; height:10px; margin-top:8px; }
+        .candle-training-stat progress { width:100%; height:10px; margin-top:8px; accent-color:var(--candle-milestone-color); }
+        [data-milestone="red"] { --candle-milestone-color:#dc2626; }
+        [data-milestone="orange"] { --candle-milestone-color:#f97316; }
+        [data-milestone="green"] { --candle-milestone-color:#16a34a; }
+        [data-milestone="blue"] { --candle-milestone-color:#2563eb; }
+        .candle-training-stat progress::-webkit-progress-bar { background:#e2e8f0; border-radius:999px; }
+        .candle-training-stat progress::-webkit-progress-value { background:var(--candle-milestone-color); border-radius:999px; }
+        .candle-training-stat progress::-moz-progress-bar { background:var(--candle-milestone-color); border-radius:999px; }
+        .candle-training-milestone-help { margin-top:8px; }
+        .candle-training-milestone-help summary { cursor:pointer; font-weight:700; }
+        .candle-training-milestone-list { display:grid; gap:6px; margin:10px 0; padding-left:0; list-style:none; }
+        .candle-training-milestone-swatch { display:inline-block; width:.8rem; height:.8rem; margin-right:6px; border-radius:999px; background:var(--candle-milestone-color); vertical-align:-.05rem; }
         .candle-training-measure { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:12px 0; }
         .candle-training-measure > div { border:1px solid #cbd5e1; border-radius:8px; padding:10px; min-width:0; }
         .candle-training-measure .measure-wide { grid-column:1 / -1; }
@@ -40,6 +51,7 @@
         .dark .candle-training-hold { background:#1f2937; color:#d7e0ea; }
         .dark .candle-training-sell { background:#3d1820; color:#ffb4c0; }
         .dark .candle-training-stat, .dark .candle-training-measure > div { border-color:#475569; }
+        .dark .candle-training-stat progress::-webkit-progress-bar { background:#334155; }
         .dark .candle-menu { background:#111827; border-color:#64748b; color:#e5edf5; box-shadow:0 10px 30px rgba(0,0,0,.45); }
     </style>
     <section class="pair-guide pair-review">
@@ -71,16 +83,33 @@
             <p class="guide-notice"><strong>Left-click</strong> candles to measure A→B. The third click discards A and shifts B→A. <strong>Right-click</strong> a candle for BUY/HOLD/SELL/Delete; on touch, long-press it.</p>
             @if($state['payload']['gaps'])<p class="guide-notice guide-error">{{ $state['payload']['gaps'] }} gaps in history. Missing candles are not filled.</p>@endif
 
-            <h2>Your label balance for this market and period</h2>
-            <div class="candle-training-stats" aria-label="Candle Training label distribution">
+            <h2>Your label milestones for this market and period</h2>
+            <div class="candle-training-stats" aria-label="Candle Training label milestone counts">
                 @foreach(['buy' => 'BUY', 'hold' => 'HOLD', 'sell' => 'SELL'] as $action => $title)
+                    @php
+                        $count = $state['label_stats']['counts'][$action];
+                        $milestone = $count < 100 ? 'red' : ($count < 300 ? 'orange' : ($count < 750 ? 'green' : 'blue'));
+                    @endphp
                     <div class="candle-training-stat">
-                        <strong><span>{{ $title }}</span><span><span data-stat-count="{{ $action }}">{{ $state['label_stats']['counts'][$action] }}</span> · <span data-stat-percent="{{ $action }}">{{ number_format($state['label_stats']['percentages'][$action], 1) }}%</span></span></strong>
-                        <progress data-stat-progress="{{ $action }}" value="{{ $state['label_stats']['counts'][$action] }}" max="{{ max(1, $state['label_stats']['total']) }}"></progress>
+                        <strong><span>{{ $title }}</span><span data-stat-count="{{ $action }}">{{ $count }}</span></strong>
+                        <progress data-stat-progress="{{ $action }}" data-milestone="{{ $milestone }}"
+                            value="{{ min($count, 750) }}" max="750"
+                            aria-label="{{ $title }} label milestone progress: {{ $count }} labels"></progress>
                     </div>
                 @endforeach
             </div>
-            <p class="guide-help">Total labels: <strong data-stat-total>{{ $state['label_stats']['total'] }}</strong>. Equal-class raw subset: <strong data-balanced-samples>{{ $state['label_stats']['balanced_samples'] }}</strong>. <span data-balance-hint>@if($state['label_stats']['total']) Least represented: {{ strtoupper(implode(', ', $state['label_stats']['least_represented'])) }}. @else No labels yet. @endif Model training uses equal counts from BUY/HOLD/SELL; do not force a label just to balance the totals.</span></p>
+            <p class="guide-help">Total labels: <strong data-stat-total>{{ $state['label_stats']['total'] }}</strong>. Milestones use absolute counts per action; there is no target BUY/HOLD/SELL percentage.</p>
+            <details class="candle-training-milestone-help">
+                <summary>What do the milestone colours mean?</summary>
+                <ul class="candle-training-milestone-list">
+                    <li><span class="candle-training-milestone-swatch" data-milestone="red" aria-hidden="true"></span><strong>Red:</strong> fewer than 100 labels — still a small evidence set.</li>
+                    <li><span class="candle-training-milestone-swatch" data-milestone="orange" aria-hidden="true"></span><strong>Orange:</strong> 100–299 labels — early evidence; keep adding varied examples.</li>
+                    <li><span class="candle-training-milestone-swatch" data-milestone="green" aria-hidden="true"></span><strong>Green:</strong> 300–749 labels — useful volume, but broader market conditions still help.</li>
+                    <li><span class="candle-training-milestone-swatch" data-milestone="blue" aria-hidden="true"></span><strong>Blue:</strong> 750+ labels — strong evidence volume for that action.</li>
+                </ul>
+                <p class="guide-help"><strong>Do not try to make the three bars equal.</strong> Real decisions may naturally contain many more HOLD labels. Record the action you would genuinely take; artificially balancing the labels would make the human signal less representative. The auxiliary guidance model balances BUY/HOLD/SELL internally when it builds its training subset.</p>
+                <p class="guide-help">These colours measure quantity only. Diversity across market regimes, volatility and historical periods still matters.</p>
+            </details>
 
             <div>
                 <div class="candle-training-measure" aria-live="polite">

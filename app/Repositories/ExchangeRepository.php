@@ -72,7 +72,11 @@ class ExchangeRepository extends BaseRepository
         $records = $limit;
         $batchWindowMilliseconds = $periodMilliseconds * $records;
         if ($this->exchange->class === 'coinbase') {
-            $params['end'] = min($endFetching, $startFetching + $batchWindowMilliseconds);
+            // Coinbase requires a bounded end time. CCXT expects `until` in
+            // milliseconds and converts it to Coinbase's UNIX-seconds `end`.
+            // Keep the full request window, matching the legacy collector;
+            // returned candles are filtered to $endFetching below.
+            $params['until'] = $startFetching + $batchWindowMilliseconds;
         }
 
         if (App::hasDebugModeEnabled()) {
@@ -87,7 +91,7 @@ class ExchangeRepository extends BaseRepository
                 // contains trades. Advance by one bounded request window.
                 $startFetching += $batchWindowMilliseconds;
                 if ($this->exchange->class === 'coinbase') {
-                    $params['end'] = min($endFetching, $startFetching + $batchWindowMilliseconds);
+                    $params['until'] = $startFetching + $batchWindowMilliseconds;
                 }
 
                 continue;
@@ -105,7 +109,7 @@ class ExchangeRepository extends BaseRepository
             if ($lastTimestamp < $startFetching) {
                 $startFetching += $batchWindowMilliseconds;
                 if ($this->exchange->class === 'coinbase') {
-                    $params['end'] = min($endFetching, $startFetching + $batchWindowMilliseconds);
+                    $params['until'] = $startFetching + $batchWindowMilliseconds;
                 }
 
                 continue;
@@ -128,7 +132,7 @@ class ExchangeRepository extends BaseRepository
             }
 
             if ($this->exchange->class === 'coinbase') {
-                $params['end'] = min($endFetching, $startFetching + $batchWindowMilliseconds);
+                $params['until'] = $startFetching + $batchWindowMilliseconds;
             }
         }
 
