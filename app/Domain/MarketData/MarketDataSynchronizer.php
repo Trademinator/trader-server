@@ -28,7 +28,7 @@ final class MarketDataSynchronizer
             throw new InvalidArgumentException("Exchange {$exchange} is not configured.");
         }
 
-        $this->exchanges->setExchange($model);
+        $this->exchanges->setExchange($model, symbol: $symbol);
         if (! in_array($period, CandleTimeframe::SUPPORTED, true)
             || ! array_key_exists($period, $this->exchanges->periods())) {
             throw new InvalidArgumentException('The exchange does not support this symbol and period.');

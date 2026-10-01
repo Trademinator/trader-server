@@ -31,7 +31,7 @@ final class MarketCatalogException extends RuntimeException
             $exception instanceof PermissionDenied => new self('access_denied',
                 'The exchange denied this server access. Check API permissions and the exchange’s regional restrictions.', 503),
             $exception instanceof AuthenticationError => new self('authentication_required',
-                'This exchange requires valid API credentials to list pairs. Ask the administrator to check the exchange configuration.', 422),
+                'This exchange requires valid API credentials for market data. Add or replace read-only keys in Settings → Exchange keys, or ask a server owner to share keys.', 422),
             $exception instanceof RateLimitExceeded, $exception instanceof DDoSProtection => new self('rate_limited',
                 'The exchange is limiting requests from this server. Please wait and try again.', 503),
             $exception instanceof RequestTimeout => new self('timeout',

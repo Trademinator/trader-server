@@ -17,7 +17,7 @@ it('syncs a long interval in bounded overlapping windows', function () {
     $repository = Mockery::mock(ExchangeRepository::class);
     $tickers = Mockery::mock(TickerRepository::class);
     $repository->shouldReceive('findByClass')->times(3)->with('kraken')->andReturn(new Collection([$exchange]));
-    $repository->shouldReceive('setExchange')->times(3)->with($exchange);
+    $repository->shouldReceive('setExchange')->times(3)->with($exchange, [], null, 'BTC/USD');
     $repository->shouldReceive('periods')->times(3)->andReturn(['1m' => '1m']);
     $repository->shouldReceive('prepareCandleMarket')->times(3)->with('BTC/USD');
     foreach ([[0, 599], [420, 1019], [840, 1200]] as [$from, $to]) {
@@ -42,7 +42,7 @@ it('queues the next bounded page only after the current page succeeds', function
     $repository = Mockery::mock(ExchangeRepository::class);
     $tickers = Mockery::mock(TickerRepository::class);
     $repository->shouldReceive('findByClass')->once()->with('kraken')->andReturn(new Collection([$exchange]));
-    $repository->shouldReceive('setExchange')->once()->with($exchange);
+    $repository->shouldReceive('setExchange')->once()->with($exchange, [], null, 'BTC/USD');
     $repository->shouldReceive('periods')->once()->andReturn(['1m' => '1m']);
     $repository->shouldReceive('prepareCandleMarket')->once()->with('BTC/USD');
     $repository->shouldReceive('fetch')->once()->with('BTC/USD', '1m', 0, 599, 10)->andReturn([]);

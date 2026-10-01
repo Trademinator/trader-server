@@ -26,7 +26,7 @@ final class CandlePeriodSelector
         if ($model === null) {
             throw new InvalidArgumentException('Exchange is not configured.');
         }
-        $this->exchanges->setExchange($model);
+        $this->exchanges->setExchange($model, symbol: $symbol);
         $supported = array_keys($this->exchanges->periods());
         $periods = array_values(array_unique($periods));
         if (! $periods || in_array('', $periods, true) || array_diff($periods, $supported) || array_diff($periods, CandleTimeframe::SUPPORTED)) {

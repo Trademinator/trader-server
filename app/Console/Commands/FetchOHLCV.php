@@ -2,8 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Domain\MarketData\ExchangeMetadata;
 use App\Repositories\ExchangeRepository;
-use App\Traits\IsSupportedByCCXT;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Console\Isolatable;
 use Illuminate\Contracts\Console\PromptsForMissingInput;
@@ -12,8 +12,6 @@ use function Trademinator\Time\to_unixtime;
 
 class FetchOHLCV extends Command implements Isolatable, PromptsForMissingInput
 {
-    use IsSupportedByCCXT;
-
     protected ExchangeRepository $exchangeRepository;
 
     /**
@@ -44,7 +42,7 @@ class FetchOHLCV extends Command implements Isolatable, PromptsForMissingInput
         $className = $this->argument('exchange');
         $symbol = $this->argument('symbol');
         $period = $this->argument('period');
-        if ($this->isSupportedByCCXT($className, $symbol, $period)) {
+        if ($this->exchangeRepository->hasExchange($className)) {
 
             $debugExchange = $this->option('debug');
             $extraSettings = [];
@@ -54,8 +52,20 @@ class FetchOHLCV extends Command implements Isolatable, PromptsForMissingInput
             // if {to} is not specified, then is today
             $endtTime = to_unixtime($this->argument('to') ?? 'now');
 
+            if ($exchanges->isEmpty()) {
+                $this->error('The exchange is not configured.');
+
+                return self::FAILURE;
+            }
             foreach ($exchanges as $exchange) {
-                $this->exchangeRepository->setExchange($exchange, $extraSettings);
+                app(ExchangeMetadata::class)->assertUsable($exchange, spotOnly: false, symbol: $symbol);
+                $this->exchangeRepository->setExchange($exchange, $extraSettings, symbol: $symbol);
+                if (! array_key_exists($period, $this->exchangeRepository->periods())) {
+                    $this->error('The exchange does not support this candle period.');
+
+                    return self::FAILURE;
+                }
+                $this->exchangeRepository->prepareCandleMarket($symbol);
                 $tickers = $this->exchangeRepository->fetch($symbol, $period, $startTime, $endtTime);
 
                 $colour = new \Console_Color2;

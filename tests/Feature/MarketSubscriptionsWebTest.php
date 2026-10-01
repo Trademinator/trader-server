@@ -31,7 +31,7 @@ it('lets a signed-in user subscribe once to a configured market', function () {
     $user = User::factory()->create();
     $exchange = Exchange::query()->create(['name' => 'Demo', 'class' => 'kraken', 'config' => '{}']);
     $repository = Mockery::mock(ExchangeRepository::class);
-    $repository->shouldReceive('setExchange')->once()->with(Mockery::type(Exchange::class));
+    $repository->shouldReceive('setExchange')->once()->with(Mockery::type(Exchange::class), [], Mockery::on(fn (User $actor): bool => $actor->is($user)));
     $repository->shouldReceive('describe')->once()->andReturn([
         'name' => 'Kraken', 'timeframes' => ['1m' => '1m'], 'precisionMode' => \ccxt\TICK_SIZE,
     ]);

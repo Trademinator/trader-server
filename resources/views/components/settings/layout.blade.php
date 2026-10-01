@@ -4,6 +4,7 @@
             <x-navlist.item :href="route('settings.profile.edit')" :current="request()->routeIs('settings.profile.edit')">{{ __('Profile') }}</x-navlist.item>
             <x-navlist.item :href="route('settings.password.edit')" :current="request()->routeIs('settings.password.edit')">{{ __('Password') }}</x-navlist.item>
             <x-navlist.item :href="route('settings.api-key.edit')" :current="request()->routeIs('settings.api-key.edit')">{{ __('API Key') }}</x-navlist.item>
+            <x-navlist.item :href="route('settings.exchange-keys.index')" :current="request()->routeIs('settings.exchange-keys.*')">{{ __('Exchange keys') }}</x-navlist.item>
             <x-navlist.item :href="route('settings.appearance.edit')" :current="request()->routeIs('settings.appearance.edit')">{{ __('Appearance') }}</x-navlist.item>
         </x-navlist>
     </div>

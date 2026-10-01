@@ -49,10 +49,21 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function isOwner(): bool
     {
-        $owner = config('operations.owner_uuid');
+        return in_array(strtolower((string) $this->getAuthIdentifier()), self::ownerIds(), true);
+    }
 
-        return is_string($owner) && Str::isUuid($owner)
-            && hash_equals(strtolower($owner), strtolower((string) $this->getAuthIdentifier()));
+    /** @return list<string> */
+    public static function ownerIds(): array
+    {
+        $owners = [config('operations.owner_uuid'), ...config('operations.owner_uuids', [])];
+
+        return array_values(array_unique(array_map('strtolower', array_filter($owners,
+            fn (mixed $id): bool => is_string($id) && Str::isUuid($id)))));
+    }
+
+    public function exchangeCredentials(): HasMany
+    {
+        return $this->hasMany(ExchangeCredential::class, 'user_id', 'user_id');
     }
 
     public function subscriptions(): HasMany

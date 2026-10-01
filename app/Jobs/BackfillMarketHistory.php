@@ -70,7 +70,7 @@ final class BackfillMarketHistory implements ShouldQueue
                 return;
             }
             $deadline = microtime(true) + min(60, max(1, (int) config('history_backfill.max_seconds')));
-            $metadata->assertUsable($exchange, spotOnly: false);
+            $metadata->assertUsable($exchange, spotOnly: false, symbol: $market->symbol);
             $timeframe = new CandleTimeframe;
             if ($state->before_ms === null) {
                 $oldest = Ticker::query()->where('exchange', $exchange->class)->where('symbol', $market->symbol)
@@ -85,7 +85,7 @@ final class BackfillMarketHistory implements ShouldQueue
                     'before_ms' => $oldest, 'oldest_candle_ms' => $oldest,
                 ]);
             }
-            $exchanges->setExchange($exchange, ['timeout' => 15000]);
+            $exchanges->setExchange($exchange, ['timeout' => 15000], symbol: $market->symbol);
             $exchanges->prepareCandleMarket($market->symbol);
             if (! array_key_exists($state->period, $exchanges->periods())) {
                 throw new NotSupported('The selected candle period is not supported by this exchange.');

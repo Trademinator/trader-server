@@ -51,6 +51,10 @@
             </div>
         </x-form>
 
+        <p class="mt-6 text-sm">
+            <a class="underline" href="{{ route('settings.exchange-keys.index') }}">{{ __('Manage exchange keys for market-data collection') }}</a>
+        </p>
+
         <section class="mt-10 space-y-6">
             <div class="relative mb-5">
                 <x-heading>{{ __('Delete account') }}</x-heading>

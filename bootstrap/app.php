@@ -19,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->prepend(ObserveRequest::class);
+        $middleware->trimStrings(except: ['credentials.secret', 'credentials.password', 'credentials.token']);
         $middleware->web(append: [EnsureAccountActive::class]);
         $middleware->alias([
             'server-owner' => EnsureServerOwner::class,
@@ -27,6 +28,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prependToPriorityList(SubstituteBindings::class, EnsureServerOwner::class);
     })
     ->withExceptions(function (Exceptions $exceptions) {
+        $exceptions->dontFlash(['credentials']);
         $exceptions->report(function (Throwable $error): void {
             $log = app(ActionLog::class);
             $log->write('exception.reported', ['outcome' => 'failed', ...$log->exception($error)]);

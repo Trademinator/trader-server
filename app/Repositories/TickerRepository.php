@@ -5,6 +5,7 @@ namespace App\Repositories;
 use App\Domain\Archive\ArchiveIntegrityException;
 use App\Domain\Archive\PortableJson;
 use App\Domain\Archive\TickerArchive;
+use App\Domain\MarketData\ExchangeCredentials;
 use App\Domain\Operations\ActionLog;
 use App\Models\Ticker;
 use App\Traits\TickerManipulation;
@@ -43,7 +44,7 @@ class TickerRepository extends BaseRepository
         } catch (\Throwable $error) {
             $log->write('exchange.ohlcv_fetched', [...$fields, 'outcome' => 'failed',
                 'duration_ms' => (int) ((hrtime(true) - $started) / 1_000_000), ...$log->exception($error)]);
-            throw $error;
+            throw ExchangeCredentials::safeFailure($error);
         }
         $log->write('exchange.ohlcv_fetched', [...$fields, 'outcome' => 'completed', 'rows' => count($myTickers),
             'duration_ms' => (int) ((hrtime(true) - $started) / 1_000_000)]);

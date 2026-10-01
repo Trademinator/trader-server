@@ -3,8 +3,10 @@
 namespace App\Repositories;
 
 use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\MarketData\ExchangeCredentials;
 use App\Domain\MarketData\MarketCatalogException;
 use App\Models\Exchange;
+use App\Models\User;
 use ccxt;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\App;
@@ -235,7 +237,11 @@ class ExchangeRepository extends BaseRepository
 
     public function markets(): array
     {
-        return $this->ccxtExchange->load_markets();
+        try {
+            return $this->ccxtExchange->load_markets();
+        } catch (\Throwable $error) {
+            throw ExchangeCredentials::safeFailure($error);
+        }
     }
 
     /** Keep only the requested instrument in CCXT's market/currency indexes. */
@@ -252,9 +258,9 @@ class ExchangeRepository extends BaseRepository
         if (isset($client->markets[$symbol])) {
             return;
         }
-        $rows = ! str_contains($symbol, ':') && ($client->has['spot'] ?? false)
-            ? $this->spotMarketRows($this->spotParameters()) : $client->fetch_markets();
         try {
+            $rows = ! str_contains($symbol, ':') && ($client->has['spot'] ?? false)
+                ? $this->spotMarketRows($this->spotParameters()) : $client->fetch_markets();
             foreach ($rows as $market) {
                 if (($market['symbol'] ?? null) === $symbol) {
                     $client->set_markets([$market]);
@@ -262,6 +268,8 @@ class ExchangeRepository extends BaseRepository
                     return;
                 }
             }
+        } catch (\Throwable $error) {
+            throw ExchangeCredentials::safeFailure($error);
         } finally {
             $client->last_http_response = null;
             $client->last_json_response = null;
@@ -343,6 +351,8 @@ class ExchangeRepository extends BaseRepository
             } else {
                 yield from $client->fetch_markets($params);
             }
+        } catch (\Throwable $error) {
+            throw ExchangeCredentials::safeFailure($error);
         } finally {
             $client->last_http_response = null;
             $client->last_json_response = null;
@@ -363,14 +373,33 @@ class ExchangeRepository extends BaseRepository
         return $this->ccxtExchange->timeframes ?? [];
     }
 
-    public function setExchange(Exchange $exchange, array $extraSettings = [])
+    protected function newClient(string $class, #[\SensitiveParameter] array $settings): ccxt\Exchange
+    {
+        try {
+            return new $class($settings);
+        } catch (\Throwable $error) {
+            throw ExchangeCredentials::safeFailure($error);
+        }
+    }
+
+    public function setExchange(Exchange $exchange, #[\SensitiveParameter] array $extraSettings = [], ?User $user = null, ?string $symbol = null): void
     {
         $this->exchange = $exchange;
         $ccxtExchangeName = '\\ccxt\\'.$exchange->class;
         // DB saves the confing in JSON format, but CCXT expects it in an associative array
-        $settings = json_decode($this->exchange->config ?: '{}', true) ?: [];
+        $settings = app(ExchangeCredentials::class)->settings($exchange, $user ?? ($symbol === null ? auth()->user() : null), $symbol);
         if (count($extraSettings)) {
             $settings = array_merge($settings, $extraSettings);
+        }
+        if (array_filter(array_intersect_key($settings, ExchangeCredentials::FIELDS))) {
+            $settings['verbose'] = false;
+            $settings['options']['fetchCurrencies'] = false;
+            $settings['has']['fetchCurrencies'] = false;
+            $settings['options']['fetchMargins'] = false;
+        }
+        if ($exchange->class === 'coinbase' && ! empty($settings['apiKey']) && ! empty($settings['secret'])) {
+            $settings['options']['usePrivate'] = true;
+            $settings['options']['fetchOHLCV']['usePrivate'] = true;
         }
         $settings['enableRateLimit'] = true;
         $settings['enableLastHttpResponse'] = false;
@@ -382,7 +411,7 @@ class ExchangeRepository extends BaseRepository
         $this->tickerRepository->setExchange(null);
         $this->ccxtExchange = null;
         gc_collect_cycles();
-        $this->ccxtExchange = new $ccxtExchangeName($settings);
+        $this->ccxtExchange = $this->newClient($ccxtExchangeName, $settings);
         $this->clientConfiguration = $configuration;
         $this->candleOptions = $this->ccxtExchange->options;
         $this->tickerRepository->setExchange($this->ccxtExchange);

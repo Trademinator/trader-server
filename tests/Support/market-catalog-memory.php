@@ -48,7 +48,7 @@ $probe = new class('testProbe') extends TestCase
             $originalConfig = $exchange->config;
             $repository = new class extends ExchangeRepository
             {
-                public function setExchange(Exchange $exchange, array $extraSettings = [])
+                public function setExchange(Exchange $exchange, array $extraSettings = [], ?User $user = null, ?string $symbol = null): void
                 {
                     if ($this->exchange?->getKey() === $exchange->getKey() && $this->ccxtExchange instanceof FixtureBinance) {
                         return;

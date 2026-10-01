@@ -31,13 +31,13 @@ final class MarketSubscriptions
         if ($spotOnly) {
             // Reuse the bounded, server-side catalogue used by the form. Do not
             // reload all currencies and derivatives on the subsequent POST.
-            $options = $this->catalog->forExchange($exchange);
+            $options = $this->catalog->forExchange($exchange, $user);
             if ($options['periods'] === [] || ! in_array($symbol, array_column($options['symbols'], 'value'), true)) {
                 throw new InvalidArgumentException('This exchange does not list the requested spot symbol with a supported candle period.');
             }
         } else {
-            $this->metadata->assertUsable($exchange, spotOnly: false);
-            $this->exchanges->setExchange($exchange);
+            $this->metadata->assertUsable($exchange, spotOnly: false, user: $user);
+            $this->exchanges->setExchange($exchange, user: $user);
             if (! array_intersect(array_keys($this->exchanges->periods()), CandleTimeframe::SUPPORTED)) {
                 throw new InvalidArgumentException('This exchange does not offer a supported OHLCV candle period.');
             }

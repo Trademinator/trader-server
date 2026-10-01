@@ -4,6 +4,7 @@ namespace App\Domain\MarketData;
 
 use App\Models\Exchange;
 use App\Models\Market;
+use App\Models\User;
 use App\Repositories\ExchangeRepository;
 use Illuminate\Support\Facades\Cache;
 
@@ -56,15 +57,16 @@ final class MarketCatalog
     }
 
     /** @return array{symbols: list<array{value: string, tick_size: ?string}>, periods: list<array{value: string, label: string}>} */
-    public function forExchange(Exchange $exchange): array
+    public function forExchange(Exchange $exchange, ?User $user = null): array
     {
-        $entry = $this->metadata->assertUsable($exchange);
+        $user ??= auth()->user();
+        $entry = $this->metadata->assertUsable($exchange, user: $user);
         $revision = hash('sha256', json_encode($entry, JSON_THROW_ON_ERROR));
         $key = self::PAIRS_CACHE_PREFIX.$exchange->exchange_id;
         $cached = Cache::get($key);
         if (! is_array($cached) || ($cached['revision'] ?? null) !== $revision) {
-            $options = (function () use ($exchange): array {
-                $this->repository->setExchange($exchange);
+            $options = (function () use ($exchange, $user): array {
+                $this->repository->setExchange($exchange, user: $user);
                 $description = $this->repository->describe();
                 $periods = array_values(array_intersect(array_keys($description['timeframes'] ?? []), CandleTimeframe::SUPPORTED));
                 if ($periods === []) {

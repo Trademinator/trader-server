@@ -2,6 +2,7 @@
 
 return [
     'owner_uuid' => env('OWNER_UUID'),
+    'owner_uuids' => array_values(array_filter(array_map('trim', explode(',', (string) env('OWNER_UUIDS', ''))))),
     'syslog_enabled' => (bool) env('ACTION_SYSLOG_ENABLED', true),
     'syslog_ident' => env('ACTION_SYSLOG_IDENT', 'trademinator'),
     'syslog_facility' => env('ACTION_SYSLOG_FACILITY', LOG_LOCAL0),

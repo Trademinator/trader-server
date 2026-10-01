@@ -3,6 +3,7 @@
 namespace App\Domain\MarketData;
 
 use App\Models\Exchange;
+use App\Models\User;
 use Composer\InstalledVersions;
 
 /** Small offline descriptions; never instantiate every adapter in a web worker. */
@@ -58,7 +59,7 @@ class ExchangeMetadata
     }
 
     /** Used before cache reads or any network call. Credentials are never returned. */
-    public function assertUsable(Exchange $exchange, bool $spotOnly = true): array
+    public function assertUsable(Exchange $exchange, bool $spotOnly = true, ?User $user = null, ?string $symbol = null): array
     {
         $entry = $this->all()[$exchange->class] ?? null;
         if ($entry === null) {
@@ -75,11 +76,11 @@ class ExchangeMetadata
             throw new MarketCatalogException('candles_unsupported', 'This exchange does not provide a supported candle period.', 422);
         }
         if ($entry['access']['state'] === 'authentication_required') {
-            $configuration = json_decode($exchange->config ?? '{}', true) ?? [];
+            $configuration = app(ExchangeCredentials::class)->settings($exchange, $user ?? ($symbol === null ? auth()->user() : null), $symbol, rotate: false);
             foreach ($entry['required_credentials'] ?? [] as $key) {
                 if (! is_string($configuration[$key] ?? null) || trim($configuration[$key]) === '') {
                     throw new MarketCatalogException('authentication_required',
-                        'This exchange requires valid API credentials to load market data. Ask the administrator to check the exchange configuration.', 422);
+                        'This exchange requires valid API credentials to load market data. Add read-only keys in Settings → Exchange keys, or ask a server owner to share keys.', 422);
                 }
             }
         }

@@ -7,8 +7,9 @@ use App\Repositories\ExchangeRepository;
 
 it('offers readable exchange names, spot pairs and only supported periods', function () {
     $exchange = Exchange::query()->create(['name' => 'kraken', 'class' => 'kraken', 'config' => '{}']);
+    $user = User::factory()->create();
     $repository = Mockery::mock(ExchangeRepository::class);
-    $repository->shouldReceive('setExchange')->once()->with(Mockery::type(Exchange::class));
+    $repository->shouldReceive('setExchange')->once()->with(Mockery::type(Exchange::class), [], Mockery::on(fn (User $actor): bool => $actor->is($user)));
     $repository->shouldReceive('describe')->once()->andReturn([
         'name' => 'Kraken', 'timeframes' => ['15m' => '15m', '1m' => '1m', '9m' => '9m'],
         'precisionMode' => \ccxt\TICK_SIZE,
@@ -19,7 +20,6 @@ it('offers readable exchange names, spot pairs and only supported periods', func
         'BTC/USD:USD' => ['spot' => false, 'precision' => ['price' => 0.1]],
     ]);
     app()->instance(ExchangeRepository::class, $repository);
-    $user = User::factory()->create();
 
     $this->actingAs($user)->get(route('markets.index'))
         ->assertOk()->assertSee('<option value="kraken"', false)->assertSee('Kraken');

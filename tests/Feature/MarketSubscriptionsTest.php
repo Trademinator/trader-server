@@ -17,7 +17,8 @@ it('uses one feed and one CoinGecko mapping for two users watching the same exch
     $alice = User::factory()->create();
     $bob = User::factory()->create();
     $repository = Mockery::mock(ExchangeRepository::class);
-    $repository->shouldReceive('setExchange')->times(3)->with($exchange);
+    $repository->shouldReceive('setExchange')->twice()->with($exchange, [], $alice);
+    $repository->shouldReceive('setExchange')->once()->with($exchange, [], $bob);
     $repository->shouldReceive('periods')->times(3)->andReturn(['1m' => '1m']);
     $repository->shouldReceive('markets')->times(3)->andReturn(['BTC/USD' => []]);
     app()->instance(ExchangeRepository::class, $repository);
@@ -51,7 +52,7 @@ it('marks non-spot subscription symbols unsupported for automatic CoinGecko mapp
     $exchange = Exchange::query()->create(['name' => 'Demo', 'class' => 'kraken', 'config' => '{}']);
     $user = User::factory()->create();
     $repository = Mockery::mock(ExchangeRepository::class);
-    $repository->shouldReceive('setExchange')->once()->with($exchange);
+    $repository->shouldReceive('setExchange')->once()->with($exchange, [], $user);
     $repository->shouldReceive('periods')->once()->andReturn(['1m' => '1m']);
     $repository->shouldReceive('markets')->once()->andReturn(['BTC/USD:USD' => []]);
     app()->instance(ExchangeRepository::class, $repository);

@@ -56,14 +56,14 @@ final class CollectMarketFeed implements ShouldQueue
             $market = $feed->market;
             $exchange = $market->exchange;
             try {
-                $metadata->assertUsable($exchange, spotOnly: false);
+                $metadata->assertUsable($exchange, spotOnly: false, symbol: $market->symbol);
             } catch (MarketCatalogException $exception) {
                 $this->finish('blocked', now()->addHours(6), $exception->getMessage());
 
                 return;
             }
             if ($feed->selected_period === null) {
-                $exchanges->setExchange($exchange);
+                $exchanges->setExchange($exchange, symbol: $market->symbol);
                 $periods = array_values(array_intersect(
                     ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'],
                     array_keys($exchanges->periods())));

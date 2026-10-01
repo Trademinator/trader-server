@@ -22,7 +22,7 @@ it('uses the existing selector and ignores the unfinished last candle', function
     $exchange = new Exchange(['name' => 'Demo', 'class' => 'kraken']);
     $repository = Mockery::mock(ExchangeRepository::class);
     $repository->shouldReceive('findByClass')->once()->with('kraken')->andReturn(new Collection([$exchange]));
-    $repository->shouldReceive('setExchange')->once()->with($exchange);
+    $repository->shouldReceive('setExchange')->once()->with($exchange, [], null, 'BTC/USD');
     $repository->shouldReceive('prepareCandleMarket')->once()->with('BTC/USD');
     $repository->shouldReceive('periods')->once()->andReturn(['1m' => '1m', '5m' => '5m']);
     $repository->shouldReceive('fetch')->once()->with('BTC/USD', '1m', Mockery::any(), $to)->andReturn($flat);

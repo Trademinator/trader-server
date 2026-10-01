@@ -106,7 +106,7 @@ final class CandleGuidance
         if ($rows === []) {
             return [];
         }
-        $trainerIds = array_map('strtolower', array_filter([config('operations.owner_uuid'), ...config('human_training.trainer_uuids')]));
+        $trainerIds = array_map('strtolower', array_filter([...User::ownerIds(), ...config('human_training.trainer_uuids')]));
         $trainers = User::query()->whereIn('user_id', $trainerIds)
             ->get()->filter(fn (User $user): bool => Gate::forUser($user)->allows('train-intelligence'))->pluck('user_id')->all();
         if ($trainers === []) {

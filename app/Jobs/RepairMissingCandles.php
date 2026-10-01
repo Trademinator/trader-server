@@ -85,8 +85,8 @@ final class RepairMissingCandles implements ShouldQueue
                 return;
             }
 
-            $metadata->assertUsable($exchange, spotOnly: false);
-            $exchanges->setExchange($exchange, ['timeout' => 15000]);
+            $metadata->assertUsable($exchange, spotOnly: false, symbol: $market->symbol);
+            $exchanges->setExchange($exchange, ['timeout' => 15000], symbol: $market->symbol);
             $exchanges->prepareCandleMarket($market->symbol);
             if (! array_key_exists($state->period, $exchanges->periods())) {
                 throw new NotSupported('The selected candle period is not supported by this exchange.');
