@@ -30,7 +30,8 @@ class HumanTrainingController extends Controller
         ]);
         $reviews = HumanTrainingReview::query()->where('trainer_id', $request->user()->user_id);
         $pending = (clone $reviews)->whereNull('submitted_at')->where('expires_at', '>', now()->format('Y-m-d H:i:s.v'))->first();
-        $datasets = $pairOptions->datasets($request->user(), $training->datasets(), allSubscribed: true);
+        $subscribedMarkets = $pairOptions->markets($request->user(), allSubscribed: true);
+        $datasets = $pairOptions->datasets($request->user(), $training->datasets($subscribedMarkets), allSubscribed: true);
         $selectedDataset = null;
 
         if (isset($selection['exchange'], $selection['symbol'], $selection['period'])) {

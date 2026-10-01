@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Domain\Intelligence\BackfillIntelligence;
+use App\Domain\MarketData\CandleGapRepairs;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\MarketData\MarketHistoryBackfill;
 use Illuminate\Console\Command;
@@ -14,7 +15,7 @@ final class BackfillOHLCV extends Command
 
     protected $description = 'Queue resumable older OHLCV history for subscribed markets, or inspect and resume paused backfills';
 
-    public function handle(MarketHistoryBackfill $history, BackfillIntelligence $intelligence): int
+    public function handle(MarketHistoryBackfill $history, CandleGapRepairs $gaps, BackfillIntelligence $intelligence): int
     {
         $exchange = $this->option('exchange');
         $symbol = $this->option('symbol');
@@ -48,6 +49,11 @@ final class BackfillOHLCV extends Command
 
             return self::FAILURE;
         }
+        $forceGapScan = $exchange !== null || $symbol !== null || $period !== null;
+        $scanned = $gaps->scan($exchange, $symbol, $period, $forceGapScan);
+        $repairs = $gaps->dispatchDue($exchange, $symbol, $period);
+        $this->info("Scanned {$scanned} market feeds and queued {$repairs} missing-candle repairs on the ".config('history_backfill.queue').' queue.');
+
         $count = $history->dispatchDue($exchange, $symbol, $period, (bool) $this->option('resume'));
         $this->info("Queued {$count} shared-market history backfills on the ".config('history_backfill.queue').' queue.');
         $builds = $intelligence->dispatchDue($exchange, $symbol, $period);

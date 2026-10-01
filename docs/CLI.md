@@ -171,7 +171,7 @@ Description: Queue resumable older OHLCV history for subscribed markets, or insp
 
 Signature: `trademinator:backfill-ohlcv {--exchange=} {--symbol=} {--period=} {--status} {--resume}`
 
-Scheduled every minute. Queues at most 100 due shared markets per invocation on the `history` queue (`HISTORY_BACKFILL_QUEUE`). Requires the history migration, a persistent database/Redis queue, the same shared atomic-lock-capable cache on every scheduler/worker node, an active subscription, a selected candle period and existing closed candles from the normal collector. The worker preserves the exchange access review and credential checks. No user argument is needed: subscribers share one history cursor per market and period. The command also recovers pending feature/KNN rebuilds on the existing intelligence queue (at most 100 rebuild steps per invocation).
+Scheduled every minute. Queues at most 100 due shared markets per invocation on the `history` queue (`HISTORY_BACKFILL_QUEUE`). Requires the history migration, a persistent database/Redis queue, the same shared atomic-lock-capable cache on every scheduler/worker node, an active subscription, a selected candle period and existing closed candles from the normal collector. The worker preserves the exchange access review and credential checks. No user argument is needed: subscribers share one history cursor per market and period. The command also recovers pending feature/KNN rebuilds on the existing intelligence queue (at most 100 rebuild steps per invocation). Before dispatching older-history work, the command also scans selected-period history for holes between the earliest stored candle and the latest fully closed interval, persists bounded ranges in `candle_gap_repairs`, and queues due repairs on the same history queue. The currently open candle is never considered missing. Scheduled scans are throttled per market (six hours by default) and scan at most 10 feeds per invocation; supplying an exchange, symbol or period filter forces an immediate scan of the matching feed(s).
 
 Options:
 
@@ -217,6 +217,8 @@ Saved status and stop policy:
 | `complete / unix_epoch` | The lower timestamp boundary has reached zero; no negative timestamps are queried. |
 
 `oldest_candle_ms` tracks the earliest actual candle known to this backfill, separately from the search boundary, which can pass through empty intervals. `candles_received` counts accepted page rows, including any already present due to an independent manual import. `empty_windows`, `failures`, `last_error` and `next_attempt_at` explain stalls. Window timestamp fields are UTC Unix milliseconds; ordinary retry timestamps follow Laravel's stored timestamp convention. Configuration for page size, per-job request/time budgets and pause thresholds is in `config/history_backfill.php`.
+
+Missing-candle repairs are separate from the backward-history cursor. A repair requests only the exact closed gap range (at most the configured page size), uses the same market/history-exchange/feature locks as historical backfill, and upserts through the existing ticker repository. Partial responses are split into the remaining missing ranges. A successful request that still returns no candle retries after one hour, then six hours, then daily; after `HISTORY_GAP_EMPTY_ATTEMPTS_BEFORE_UNAVAILABLE` successful empty attempts (default 5) the range is marked `unavailable`. Network/rate-limit/request failures use the separate error retry policy and do not count as evidence that the exchange omitted the candle. No synthetic zero-volume candles are created. Any repaired historical insert increments the existing history revision so M2/KNN rebuilding sees the correction. Gap scan cadence and dispatch limits are controlled by `HISTORY_GAP_SCAN_INTERVAL_MINUTES`, `HISTORY_GAP_SCAN_MARKETS_PER_RUN`, and `HISTORY_GAP_REPAIR_DISPATCH_LIMIT`.
 
 After a **completed backward window imports at least one candle**, the worker automatically queues an ordered rebuild on `INTELLIGENCE_QUEUE` (default `intelligence`):
 
@@ -284,7 +286,7 @@ Formerly `trademinator:CreateIndicators`. Update scripts to the new name; the mi
 
 ## trademinator:dispatch-market-features
 
-Description: Queue M2 feature builds for subscribed markets with selected candle periods
+Description: Queue M2 feature builds for subscribed markets whose current feature version is behind
 
 Signature: `trademinator:dispatch-market-features`
 

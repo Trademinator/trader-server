@@ -64,7 +64,7 @@
                 <label for="candle-dataset">Market and frozen dataset</label>
                 <x-subscribed-pair-select name="dataset" id="candle-dataset" :value="$state['manifest']['dataset_id']"
                     :datasets="$datasets" :current-dataset="$state['manifest']" :all-subscribed="true"
-                    :sort="['exchange', 'pair', 'period']" required data-candle-dataset />
+                    :sort="['exchange', 'pair', 'period']" :show-unavailable-datasets="true" required data-candle-dataset />
                 <noscript><button class="review-control" type="submit">Switch market</button></noscript>
             </form>
             <p class="guide-help">Latest loaded candle: <span data-replay-time><x-display-time :value="$state['payload']['microtimestamp']" unit="milliseconds" /></span>. Use the side arrows to move up to 50 candles, or pan toward either edge to load more history. Forward loading stops at the newest candle in this dataset.</p>

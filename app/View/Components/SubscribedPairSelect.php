@@ -9,7 +9,7 @@ use Illuminate\View\View;
 
 final class SubscribedPairSelect extends FormControl
 {
-    /** @var array<int, array{value:string,label:string}> */
+    /** @var array<int, array{value:string,label:string,disabled?:bool,status?:string}> */
     public array $options = [];
 
     public function __construct(
@@ -25,6 +25,7 @@ final class SubscribedPairSelect extends FormControl
         public ?array $currentDataset = null,
         public bool $showDatasetVersions = false,
         public string $placeholder = '',
+        public bool $showUnavailableDatasets = false,
     ) {
         parent::__construct($name, $id, $value, $label, $bag);
         $user = Auth::user();
@@ -32,15 +33,27 @@ final class SubscribedPairSelect extends FormControl
             return;
         }
 
-        if ($datasets !== []) {
+        if ($datasets !== [] || $showUnavailableDatasets) {
             $availableDatasets = $pairs->datasets($user, $datasets, $allSubscribed, $sort);
             if (! $showDatasetVersions) {
                 $availableDatasets = $this->collapseDatasetVersions($availableDatasets, $currentDataset);
             }
+            $optionsByMarket = [];
             foreach ($availableDatasets as $dataset) {
+                $key = $this->datasetKey($dataset);
                 $option = $this->datasetOption($dataset);
-                if ($option !== null) {
-                    $this->options[] = $option;
+                if ($key !== null && $option !== null) {
+                    $optionsByMarket[$key][] = $option;
+                }
+            }
+            foreach ($pairs->markets($user, $allSubscribed, $sort) as $market) {
+                $key = $this->subscribedMarketKey($market);
+                if ($key !== null && isset($optionsByMarket[$key])) {
+                    foreach ($optionsByMarket[$key] as $option) {
+                        $this->options[] = $option;
+                    }
+                } elseif ($showUnavailableDatasets) {
+                    $this->options[] = $this->unavailableDatasetOption($market);
                 }
             }
             if ($currentDataset !== null) {
@@ -67,6 +80,38 @@ final class SubscribedPairSelect extends FormControl
     public function render(): View
     {
         return view('components.subscribed-pair-select');
+    }
+
+    /**
+     * @param  array<string, mixed>  $market
+     * @return array{value:string,label:string,disabled:bool,status:string}
+     */
+    private function unavailableDatasetOption(array $market): array
+    {
+        $period = ($market['period'] ?? '') !== '' ? $market['period'] : 'Period pending';
+        $reason = ($market['period'] ?? '') === ''
+            ? 'Subscribed — waiting for candle-period selection'
+            : 'Subscribed — training dataset not ready';
+
+        return [
+            'value' => '',
+            'label' => $market['exchange'].' · '.$market['pair'].' · '.$period.' · '.$reason,
+            'disabled' => true,
+            'status' => 'subscribed',
+        ];
+    }
+
+    /** @param array<string, mixed> $market */
+    private function subscribedMarketKey(array $market): ?string
+    {
+        $exchange = $market['exchange_class'] ?? null;
+        $pair = $market['pair'] ?? null;
+        $period = $market['period'] ?? null;
+        if (! is_string($exchange) || ! is_string($pair) || ! is_string($period)) {
+            return null;
+        }
+
+        return strtolower($exchange).'|'.$pair.'|'.$period;
     }
 
     /**

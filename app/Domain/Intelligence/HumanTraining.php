@@ -24,14 +24,61 @@ final class HumanTraining
 
     public function __construct(private DatasetStore $datasets, private TickerRepository $tickers, private CandleTimeframe $timeframe) {}
 
-    public function datasets(): array
+    /**
+     * Return the newest eligible semantic dataset for each requested market.
+     *
+     * @param  array<int, array<string, mixed>>|null  $markets
+     */
+    public function datasets(?array $markets = null): array
     {
-        return DB::table('research_datasets')->orderByDesc('created_at')->limit(100)->get()
-            ->map(fn (object $record): array => json_decode($record->manifest, true, flags: JSON_THROW_ON_ERROR))
-            ->filter(fn (array $manifest): bool => ($manifest['feature_version'] ?? null) === FeatureEngine::VERSION
-                && ($manifest['label_definition']['version'] ?? null) === SemanticLabels::VERSION
-                && ($manifest['as_of_ms'] ?? PHP_INT_MAX) <= now()->getTimestampMs())
-            ->values()->all();
+        $wanted = null;
+        if ($markets !== null) {
+            $wanted = [];
+            foreach ($markets as $market) {
+                $exchange = $market['exchange_class'] ?? $market['exchange'] ?? null;
+                $symbol = $market['pair'] ?? $market['symbol'] ?? null;
+                $period = $market['period'] ?? null;
+                if (! is_string($exchange) || ! is_string($symbol) || ! is_string($period) || $period === '') {
+                    continue;
+                }
+                $wanted[$this->datasetMarketKey($exchange, $symbol, $period)] = true;
+            }
+            if ($wanted === []) {
+                return [];
+            }
+        }
+
+        $latest = [];
+        $nowMs = now()->getTimestampMs();
+        foreach (DB::table('research_datasets')->orderByDesc('created_at')->orderByDesc('dataset_id')->cursor() as $record) {
+            $manifest = json_decode($record->manifest, true, flags: JSON_THROW_ON_ERROR);
+            if (($manifest['feature_version'] ?? null) !== FeatureEngine::VERSION
+                || ($manifest['label_definition']['version'] ?? null) !== SemanticLabels::VERSION
+                || ($manifest['as_of_ms'] ?? PHP_INT_MAX) > $nowMs) {
+                continue;
+            }
+            $exchange = $manifest['exchange'] ?? null;
+            $symbol = $manifest['symbol'] ?? null;
+            $period = $manifest['period'] ?? null;
+            if (! is_string($exchange) || ! is_string($symbol) || ! is_string($period)) {
+                continue;
+            }
+            $key = $this->datasetMarketKey($exchange, $symbol, $period);
+            if ($wanted !== null && ! isset($wanted[$key])) {
+                continue;
+            }
+            $latest[$key] ??= $manifest;
+            if ($wanted !== null && count($latest) === count($wanted)) {
+                break;
+            }
+        }
+
+        return array_values($latest);
+    }
+
+    private function datasetMarketKey(string $exchange, string $symbol, string $period): string
+    {
+        return strtolower($exchange).'|'.$symbol.'|'.$period;
     }
 
     public function assign(User $trainer, string $dataset): HumanTrainingReview

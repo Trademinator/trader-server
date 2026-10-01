@@ -13,15 +13,17 @@
                 <p>Assess what you expect over the dataset horizon from a frozen historical snapshot. You have submitted {{ number_format($completed) }} trend labels.</p>
                 @if($pending)
                     <a class="guide-button" href="{{ route('human-training.show', $pending->review_id) }}">Continue Trend Training</a>
-                @elseif($datasets === [])
-                    <p>No current semantic dataset is available for an actively subscribed pair. The server owner must build market features and run <code>trademinator:knn-build</code> first.</p>
                 @else
+                    @if($datasets === [])
+                        <p>No current semantic training dataset is ready yet. Subscribed pairs remain listed below in green with the reason they cannot be selected.</p>
+                    @endif
                     <form method="POST" action="{{ route('human-training.store') }}">@csrf
                         <label for="trend-dataset">Market and frozen dataset</label>
                         <x-subscribed-pair-select name="dataset" id="trend-dataset" :value="$selectedDataset ?? ''"
-                            :datasets="$datasets" :all-subscribed="true" :sort="['exchange', 'pair', 'period']" required />
-                        <p class="guide-help">A random unseen snapshot is selected. Future prices, objective outcomes, model output and other trainers’ answers stay hidden while you assess the trend.</p>
-                        <button class="guide-button" type="submit">Start Trend Training</button>
+                            :datasets="$datasets" :all-subscribed="true" :sort="['exchange', 'pair', 'period']"
+                            :show-unavailable-datasets="true" required />
+                        <p class="guide-help">Subscribed pairs without a usable semantic dataset are shown in green and disabled. A random unseen snapshot is selected from an available dataset; future prices, objective outcomes, model output and other trainers’ answers stay hidden while you assess the trend.</p>
+                        <button class="guide-button" type="submit" @disabled($datasets === [])>Start Trend Training</button>
                     </form>
                 @endif
             </section>
@@ -30,16 +32,16 @@
                 <h2>Candle Training</h2>
                 <p>Click individual candles and mark the action you would have taken there. You currently have {{ number_format($candleCompleted) }} saved candle labels.</p>
                 @if($datasets === [])
-                    <p>No current semantic dataset is available for an actively subscribed pair. Candle Training uses the same frozen feature datasets as Trend Training.</p>
-                @else
-                    <form method="POST" action="{{ route('human-training.candles.start') }}">@csrf
-                        <label for="candle-dataset">Market and frozen dataset</label>
-                        <x-subscribed-pair-select name="dataset" id="candle-dataset" :value="$selectedDataset ?? ''"
-                            :datasets="$datasets" :all-subscribed="true" :sort="['exchange', 'pair', 'period']" required />
-                        <p class="guide-help">The replay opens on an unlabelled candle when possible. Selecting an earlier candle truncates the chart there so later candles are not shown while you decide.</p>
-                        <button class="guide-button" type="submit">Start Candle Training</button>
-                    </form>
+                    <p>No current semantic training dataset is ready yet. Subscribed pairs remain listed below in green with the reason they cannot be selected.</p>
                 @endif
+                <form method="POST" action="{{ route('human-training.candles.start') }}">@csrf
+                    <label for="candle-dataset">Market and frozen dataset</label>
+                    <x-subscribed-pair-select name="dataset" id="candle-dataset" :value="$selectedDataset ?? ''"
+                        :datasets="$datasets" :all-subscribed="true" :sort="['exchange', 'pair', 'period']"
+                        :show-unavailable-datasets="true" required />
+                    <p class="guide-help">Subscribed pairs without a usable semantic dataset are shown in green and disabled. The replay opens on an unlabelled candle when possible; selecting an earlier candle truncates the chart there so later candles are not shown while you decide.</p>
+                    <button class="guide-button" type="submit" @disabled($datasets === [])>Start Candle Training</button>
+                </form>
             </section>
         </div>
         <section class="guide-panel"><h2>How the two kinds of labels are used</h2>
