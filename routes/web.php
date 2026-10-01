@@ -52,7 +52,8 @@ Route::middleware(['auth'])->group(function () {
     Route::get('settings/password', [Settings\PasswordController::class, 'edit'])->name('settings.password.edit');
     Route::put('settings/password', [Settings\PasswordController::class, 'update'])->name('settings.password.update');
     Route::get('settings/api-key', [Settings\ApiKeyController::class, 'edit'])->name('settings.api-key.edit');
-    Route::put('settings/api-key', [Settings\ApiKeyController::class, 'update'])->name('settings.api-key.update');
+    Route::post('settings/api-key', [Settings\ApiKeyController::class, 'store'])->middleware('throttle:12,1')->name('settings.api-key.store');
+    Route::delete('settings/api-key/{key}', [Settings\ApiKeyController::class, 'destroy'])->whereUuid('key')->middleware('throttle:30,1')->name('settings.api-key.destroy');
     Route::get('settings/appearance', [Settings\AppearanceController::class, 'edit'])->name('settings.appearance.edit');
 });
 

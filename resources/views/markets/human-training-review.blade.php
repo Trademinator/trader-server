@@ -21,7 +21,7 @@
         @if(session('status'))<p class="guide-notice" role="status">{{ session('status') }}</p>@endif
         @if($errors->any())<div class="guide-notice guide-error" role="alert"><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
         <section class="guide-panel"><h2>Closed candles at the decision time</h2>
-            <p class="guide-notice">The shaded candle is the decision candle. Assess the trend starting immediately after it over the next {{ $snapshot['horizon_candles'] }} candles. Those future candles are hidden, and this chart stays frozen.</p>
+            <p class="guide-notice">The shaded candle is the decision candle. Assess the trend starting immediately after it over the next {{ $snapshot['horizon_candles'] }} candles. Future candles are hidden, and this chart stays frozen.</p>
             @if($snapshot['gaps'])<p class="guide-notice guide-error">{{ $snapshot['gaps'] }} gaps in history. Missing candles are not filled.</p>@endif
             <div data-human-training-chart data-snapshot="{{ json_encode(['series' => $snapshot['series'], 'decision_at_ms' => $snapshot['decision_at_ms'], 'label' => $review->label], JSON_THROW_ON_ERROR) }}">
                 <p class="review-legend" data-legend>Inspect a candle for its OHLC prices and volume.</p>

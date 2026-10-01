@@ -68,13 +68,14 @@
                     :refresh="true" :fit="true" :earliest="true"
                     :server-signals="true"
                     :human-training="auth()->user()->can('train-intelligence')"
+                    :client-activity="true"
                     :auto-refresh="true"
-                    :aria-label="$market->symbol.' price history with recorded Server and human-training markers'"
-                    legend="Closed exchange candles and recorded Server signals.">
+                    :aria-label="$market->symbol.' price history with recorded Server, Client, and human-training markers'"
+                    legend="Closed exchange candles with recorded Server signals and Client reports.">
                     <noscript><p>Enable JavaScript for the interactive chart. Recent candle values and the signal journal remain available.</p></noscript>
                 </x-market-candlestick>
-                <p class="guide-help">↑ BUY · ↓ SELL · ● HOLD · ■ Waiting for evidence. These are Server observations. Client execution is unknown.</p>
-                <p class="guide-help">Markers appear at the first candle opening at or after the signal was recorded, once that candle closes. Exact recording and source times are in the journal. Historical signals are never recalculated with a newer model.</p>
+                <p class="guide-help">Server: ↑ BUY · ↓ SELL · ● HOLD · ■ Waiting. Client: C BUY/C SELL decisions and FILL markers include reported fill price. Client reports are shown only when the authenticated user submitted them.</p>
+                <p class="guide-help">Markers appear at the first candle opening at or after the event was recorded. Historical Server signals are never recalculated with a newer model; Client reports remain linked to the original signal.</p>
                 <p class="guide-help">TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a> · Market data collected by Trademinator.</p>
                 <details class="mt-3"><summary>Recent closed candle values</summary><div class="dashboard-table-wrap"><table><thead><tr><th>Open time (UTC)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
                     @forelse (array_reverse(array_slice($chart['series'], -10)) as $candle)<tr><td>{{ $time($candle['time'] * 1000) }}</td><td>{{ $number($candle['open'], 8) }}</td><td>{{ $number($candle['high'], 8) }}</td><td>{{ $number($candle['low'], 8) }}</td><td>{{ $number($candle['close'], 8) }}</td><td>{{ $number($candle['volume'], 8) }}</td></tr>@empty<tr><td colspan="6">No closed candles yet.</td></tr>@endforelse
@@ -106,9 +107,23 @@
                         @if ($details['signal']->reason === 'supported')<p>Confidence score: {{ $number(($details['signal']->payload['confidence'] ?? 0) * 100, 1) }}% · Effective neighbors: {{ $number($details['signal']->payload['effective_neighbors'] ?? null, 1) }}. Confidence is an evidence score, not a probability of profit.</p>@endif</div>
                 @else<p class="guide-notice mt-4">No current recorded signal is available. Collection and the scheduled signal recorder must run before a fresh observation appears.</p>@endif
             </section>
-            <section class="guide-panel" aria-labelledby="journal-title"><h2 id="journal-title">Recorded signal journal · {{ $market->symbol }}</h2><p>Latest 20 observations, including deliberate HOLD decisions and insufficient evidence. An observation is not a trade.</p>
+            <section class="guide-panel" aria-labelledby="journal-title"><h2 id="journal-title">Recorded signal journal · {{ $market->symbol }}</h2><p>Latest 20 Server observations with any Client reports linked to the exact immutable signal. No report means Unknown.</p>
                 <div class="dashboard-table-wrap"><table><thead><tr><th>Recorded (UTC)</th><th>Server decision</th><th>Explanation and evidence</th><th>Client execution</th></tr></thead><tbody>
-                    @forelse ($details['history'] as $signal)<tr><td>{{ $time($signal->recorded_at_ms) }}</td><td>{{ \App\Domain\Intelligence\SignalJournal::label($signal->action, $signal->reason) }}</td><td>{{ $signal->payload['explanation'] ?? \App\Domain\Intelligence\SignalJournal::explain($signal->reason) }}<details><summary>Trace this observation</summary><p>Source candle closed: {{ $time($signal->decision_at_ms) }}<br>Period: {{ $signal->period }}<br>Model: {{ $signal->model_id ?? 'None' }}<br>Signal: {{ $signal->getKey() }}<br>Horizon: {{ $signal->payload['horizon_candles'] ?? 'Unknown' }} candles<br>Confidence score: {{ $signal->reason === 'supported' ? $number(($signal->payload['confidence'] ?? 0) * 100, 1).'%' : 'Not supported' }}</p></details></td><td>Unknown</td></tr>
+                    @forelse ($details['history'] as $signal)
+                        @php($reports = $details['client_reports']->get($signal->getKey(), collect()))
+                        @php($latestReport = $reports->last())
+                        <tr><td>{{ $time($signal->recorded_at_ms) }}</td><td>{{ \App\Domain\Intelligence\SignalJournal::label($signal->action, $signal->reason) }}</td><td>{{ $signal->payload['explanation'] ?? \App\Domain\Intelligence\SignalJournal::explain($signal->reason) }}<details><summary>Trace this observation</summary><p>Source candle closed: {{ $time($signal->decision_at_ms) }}<br>Period: {{ $signal->period }}<br>Model: {{ $signal->model_id ?? 'None' }}<br>Signal: {{ $signal->getKey() }}<br>Horizon: {{ $signal->payload['horizon_candles'] ?? 'Unknown' }} candles<br>Confidence score: {{ $signal->reason === 'supported' ? $number(($signal->payload['confidence'] ?? 0) * 100, 1).'%' : 'Not supported' }}</p></details></td><td>
+                            @if ($latestReport)
+                                <strong>{{ strtoupper($latestReport->event) }}@if($latestReport->side) · {{ strtoupper($latestReport->side) }}@endif</strong><br>
+                                <span>{{ $time($latestReport->occurred_at_ms) }}</span>
+                                @if ($latestReport->event === 'fill')<br><span>Price {{ $number($latestReport->price, 8) }} · Qty {{ $number($latestReport->quantity, 8) }}</span>@endif
+                                @if ($latestReport->reason)<br><span>{{ $latestReport->reason }}</span>@endif
+                                @if ($latestReport->protective)<br><span>Protective / exit report</span>@endif
+                                @if ($reports->count() > 1)<details><summary>{{ $reports->count() }} Client reports</summary>@foreach($reports as $report)<p>{{ strtoupper($report->event) }} · {{ $time($report->occurred_at_ms) }}@if($report->price) · {{ $number($report->price, 8) }}@endif</p>@endforeach</details>@endif
+                            @else
+                                Unknown
+                            @endif
+                        </td></tr>
                     @empty<tr><td colspan="4">No signals recorded yet. History starts when the signal recorder runs; past decisions are not invented.</td></tr>@endforelse
                 </tbody></table></div>
             </section>

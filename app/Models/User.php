@@ -22,34 +22,18 @@ class User extends Authenticatable implements MustVerifyEmail
 
     protected $keyType = 'string';
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var list<string>
-     */
     protected $fillable = [
         'name',
         'email',
         'password',
-        'api_key',
     ];
 
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var list<string>
-     */
     protected $hidden = [
         'password',
         'remember_token',
         'api_key',
     ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     protected function casts(): array
     {
         return [
@@ -75,9 +59,16 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->hasMany(MarketSubscription::class, 'user_id', 'user_id');
     }
 
-    /**
-     * Get the user's initials.
-     */
+    public function clientApiKeys(): HasMany
+    {
+        return $this->hasMany(ClientApiKey::class, 'user_id', 'user_id');
+    }
+
+    public function clientExecutionReports(): HasMany
+    {
+        return $this->hasMany(ClientExecutionReport::class, 'user_id', 'user_id');
+    }
+
     public function initials(): string
     {
         return Str::of($this->name)

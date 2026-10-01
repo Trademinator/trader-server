@@ -135,6 +135,31 @@ export function humanMarkers(chart) {
     }).sort((a, b) => a.time - b.time);
 }
 
+export function clientMarkers(chart, tickSize = 0.00000001) {
+    const candles = chart.series ?? [];
+    return (chart.client_events ?? []).flatMap(event => {
+        const candle = candles.find(row => row.time * 1000 >= Number(event.occurred_at_ms));
+        if (!candle) return [];
+        const side = String(event.side ?? '');
+        const buy = side === 'buy';
+        const fill = event.event === 'fill';
+        const price = fill && Number.isFinite(Number(event.price)) ? ` ${formatPrice(Number(event.price), tickSize)}` : '';
+        const label = fill ? `FILL ${side.toUpperCase()}${price}`
+            : event.event === 'acted' ? `C ${side.toUpperCase()}`
+                : `C ${String(event.event ?? '').toUpperCase()}`;
+
+        return [{
+            id: `client-${event.id}`,
+            time: candle.time,
+            position: buy ? 'belowBar' : 'aboveBar',
+            color: fill ? '#7c3aed' : '#2563eb',
+            shape: fill ? 'square' : buy ? 'arrowUp' : side === 'sell' ? 'arrowDown' : 'circle',
+            text: label,
+            size: fill ? 2 : 1,
+        }];
+    }).sort((a, b) => a.time - b.time);
+}
+
 export async function mountDashboardChart(root) {
     const canvas = root.querySelector('[data-canvas]');
     const status = root.querySelector('[data-status]');
@@ -146,9 +171,11 @@ export async function mountDashboardChart(root) {
     const historyRetry = root.querySelector('[data-history-retry]');
     const showMarkers = root.querySelector('[data-markers]');
     const showHuman = root.querySelector('[data-human-training]');
+    const showClient = root.querySelector('[data-client-activity]');
     const automatic = root.querySelector('[data-auto]');
     let data = JSON.parse(root.dataset.chart);
     data.human_labels ??= [];
+    data.client_events ??= [];
     data.has_older ??= false;
     data.has_newer ??= false;
 
@@ -170,11 +197,14 @@ export async function mountDashboardChart(root) {
     const mergeHuman = (current = [], incoming = []) => [...new Map([...current, ...incoming].map(item => [Number(item.time), {
         time: Number(item.time), action: item.action,
     }])).values()].sort((a, b) => a.time - b.time);
+    const mergeClient = (current = [], incoming = []) => [...new Map([...current, ...incoming].map(item => [item.id, item])).values()]
+        .sort((a, b) => Number(a.occurred_at_ms) - Number(b.occurred_at_ms));
     const updateMarkers = () => {
         if (!markers) return;
         markers.setMarkers([
             ...(showMarkers?.checked ? signalMarkers(data) : []),
             ...(showHuman?.checked ? humanMarkers(data) : []),
+            ...(showClient?.checked ? clientMarkers(data, tickSize) : []),
         ].sort((a, b) => Number(a.time) - Number(b.time) || String(a.id).localeCompare(String(b.id))));
     };
     const updateStatus = () => {
@@ -233,6 +263,7 @@ export async function mountDashboardChart(root) {
                 data.series = [];
                 data.signals = [];
                 data.human_labels = [];
+                data.client_events = [];
                 price.setData([]);
                 volume.setData([]);
                 markers.setMarkers([]);
@@ -248,6 +279,7 @@ export async function mountDashboardChart(root) {
 
             data = result.chart;
             data.human_labels ??= [];
+            data.client_events ??= [];
             data.has_older ??= false;
             data.has_newer ??= false;
             historyCeilingMs = Number(data.last_closed_at_ms) || null;
@@ -270,7 +302,7 @@ export async function mountDashboardChart(root) {
     }
     const applyHistoryPage = (page, direction) => {
         if (page.period !== data.period || !Array.isArray(page.series) || !Array.isArray(page.signals)
-            || !Array.isArray(page.human_labels)) {
+            || !Array.isArray(page.human_labels) || !Array.isArray(page.client_events)) {
             throw new Error('Unexpected history response. Reload the dashboard.');
         }
 
@@ -281,6 +313,7 @@ export async function mountDashboardChart(root) {
                 series: page.series,
                 signals: page.signals,
                 human_labels: page.human_labels,
+                client_events: page.client_events,
                 stale: data.stale,
                 last_closed_at_ms: historyCeilingMs,
             };
@@ -294,6 +327,7 @@ export async function mountDashboardChart(root) {
         data.series = merged.series;
         data.signals = mergeSignals(data.signals, page.signals);
         data.human_labels = mergeHuman(data.human_labels, page.human_labels);
+        data.client_events = mergeClient(data.client_events, page.client_events);
         data.gaps = Math.max(Number(data.gaps ?? 0), Number(page.gaps ?? 0));
         data.invalid_candles = Number(data.invalid_candles ?? 0) + Number(page.invalid_candles ?? 0);
         if (direction === 'older') data.has_older = page.has_older === true && merged.added > 0;
@@ -402,6 +436,7 @@ export async function mountDashboardChart(root) {
         historyRetry?.removeEventListener('click', retryHistory);
         showMarkers.removeEventListener('change', updateMarkers);
         showHuman?.removeEventListener('change', updateMarkers);
+        showClient?.removeEventListener('change', updateMarkers);
         automatic.removeEventListener('change', schedule);
         canvas.removeEventListener('wheel', onInteraction);
         canvas.removeEventListener('pointerdown', onInteraction);
@@ -439,6 +474,7 @@ export async function mountDashboardChart(root) {
         historyRetry?.addEventListener('click', retryHistory);
         showMarkers.addEventListener('change', updateMarkers);
         showHuman?.addEventListener('change', updateMarkers);
+        showClient?.addEventListener('change', updateMarkers);
         automatic.addEventListener('change', schedule);
         document.addEventListener('visibilitychange', visibility);
         schedule();

@@ -6,6 +6,8 @@ use App\Events\MarketSubscriptionCreated;
 use App\Traits\HasUniqueIdentifier;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class MarketSubscription extends Model
 {
@@ -37,5 +39,20 @@ class MarketSubscription extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id', 'user_id');
+    }
+
+    public function clientSetting(): HasOne
+    {
+        return $this->hasOne(ClientMarketSetting::class, 'market_subscription_id', 'market_subscription_id');
+    }
+
+    public function clientExecutionReports(): HasMany
+    {
+        return $this->hasMany(ClientExecutionReport::class, 'market_subscription_id', 'market_subscription_id');
+    }
+
+    public function paperAccount(): HasOne
+    {
+        return $this->hasOne(ClientPaperAccount::class, 'market_subscription_id', 'market_subscription_id');
     }
 }

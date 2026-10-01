@@ -1,60 +1,30 @@
 <?php
 
+use App\Models\ClientApiKey;
 use App\Models\User;
-use Illuminate\Support\Str;
 
-it('updates api_key using consistently named request fields', function () {
-    $current = (string) Str::uuid7();
-    $replacement = (string) Str::uuid7();
-    $user = User::factory()->create(['api_key' => $current]);
+it('creates a hashed client api key and shows the secret only in the redirect flash', function () {
+    $user = User::factory()->create();
 
-    $response = $this
-        ->actingAs($user)
-        ->from('/settings/api-key')
-        ->put('/settings/api-key', [
-            'current_api_key' => $current,
-            'api_key' => $replacement,
-            'api_key_confirmation' => $replacement,
-        ]);
+    $response = $this->actingAs($user)->post('/settings/api-key', ['label' => 'Desktop Client']);
 
-    $response
-        ->assertSessionHasNoErrors()
-        ->assertRedirect('/settings/api-key');
+    $response->assertRedirect('/settings/api-key')->assertSessionHas('new_client_api_key');
+    $secret = session('new_client_api_key');
+    expect($secret)->toStartWith('tmk_');
 
-    expect($user->refresh()->api_key)->toBe($replacement);
+    $key = ClientApiKey::query()->where('user_id', $user->user_id)->firstOrFail();
+    expect($key->label)->toBe('Desktop Client')
+        ->and($key->secret_hash)->toBe(hash('sha256', $secret))
+        ->and($key->secret_hash)->not->toContain($secret);
 });
 
-it('rejects api key rotation when the current key is wrong', function () {
-    $user = User::factory()->create(['api_key' => (string) Str::uuid7()]);
-    $replacement = (string) Str::uuid7();
+it('revokes only the selected client api key', function () {
+    $user = User::factory()->create();
+    $one = ClientApiKey::query()->create(['user_id' => $user->user_id, 'label' => 'One', 'prefix' => 'tmk_12345678', 'secret_hash' => hash('sha256', 'one')]);
+    $two = ClientApiKey::query()->create(['user_id' => $user->user_id, 'label' => 'Two', 'prefix' => 'tmk_abcdefgh', 'secret_hash' => hash('sha256', 'two')]);
 
-    $response = $this
-        ->actingAs($user)
-        ->from('/settings/api-key')
-        ->put('/settings/api-key', [
-            'current_api_key' => (string) Str::uuid7(),
-            'api_key' => $replacement,
-            'api_key_confirmation' => $replacement,
-        ]);
+    $this->actingAs($user)->delete('/settings/api-key/'.$one->getKey())->assertRedirect('/settings/api-key');
 
-    $response
-        ->assertSessionHasErrors('current_api_key')
-        ->assertRedirect('/settings/api-key');
-});
-
-it('allows a legacy user with no api key to set the first one', function () {
-    $user = User::factory()->create(['api_key' => null]);
-    $replacement = (string) Str::uuid7();
-
-    $response = $this
-        ->actingAs($user)
-        ->from('/settings/api-key')
-        ->put('/settings/api-key', [
-            'current_api_key' => null,
-            'api_key' => $replacement,
-            'api_key_confirmation' => $replacement,
-        ]);
-
-    $response->assertSessionHasNoErrors();
-    expect($user->refresh()->api_key)->toBe($replacement);
+    expect($one->refresh()->revoked_at)->not->toBeNull()
+        ->and($two->refresh()->revoked_at)->toBeNull();
 });

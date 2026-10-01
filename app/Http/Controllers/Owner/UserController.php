@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Owner;
 
 use App\Domain\Operations\ActionLog;
 use App\Http\Controllers\Controller;
+use App\Models\ClientApiKey;
 use App\Models\MarketFeed;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
@@ -59,8 +60,9 @@ class UserController extends Controller
                     break;
                 case 'suspend':
                     $target->suspended_at ??= now();
-                    $target->api_key = null;
                     $target->remember_token = Str::random(60);
+                    $target->api_key = null;
+                    ClientApiKey::query()->where('user_id', $target->user_id)->whereNull('revoked_at')->update(['revoked_at' => now()]);
                     $count = $target->subscriptions()->where('active', true)->update(['active' => false]);
                     MarketFeed::query()->whereIn('market_id', $target->subscriptions()->select('market_id'))
                         ->whereDoesntHave('market.subscriptions', fn ($query) => $query->where('active', true))
@@ -71,6 +73,7 @@ class UserController extends Controller
                     break;
                 case 'revoke-api':
                     $target->api_key = null;
+                    ClientApiKey::query()->where('user_id', $target->user_id)->whereNull('revoked_at')->update(['revoked_at' => now()]);
                     break;
             }
             $target->save();
@@ -81,9 +84,9 @@ class UserController extends Controller
             ['subject_id' => $user->user_id, 'outcome' => 'completed', 'rows' => $count]);
 
         return back()->with('status', match ($data['operation']) {
-            'suspend' => 'Account suspended, API key revoked, and active subscriptions stopped. Existing sessions will be rejected on their next request.',
+            'suspend' => 'Account suspended, Client API keys revoked, and active subscriptions stopped. Existing sessions will be rejected on their next request.',
             'restore' => 'Account restored. The user can choose which markets to subscribe to again.',
-            'revoke-api' => 'API key revoked.',
+            'revoke-api' => 'All active Client API keys revoked.',
             default => 'User profile updated. A changed email address must be verified again.',
         });
     }
