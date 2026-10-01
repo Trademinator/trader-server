@@ -13,10 +13,27 @@ final class MarketFeedDispatcher
     public function dispatchDue(int $limit = 100): int
     {
         $dispatched = 0;
-        $ids = MarketFeed::query()->where('next_pull_at', '<=', now())
-            ->where(fn ($query) => $query->whereNull('lease_until')->orWhere('lease_until', '<=', now()))
-            ->whereHas('market.subscriptions', fn ($query) => $query->where('active', true))
-            ->orderBy('next_pull_at')->limit($limit)->pluck('market_id');
+
+        // Rank due feeds within each exchange, then dispatch one feed from each
+        // exchange per round. This reduces same-exchange request bursts while
+        // preserving oldest-first ordering inside every exchange.
+        $ranked = MarketFeed::query()
+            ->select(['market_feeds.market_id', 'markets.exchange_id', 'market_feeds.next_pull_at'])
+            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY markets.exchange_id ORDER BY market_feeds.next_pull_at, market_feeds.market_id) AS exchange_rank')
+            ->selectRaw('MIN(market_feeds.next_pull_at) OVER (PARTITION BY markets.exchange_id) AS exchange_first_due')
+            ->join('markets', 'markets.market_id', '=', 'market_feeds.market_id')
+            ->where('market_feeds.next_pull_at', '<=', now())
+            ->where(fn ($query) => $query->whereNull('market_feeds.lease_until')
+                ->orWhere('market_feeds.lease_until', '<=', now()))
+            ->whereExists(fn ($query) => $query->selectRaw('1')->from('market_subscriptions')
+                ->whereColumn('market_subscriptions.market_id', 'market_feeds.market_id')->where('active', true));
+
+        $ids = DB::query()->fromSub($ranked, 'due_feeds')
+            ->orderBy('exchange_rank')
+            ->orderBy('exchange_first_due')
+            ->orderBy('exchange_id')
+            ->limit($limit)
+            ->pluck('market_id');
 
         foreach ($ids as $marketId) {
             $token = (string) Str::uuid7();

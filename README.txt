@@ -1,15 +1,13 @@
-Dashboard Need-Attention dedup fix
+Trademinator market-feed exchange interleaving fix
 
-Extract this archive at the repository root to replace:
-  app/Domain/Intelligence/CollectionAttention.php
-  tests/Feature/DashboardMarketsTest.php
+Replace these files in the repository:
+- app/Domain/MarketData/MarketFeedDispatcher.php
+- tests/Feature/MarketSubscriptionsTest.php
 
 Then run:
-  php artisan test tests/Feature/DashboardMarketsTest.php
+php artisan test tests/Feature/MarketSubscriptionsTest.php
 
-What changes:
-- A queued feed no longer reports its previous last_error as a separate "Collector queued" issue.
-- An expired queue lease becomes the primary collection issue and includes the previous attempt's error as context.
-- selected_period=NULL is suppressed when it is already explained by the primary collection issue.
-- Pending period-selection failures no longer produce a second generic missing-period warning.
-- Independent stale/gap/invalid-candle issues remain separate.
+The dispatcher now ranks due feeds within each exchange and queues one per exchange per round.
+Example: Kraken, Kraken, Kraken, Bitso, Bitso becomes Kraken, Bitso, Kraken, Bitso, Kraken.
+
+This reduces same-exchange bursts but does not guarantee a one-request-per-second API limit when multiple queue workers execute jobs concurrently. A distributed per-exchange/API throttle is still the hard safety mechanism.

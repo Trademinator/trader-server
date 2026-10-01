@@ -77,3 +77,46 @@ it('claims a due feed only once and ignores unsubscribed feeds', function () {
     Bus::assertDispatchedTimes(CollectMarketFeed::class, 1);
     Bus::assertDispatched(CollectMarketFeed::class, fn (CollectMarketFeed $job): bool => $job->marketId === $market->market_id && $job->leaseToken === MarketFeed::query()->first()->lease_token);
 });
+
+it('interleaves due market feeds by exchange when possible', function () {
+    Bus::fake();
+    $user = User::factory()->create();
+    $kraken = Exchange::query()->create(['name' => 'Kraken', 'class' => 'kraken', 'config' => '{}']);
+    $bitso = Exchange::query()->create(['name' => 'Bitso', 'class' => 'bitso', 'config' => '{}']);
+
+    $definitions = [
+        [$kraken, 'BTC/USD', now()->subMinutes(10)],
+        [$kraken, 'ETH/USD', now()->subMinutes(9)],
+        [$kraken, 'SOL/USD', now()->subMinutes(8)],
+        [$bitso, 'BTC/MXN', now()->subMinutes(7)],
+        [$bitso, 'ETH/MXN', now()->subMinutes(6)],
+    ];
+
+    foreach ($definitions as [$exchange, $symbol, $dueAt]) {
+        $market = Market::query()->create([
+            'exchange_id' => $exchange->exchange_id,
+            'symbol' => $symbol,
+            'tick_size' => '0.01',
+        ]);
+        MarketFeed::query()->create([
+            'market_id' => $market->market_id,
+            'status' => 'pending',
+            'next_pull_at' => $dueAt,
+        ]);
+        MarketSubscription::query()->create([
+            'user_id' => $user->user_id,
+            'market_id' => $market->market_id,
+            'active' => true,
+        ]);
+    }
+
+    expect(app(MarketFeedDispatcher::class)->dispatchDue(5))->toBe(5);
+
+    $exchangeByMarket = Market::query()->with('exchange')->get()
+        ->mapWithKeys(fn (Market $market): array => [$market->market_id => $market->exchange->class]);
+    $queued = Bus::dispatched(CollectMarketFeed::class)
+        ->map(fn (CollectMarketFeed $job): string => $exchangeByMarket[$job->marketId])
+        ->values()->all();
+
+    expect($queued)->toBe(['kraken', 'bitso', 'kraken', 'bitso', 'kraken']);
+});
