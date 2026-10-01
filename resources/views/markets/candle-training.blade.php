@@ -43,6 +43,12 @@
         .candle-menu-actions { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
         .candle-menu button { min-height:42px; border:1px solid #94a3b8; border-radius:7px; cursor:pointer; font-weight:700; }
         .candle-menu-delete { width:100%; margin-top:8px; background:#fff1f2; color:#b4233b; }
+        .pair-guide .candle-training-fee-note { color:#163e70; }
+        .pair-guide .candle-training-fee-note strong { color:#0f2f57; }
+        .pair-guide .candle-training-fee-note .candle-training-fee-detail { color:#243b53; }
+        .dark .pair-guide .candle-training-fee-note { color:#163e70; }
+        .dark .pair-guide .candle-training-fee-note strong { color:#0f2f57; }
+        .dark .pair-guide .candle-training-fee-note .candle-training-fee-detail { color:#243b53; }
         @media (max-width: 620px) {
             .candle-training-stats, .candle-training-measure { grid-template-columns:1fr; }
             .candle-training-measure .measure-wide { grid-column:auto; }
@@ -120,6 +126,17 @@
                     <div><strong>Price move</strong><span data-measure-move data-measure-direction="flat">—</span><small>close-to-close · A → B</small></div>
                     <div><strong>Fee comparison</strong><br><span data-measure-fee>{{ $state['taker_fee'] === null ? 'Published exchange taker fee unavailable.' : 'Published taker fee '.number_format($state['taker_fee'] * 100, 3).'% per side.' }}</span></div>
                 </div>
+                <div class="guide-notice candle-training-fee-note" data-current-exchange-fees>
+                    @if($state['taker_fee'] !== null)
+                        <strong>Current published exchange fee:</strong>
+                        taker {{ number_format($state['taker_fee'] * 100, 4) }}% per side ·
+                        approximately {{ number_format($state['taker_fee'] * 200, 4) }}% round trip.
+                        <span class="candle-training-fee-detail">Auto-label profitability filtering uses the round-trip taker fee as its economic floor. Spread, slippage, conversions and account-specific fee discounts are not included.</span>
+                    @else
+                        <strong>Current published exchange fee:</strong> unavailable.
+                        <span class="candle-training-fee-detail">Auto-label cannot apply its transaction-cost profitability floor until the exchange exposes a taker fee.</span>
+                    @endif
+                </div>
                 <p class="review-legend" data-legend>Move over a candle to inspect OHLC and volume. Existing BUY/HOLD/SELL labels remain marked on the chart.</p>
                 <div class="candle-chart-navigation" aria-label="Replay navigation">
                     <a class="review-control candle-step" data-step-previous
@@ -138,9 +155,9 @@
                 <p class="guide-help">Earliest available data: <a href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['earliest_window_decision_at_ms']]) }}"><x-display-time :value="$state['earliest_time']" unit="seconds" /></a> · in this frozen dataset</p>
                 <div class="flex flex-wrap items-center gap-3">
                     <button type="button" class="review-control" data-fit>Fit visible candles</button>
-                    <button type="button" class="review-control candle-menu-delete" data-delete-all-training>Delete all training</button>
                     <button type="button" class="review-control" data-auto-label>Auto-label</button>
                     <button type="button" class="review-control" data-submit-labels hidden>Submit</button>
+                    <button type="button" class="review-control candle-menu-delete" data-delete-all-training>Delete all training</button>
                 </div>
                 <p class="guide-help" data-pending-status>No pending changes. Manual labels, deletions and auto-label suggestions stay only in this browser until Submit.</p>
                 <p class="guide-help" data-history-status role="status"></p>
