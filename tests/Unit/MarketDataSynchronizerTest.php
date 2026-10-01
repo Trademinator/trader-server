@@ -15,7 +15,7 @@ it('revisits the last candle and reports an observed gap', function () {
     $exchanges = Mockery::mock(ExchangeRepository::class);
     $tickers = Mockery::mock(TickerRepository::class);
     $exchanges->shouldReceive('findByClass')->once()->with('kraken')->andReturn(new Collection([$exchange]));
-    $exchanges->shouldReceive('setExchange')->once()->with($exchange);
+    $exchanges->shouldReceive('setExchange')->once()->with($exchange, [], null, 'BTC/USD');
     $exchanges->shouldReceive('periods')->once()->andReturn(['1m' => '1m']);
     $exchanges->shouldReceive('prepareCandleMarket')->once()->with('BTC/USD');
     $tickers->shouldReceive('latestTimestamp')->once()->with('kraken', 'BTC/USD', '1m')->andReturn(60_000);

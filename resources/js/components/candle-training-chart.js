@@ -118,20 +118,26 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     const canvas = root.querySelector('[data-canvas]');
     const legend = root.querySelector('[data-legend]');
     const fit = root.querySelector('[data-fit]');
+    const autoLabel = root.querySelector('[data-auto-label]');
+    const deleteAllTraining = root.querySelector('[data-delete-all-training]');
+    const submitLabels = root.querySelector('[data-submit-labels]');
+    const pendingStatus = root.querySelector('[data-pending-status]');
     const menu = root.querySelector('[data-candle-menu]');
     const historyStatus = root.querySelector('[data-history-status]');
     const historyRetry = root.querySelector('[data-history-retry]');
     const tooltip = root.querySelector('[data-measure-tooltip]');
     const datasetSelect = root.querySelector('[data-candle-dataset]');
-    const switchDataset = () => root.querySelector('[data-candle-dataset-form]')?.requestSubmit();
-    datasetSelect?.addEventListener('change', switchDataset);
+    let switchDataset;
     let chart, price, volume, measureLine, observer, markerPlugin, historyTimer, historyRequest, unsubscribeTime;
     let inspectedCandle;
-    let loadingHistory = false, historyFailed = false, disposed = false, savingLabel = false;
+    let loadingHistory = false, historyFailed = false, disposed = false, submittingLabels = false;
     let userInteracted = false;
     let lastVisibleRange = null, retryDirection = 'older';
     const data = candleTrainingChartData(JSON.parse(root.dataset.snapshot));
     const labels = new Map(data.labels.map(label => [Number(label.time), label.action]));
+    const baselineLabels = new Map(labels);
+    const stagedChanges = new Map();
+    let deleteAllPending = false;
     const candles = new Map(data.series.map(candle => [Number(candle.time), candle]));
     let selection = [];
     let menuTime = null;
@@ -221,6 +227,32 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         if (newAction && ACTIONS.includes(newAction)) data.stats.counts[newAction] = Number(data.stats.counts[newAction] ?? 0) + 1;
         renderStats();
     };
+    const isDirty = () => deleteAllPending || stagedChanges.size > 0;
+    const renderPending = () => {
+        const dirty = isDirty();
+        if (submitLabels) submitLabels.hidden = !dirty;
+        if (pendingStatus) pendingStatus.textContent = dirty
+            ? `${stagedChanges.size} staged candle change${stagedChanges.size === 1 ? '' : 's'}${deleteAllPending ? ' · all previously saved labels will be deleted' : ''}. Nothing is stored until Submit.`
+            : 'No pending changes. Manual labels, deletions and auto-label suggestions stay only in this browser until Submit.';
+    };
+    const stageLabel = (time, decision, action) => {
+        const labelTime = Number(time);
+        const oldAction = labels.get(labelTime) ?? null;
+        const baseline = deleteAllPending ? null : (baselineLabels.get(labelTime) ?? null);
+        if (action === null) labels.delete(labelTime);
+        else labels.set(labelTime, action);
+        if (action === baseline) stagedChanges.delete(Number(decision));
+        else stagedChanges.set(Number(decision), { decision_at_ms: Number(decision), action });
+        adjustStats(oldAction, action);
+        renderMarkers();
+        renderPending();
+    };
+    switchDataset = () => {
+        if (isDirty() && typeof window.confirm === 'function'
+            && !window.confirm('Discard the unsubmitted Candle Training changes and switch dataset?')) return;
+        root.querySelector('[data-candle-dataset-form]')?.requestSubmit();
+    };
+    datasetSelect?.addEventListener('change', switchDataset);
     const renderMeasurementTooltip = param => {
         if (!tooltip) return;
         tooltip.hidden = true;
@@ -295,7 +327,11 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             Object.assign(data.decisions, page.decisions);
             Object.assign(data.allowedActions, page.allowed_actions);
             for (const label of page.labels) {
-                if (ACTIONS.includes(label.action) && candles.has(Number(label.time))) labels.set(Number(label.time), label.action);
+                const time = Number(label.time);
+                const decision = Number(page.decisions?.[String(time)] ?? 0);
+                if (!ACTIONS.includes(label.action) || !candles.has(time)) continue;
+                baselineLabels.set(time, label.action);
+                if (!deleteAllPending && !stagedChanges.has(decision)) labels.set(time, label.action);
             }
             if (newer) {
                 data.decisionAtMs = page.decision_at_ms;
@@ -372,7 +408,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         menuTime = null;
     };
     const openMenu = (time, clientX, clientY) => {
-        if (savingLabel || !menu) return;
+        if (submittingLabels || !menu) return;
         const decision = data.decisions[String(time)];
         menuTime = Number(time);
         const current = labels.get(menuTime) ?? null;
@@ -403,45 +439,98 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             menu.style.top = `${Math.max(8, Math.min(clientY, window.innerHeight - rect.height - 8))}px`;
         });
     };
-    const requestLabel = async action => {
-        if (savingLabel || menuTime === null || !data.decisions[String(menuTime)]) return;
+    const requestLabel = action => {
+        if (submittingLabels || menuTime === null || !data.decisions[String(menuTime)]) return;
         const labelTime = menuTime;
         const decision = Number(data.decisions[String(menuTime)]);
         const deleting = action === 'delete';
         if (!deleting && !candleActionAllowed(candles.get(labelTime), action, data.allowedActions[String(labelTime)])) return;
-        const oldAction = labels.get(menuTime) ?? null;
-        savingLabel = true;
-        const buttons = [...menu.querySelectorAll('button')];
-        buttons.forEach(button => { button.disabled = true; });
-        status.textContent = deleting ? 'Removing human label…' : `Saving ${action.toUpperCase()}…`;
+        stageLabel(labelTime, decision, deleting ? null : action);
+        status.textContent = deleting
+            ? 'Label deletion staged in this browser. Press Submit to store the reviewed result.'
+            : `${action.toUpperCase()} staged in this browser. Press Submit to store the reviewed result.`;
+        closeMenu();
+    };
+    const requestAutoLabels = async () => {
+        if (submittingLabels || !autoLabel) return;
+        autoLabel.disabled = true;
+        status.textContent = 'Building auto-label suggestions for this frozen dataset…';
         try {
-            const response = await fetch(deleting ? root.dataset.deleteUrl : root.dataset.updateUrl, {
-                method: deleting ? 'DELETE' : 'PUT',
-                credentials: 'same-origin',
+            const response = await fetch(root.dataset.autoUrl, {
+                method: 'POST', credentials: 'same-origin',
                 headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': root.dataset.csrf },
-                body: JSON.stringify(deleting ? { decision_at_ms: decision } : { decision_at_ms: decision, action }),
+                body: JSON.stringify({ include_existing: deleteAllPending }),
             });
             const payload = await response.json().catch(() => ({}));
-            if (!response.ok) {
-                const message = payload.message ?? Object.values(payload.errors ?? {}).flat()[0] ?? `Request failed (${response.status}).`;
-                throw new Error(message);
+            if (!response.ok) throw new Error(payload.message ?? Object.values(payload.errors ?? {}).flat()[0] ?? `Request failed (${response.status}).`);
+            let staged = 0;
+            for (const label of payload.labels ?? []) {
+                const time = Number(label.time), decision = Number(label.decision_at_ms);
+                if (!ACTIONS.includes(label.action) || !Number.isSafeInteger(decision) || stagedChanges.has(decision)) continue;
+                const oldAction = labels.get(time) ?? null;
+                labels.set(time, label.action);
+                stagedChanges.set(decision, { decision_at_ms: decision, action: label.action });
+                adjustStats(oldAction, label.action);
+                staged++;
             }
-            if (disposed) return;
-            if (deleting) labels.delete(labelTime);
-            else labels.set(labelTime, payload.action);
-            adjustStats(oldAction, deleting ? null : action);
             renderMarkers();
-            status.textContent = payload.message ?? (deleting ? 'Candle label removed.' : `Candle marked ${action.toUpperCase()}.`);
-            closeMenu();
+            renderPending();
+            status.textContent = `${staged} auto-label suggestion${staged === 1 ? '' : 's'} staged for review. Nothing is stored until Submit.`;
         } catch (error) {
-            status.textContent = error instanceof Error ? error.message : 'The human label could not be saved.';
+            status.textContent = error instanceof Error ? error.message : 'Auto-label suggestions could not be generated.';
         } finally {
-            savingLabel = false;
-            buttons.forEach(button => {
-                const value = button.dataset.menuAction;
-                button.disabled = value !== 'delete' && !candleActionAllowed(candles.get(labelTime), value, data.allowedActions[String(labelTime)]);
-            });
+            autoLabel.disabled = false;
         }
+    };
+    const stageDeleteAll = () => {
+        if (submittingLabels || deleteAllPending) return;
+        if (typeof window.confirm === 'function'
+            && !window.confirm('Stage deletion of all your Candle Training labels for this market and period? The database will not change until Submit.')) return;
+        deleteAllPending = true;
+        labels.clear();
+        stagedChanges.clear();
+        if (data.stats?.counts) for (const action of ACTIONS) data.stats.counts[action] = 0;
+        renderStats();
+        renderMarkers();
+        renderPending();
+        status.textContent = 'Deletion of all saved labels is staged only. Press Submit to commit it, or reload the page to discard it.';
+    };
+    const submitStagedLabels = async () => {
+        if (submittingLabels || !isDirty()) return;
+        submittingLabels = true;
+        if (submitLabels) submitLabels.disabled = true;
+        if (autoLabel) autoLabel.disabled = true;
+        if (deleteAllTraining) deleteAllTraining.disabled = true;
+        status.textContent = 'Submitting reviewed Candle Training labels…';
+        try {
+            const response = await fetch(root.dataset.submitUrl, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': root.dataset.csrf },
+                body: JSON.stringify({ delete_all: deleteAllPending, changes: [...stagedChanges.values()] }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.message ?? Object.values(payload.errors ?? {}).flat()[0] ?? `Request failed (${response.status}).`);
+            deleteAllPending = false;
+            stagedChanges.clear();
+            baselineLabels.clear();
+            for (const [time, action] of labels.entries()) baselineLabels.set(time, action);
+            if (payload.stats) data.stats = payload.stats;
+            renderStats();
+            renderPending();
+            status.textContent = payload.message ?? 'Candle Training labels submitted.';
+        } catch (error) {
+            status.textContent = error instanceof Error ? error.message : 'The staged Candle Training labels could not be submitted.';
+        } finally {
+            submittingLabels = false;
+            if (submitLabels) submitLabels.disabled = false;
+            if (autoLabel) autoLabel.disabled = false;
+            if (deleteAllTraining) deleteAllTraining.disabled = false;
+        }
+    };
+    const onBeforeUnload = event => {
+        if (!isDirty()) return;
+        event.preventDefault();
+        event.returnValue = '';
     };
     const onContextMenu = event => {
         event.preventDefault();
@@ -536,10 +625,15 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         document.addEventListener('pointerdown', onDocumentPointerDown);
         document.addEventListener('keydown', onKeyDown);
         menu?.querySelectorAll('[data-menu-action]').forEach(button => button.addEventListener('click', () => requestLabel(button.dataset.menuAction)));
+        autoLabel?.addEventListener('click', requestAutoLabels);
+        deleteAllTraining?.addEventListener('click', stageDeleteAll);
+        submitLabels?.addEventListener('click', submitStagedLabels);
+        window.addEventListener('beforeunload', onBeforeUnload);
+        renderPending();
         fitChart();
         renderMeasurement();
         renderStats();
-        status.textContent = 'Left-click selects A/B; hover the line to see the price move. Right-click or long-press a candle to label it. BUY requires a red bar; SELL requires a green bar; HOLD works on any bar.';
+        status.textContent = 'Left-click selects A/B; hover the line to see the price move. Right-click or long-press a candle to stage BUY/HOLD/SELL. Nothing is stored until Submit.';
         window.addEventListener('pagehide', event => {
             if (event.persisted) return;
             disposed = true;
@@ -553,6 +647,10 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             fit.removeEventListener('click', fitChart);
             historyRetry.removeEventListener('click', retryHistory);
             datasetSelect?.removeEventListener('change', switchDataset);
+            autoLabel?.removeEventListener('click', requestAutoLabels);
+            deleteAllTraining?.removeEventListener('click', stageDeleteAll);
+            submitLabels?.removeEventListener('click', submitStagedLabels);
+            window.removeEventListener('beforeunload', onBeforeUnload);
             canvas.removeEventListener('contextmenu', onContextMenu, true);
             canvas.removeEventListener('wheel', onWheel);
             canvas.removeEventListener('pointerdown', onPointerDown);
@@ -569,6 +667,9 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         chart?.remove();
         canvas.hidden = true;
         fit.disabled = true;
+        if (autoLabel) autoLabel.disabled = true;
+        if (deleteAllTraining) deleteAllTraining.disabled = true;
+        if (submitLabels) submitLabels.disabled = true;
         renderStats();
         renderMeasurement();
         status.textContent = 'The chart could not load. Reload this page to label candles. Replay navigation, candle values and indicators remain available.';

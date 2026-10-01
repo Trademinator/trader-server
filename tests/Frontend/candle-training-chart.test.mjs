@@ -112,9 +112,10 @@ async function mountedChart(t, fetchResponse, snapshot = {}) {
         setAttribute(name, value) { this[name] = value; }
         removeAttribute(name) { delete this[name]; }
     }
-    const keys = ['status', 'canvas', 'legend', 'fit', 'candle-menu', 'menu-title', 'menu-note', 'history-status', 'history-retry',
-        'measure-tooltip', 'candle-dataset', 'candle-dataset-form', 'measure-a', 'measure-b', 'measure-move',
-        'measure-fee', 'balanced-samples', 'balance-hint', 'stat-total', 'replay-time', 'step-previous', 'step-next'];
+    const keys = ['status', 'canvas', 'legend', 'fit', 'auto-label', 'delete-all-training', 'submit-labels', 'pending-status',
+        'candle-menu', 'menu-title', 'menu-note', 'history-status', 'history-retry', 'measure-tooltip', 'candle-dataset',
+        'candle-dataset-form', 'measure-a', 'measure-b', 'measure-move', 'measure-fee', 'balanced-samples', 'balance-hint',
+        'stat-total', 'replay-time', 'step-previous', 'step-next'];
     const nodes = new Map(keys.map(key => [`[data-${key}]`, new Element()]));
     const buttons = ['buy', 'hold', 'sell', 'delete'].map(action => {
         const button = new Element();
@@ -133,7 +134,7 @@ async function mountedChart(t, fetchResponse, snapshot = {}) {
     menu.querySelectorAll = () => buttons;
     let switched = false;
     nodes.get('[data-candle-dataset-form]').requestSubmit = () => { switched = true; };
-    root.dataset = { replayUrl: '/training', historyUrl: '/history', updateUrl: '/labels', deleteUrl: '/labels', csrf: 'fixture',
+    root.dataset = { replayUrl: '/training', historyUrl: '/history', updateUrl: '/labels', deleteUrl: '/labels', autoUrl: '/auto-label', submitUrl: '/submit-labels', csrf: 'fixture',
         snapshot: JSON.stringify({ decision_at_ms: 5000, series: [candle(3, '10'), candle(4, '11')], has_more: true,
             labels: [], decisions: { 3: 4000, 4: 5000 }, allowed_actions: { 3: ['buy', 'hold'], 4: ['hold', 'sell'] },
             stats: { counts: { buy: 1, hold: 0, sell: 0 } }, ...snapshot }) };
@@ -223,28 +224,31 @@ test('failed history loads preserve the chart and offer an explicit retry', asyn
     assert.deepEqual(plots[0].data.map(row => row.time), [2, 3, 4]);
 });
 
-test('menu rules persist after a save and closing the menu cannot move the label to another candle', async t => {
-    let resolveSave;
-    const { nodes, document, markers, requests } = await mountedChart(t, () => new Promise(resolve => { resolveSave = resolve; }));
+test('menu labels remain browser-only until Submit and cannot move to another candle', async t => {
+    const { nodes, document, markers, requests } = await mountedChart(t, async (url, options) => {
+        assert.equal(String(url).endsWith('/submit-labels'), true);
+        const body = JSON.parse(options.body);
+        assert.deepEqual(body, { delete_all: false, changes: [{ decision_at_ms: 4000, action: 'hold' }] });
+        return { ok: true, json: async () => ({ message: 'Candle Training labels submitted.',
+            stats: { counts: { buy: 1, hold: 1, sell: 0 } } }) };
+    });
     const canvas = nodes.get('[data-canvas]');
     canvas.trigger('contextmenu', { clientX: 30, clientY: 20, preventDefault() {} });
     assert.equal(nodes.get('[data-menu-action="sell"]').disabled, true);
     assert.equal(nodes.get('[data-menu-action="buy"]').disabled, false);
-    const pending = nodes.get('[data-menu-action="hold"]').trigger('click');
+    nodes.get('[data-menu-action="hold"]').trigger('click');
     document.trigger('pointerdown', { target: canvas });
-    resolveSave({ ok: true, json: async () => ({ action: 'hold', message: 'Candle marked HOLD.' }) });
-    await pending;
 
-    assert.equal(JSON.parse(requests[0].options.body).decision_at_ms, 4000);
+    assert.equal(requests.length, 0, 'a candle click must never write training data');
     assert.ok(markers.data.some(marker => marker.id === 'human-3' && marker.text === 'HOLD'));
-    assert.ok(markers.data.every(marker => marker.time !== 0));
-    assert.equal(nodes.get('[data-menu-action="sell"]').disabled, true);
+    assert.equal(nodes.get('[data-submit-labels]').hidden, false);
     assert.equal(nodes.get('[data-stat-count="hold"]').textContent, '1');
-    canvas.trigger('contextmenu', { clientX: 40, clientY: 20, preventDefault() {} });
-    assert.equal(nodes.get('[data-menu-action="buy"]').disabled, true);
-    assert.equal(nodes.get('[data-menu-action="sell"]').disabled, false);
-});
 
+    await nodes.get('[data-submit-labels]').trigger('click');
+    assert.equal(requests.length, 1);
+    assert.equal(nodes.get('[data-submit-labels]').hidden, true);
+    assert.match(nodes.get('[data-status]').textContent, /submitted/i);
+});
 
 test('context-only candles still show an explanatory disabled menu', async t => {
     const { nodes } = await mountedChart(t, async () => ({ ok: true, json: async () => ({}) }), { decisions: {} });

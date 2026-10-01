@@ -48,6 +48,38 @@ class CandleTrainingController extends Controller
         return response()->json($page)->header('Cache-Control', 'no-store, private');
     }
 
+
+    public function autoLabel(Request $request, string $dataset, CandleTraining $training): JsonResponse
+    {
+        $data = $request->validate(['include_existing' => ['sometimes', 'boolean']]);
+
+        return response()->json($training->autoLabels(
+            $request->user(),
+            $dataset,
+            (bool) ($data['include_existing'] ?? false),
+        ))->header('Cache-Control', 'no-store, private');
+    }
+
+    public function submitLabels(Request $request, string $dataset, CandleTraining $training): JsonResponse
+    {
+        $data = $request->validate([
+            'delete_all' => ['sometimes', 'boolean'],
+            'changes' => ['present', 'array', 'max:'.max(1, (int) config('intelligence.max_rows'))],
+            'changes.*.decision_at_ms' => ['required', 'integer', 'min:1'],
+            'changes.*.action' => ['nullable', Rule::in(CandleTraining::ACTIONS)],
+        ]);
+        $result = $training->submitLabels(
+            $request->user(),
+            $dataset,
+            $data['changes'],
+            (bool) ($data['delete_all'] ?? false),
+        );
+
+        return response()->json([...$result,
+            'message' => 'Candle Training labels submitted. The reviewed labels are now available to the next model build.',
+        ])->header('Cache-Control', 'no-store, private');
+    }
+
     public function update(Request $request, string $dataset, CandleTraining $training): RedirectResponse|JsonResponse
     {
         $data = $request->validate(['decision_at_ms' => ['required', 'integer', 'min:1'],

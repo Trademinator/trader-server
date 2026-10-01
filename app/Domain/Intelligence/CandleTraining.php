@@ -11,6 +11,7 @@ use App\Models\HumanCandleLabel;
 use App\Models\HumanTrainingSnapshot;
 use App\Models\User;
 use App\Traits\Bc;
+use App\Traits\CandleAutoDetection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
@@ -18,7 +19,7 @@ use Throwable;
 
 final class CandleTraining
 {
-    use Bc;
+    use Bc, CandleAutoDetection;
 
     public const ACTIONS = ['buy', 'hold', 'sell'];
 
@@ -163,6 +164,137 @@ final class CandleTraining
         $state = $this->review($trainer, $dataset, $decisionAtMs);
         HumanCandleLabel::query()->where('snapshot_id', $state['snapshot']->snapshot_id)
             ->where('trainer_id', $trainer->user_id)->delete();
+    }
+
+
+    /** Build retrospective BUY/HOLD/SELL suggestions without storing any label. */
+    public function autoLabels(User $trainer, string $dataset, bool $includeExisting = false): array
+    {
+        Gate::forUser($trainer)->authorize('train-intelligence');
+        [$manifest, $rows] = $this->load($dataset);
+        $takerFee = $this->takerFee($manifest);
+        if ($takerFee === null) {
+            throw ValidationException::withMessages([
+                'dataset' => 'Auto-label requires a published exchange taker fee so unprofitable movements can be removed.',
+            ]);
+        }
+
+        $tickers = [];
+        foreach ($rows as $row) {
+            $candle = $row['candle'] ?? null;
+            if (! is_array($candle) || array_diff(['open', 'high', 'low', 'close', 'volume'], array_keys($candle)) !== []) {
+                throw ValidationException::withMessages(['dataset' => 'This frozen dataset is missing candle values required for auto-labeling.']);
+            }
+            $tickers[] = [...$candle, 'microtimestamp' => $row['microtimestamp'], 'decision_at_ms' => $row['decision_at_ms']];
+        }
+
+        // Order is part of the algorithm: broad labels first, excess removed later.
+        $this->candle_anatomy($tickers);
+        $this->mark_all_blacks_and_whites($tickers);
+        $this->remove_consequitive_actions($tickers);
+        $this->remove_unprofitable_transactions($tickers, $takerFee);
+        $this->remove_zigzags($tickers, $takerFee);
+        $this->find_new_bottoms($tickers);
+        $this->hodl_all_dojis($tickers);
+        $this->hodl_middle_chains($tickers);
+
+        $existing = collect();
+        if (! $includeExisting) {
+            $existing = HumanTrainingSnapshot::query()
+                ->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
+                ->where('version', HumanTraining::VERSION)
+                ->whereIn('decision_at_ms', array_column($rows, 'decision_at_ms'))
+                ->whereHas('candleLabels', fn ($query) => $query->where('trainer_id', $trainer->user_id))
+                ->pluck('decision_at_ms')->flip();
+        }
+
+        $labels = [];
+        foreach ($tickers as $ticker) {
+            $action = $ticker['action'] ?? null;
+            if (! in_array($action, self::ACTIONS, true) || $existing->has($ticker['decision_at_ms'])) {
+                continue;
+            }
+            $labels[] = [
+                'time' => intdiv((int) $ticker['microtimestamp'], 1000),
+                'decision_at_ms' => (int) $ticker['decision_at_ms'],
+                'action' => $action,
+            ];
+        }
+
+        return ['labels' => $labels, 'count' => count($labels)];
+    }
+
+    /**
+     * Persist the browser-reviewed final delta in one transaction. Until this
+     * method is called, manual clicks, auto-label suggestions and bulk deletion
+     * exist only in the browser and cannot influence a model build.
+     */
+    public function submitLabels(User $trainer, string $dataset, array $changes, bool $deleteAll = false): array
+    {
+        Gate::forUser($trainer)->authorize('train-intelligence');
+        [$manifest, $rows] = $this->load($dataset);
+        if (count($changes) > (int) config('intelligence.max_rows')) {
+            throw ValidationException::withMessages(['changes' => 'Too many candle-label changes were submitted at once.']);
+        }
+
+        $rowsByDecision = array_column($rows, null, 'decision_at_ms');
+        $prepared = [];
+        foreach ($changes as $change) {
+            $decision = (int) ($change['decision_at_ms'] ?? 0);
+            $action = $change['action'] ?? null;
+            $row = $rowsByDecision[$decision] ?? null;
+            if ($row === null || ($action !== null && ! in_array($action, self::ACTIONS, true))) {
+                throw ValidationException::withMessages(['changes' => 'A staged candle label no longer belongs to this frozen dataset.']);
+            }
+            if ($action !== null && ! in_array($action, $this->allowedActions($row['candle']), true)) {
+                throw ValidationException::withMessages([
+                    'changes' => 'BUY requires a red candle; SELL requires a green candle; HOLD is allowed on any candle.',
+                ]);
+            }
+            $prepared[$decision] = ['row' => $row, 'action' => $action];
+        }
+
+        $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
+        $saved = DB::transaction(function () use ($trainer, $manifest, $prepared, $deleteAll, $marketKey): int {
+            if ($deleteAll) {
+                HumanCandleLabel::query()->where('trainer_id', $trainer->user_id)
+                    ->whereHas('snapshot', fn ($query) => $query->where('market_key', $marketKey)
+                        ->where('version', HumanTraining::VERSION))
+                    ->delete();
+            }
+
+            $saved = 0;
+            foreach ($prepared as $decision => $change) {
+                if ($change['action'] === null) {
+                    HumanCandleLabel::query()->where('trainer_id', $trainer->user_id)
+                        ->whereHas('snapshot', fn ($query) => $query->where('market_key', $marketKey)
+                            ->where('version', HumanTraining::VERSION)->where('decision_at_ms', $decision))
+                        ->delete();
+                    continue;
+                }
+
+                $snapshot = $this->snapshots->snapshotForRow($manifest, $change['row']);
+                if ($snapshot === null) {
+                    throw ValidationException::withMessages([
+                        'changes' => 'A staged candle no longer matches the current source history and cannot be submitted.',
+                    ]);
+                }
+                $label = HumanCandleLabel::query()->where('snapshot_id', $snapshot->snapshot_id)
+                    ->where('trainer_id', $trainer->user_id)->lockForUpdate()->first();
+                if ($label === null) {
+                    $label = new HumanCandleLabel;
+                    $label->forceFill(['snapshot_id' => $snapshot->snapshot_id, 'trainer_id' => $trainer->user_id,
+                        'action' => $change['action']])->save();
+                } else {
+                    $label->forceFill(['action' => $change['action']])->save();
+                }
+                $saved++;
+            }
+
+            return $saved;
+        });
+
+        return ['saved' => $saved, 'deleted_all' => $deleteAll, 'stats' => $this->labelStats($trainer, $manifest)];
     }
 
     private function chartData(User $trainer, array $manifest, array $rows, array $series): array

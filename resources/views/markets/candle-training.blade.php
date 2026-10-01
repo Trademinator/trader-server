@@ -69,6 +69,8 @@
                  data-history-url="{{ route('human-training.candles.history', $state['manifest']['dataset_id']) }}"
                  data-update-url="{{ route('human-training.candles.update', $state['manifest']['dataset_id']) }}"
                  data-delete-url="{{ route('human-training.candles.destroy', $state['manifest']['dataset_id']) }}"
+                 data-auto-url="{{ route('human-training.candles.auto-label', $state['manifest']['dataset_id']) }}"
+                 data-submit-url="{{ route('human-training.candles.submit', $state['manifest']['dataset_id']) }}"
                  data-csrf="{{ csrf_token() }}"
                  data-snapshot="{{ json_encode(['series' => $state['payload']['series'], 'decision_at_ms' => $state['payload']['decision_at_ms'], 'labels' => $state['visible_labels'], 'decisions' => $state['decisions'], 'allowed_actions' => $state['allowed_actions'], 'has_more' => $state['has_more'], 'has_newer' => $state['next_decision_at_ms'] !== null, 'latest_decision_at_ms' => $state['latest_decision_at_ms'], 'stats' => $state['label_stats'], 'taker_fee' => $state['taker_fee']], JSON_THROW_ON_ERROR) }}">
             <form method="POST" action="{{ route('human-training.candles.start') }}" data-candle-dataset-form>
@@ -134,7 +136,13 @@
                         aria-label="Forward up to 50 candles" title="Forward up to 50 candles">&gt;</a>
                 </div>
                 <p class="guide-help">Earliest available data: <a href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['earliest_window_decision_at_ms']]) }}"><x-display-time :value="$state['earliest_time']" unit="seconds" /></a> · in this frozen dataset</p>
-                <button type="button" class="review-control" data-fit>Fit visible candles</button>
+                <div class="flex flex-wrap items-center gap-3">
+                    <button type="button" class="review-control" data-fit>Fit visible candles</button>
+                    <button type="button" class="review-control candle-menu-delete" data-delete-all-training>Delete all training</button>
+                    <button type="button" class="review-control" data-auto-label>Auto-label</button>
+                    <button type="button" class="review-control" data-submit-labels hidden>Submit</button>
+                </div>
+                <p class="guide-help" data-pending-status>No pending changes. Manual labels, deletions and auto-label suggestions stay only in this browser until Submit.</p>
                 <p class="guide-help" data-history-status role="status"></p>
                 <button type="button" class="review-control" data-history-retry hidden>Retry loading candles</button>
                 <p class="guide-help" data-status role="status">Loading the Candle Training chart…</p>
@@ -150,7 +158,7 @@
                 </div>
                 <noscript><p>The interactive chart requires JavaScript. Use JavaScript to display the chart and label candles.</p></noscript>
             </div>
-            <p class="guide-help">Green ▲ = BUY, gray ● = HOLD, red ▼ = SELL. Purple/orange squares are temporary A/B measurement markers. Human labels are training annotations, not exchange orders or historical fills. The fee comparison uses the published CCXT taker fee when available and excludes spread, slippage, conversions and account-specific discounts. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
+            <p class="guide-help">Green ▲ = BUY, gray ● = HOLD, red ▼ = SELL. Purple/orange squares are temporary A/B measurement markers. Manual selections and Auto-label suggestions are the same Candle Training labels: neither reaches the database until you press Submit. Human labels are training annotations, not exchange orders or historical fills. The fee comparison uses the published CCXT taker fee when available and excludes spread, slippage, conversions and account-specific discounts. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
         </section>
 
         <section class="guide-panel">

@@ -69,6 +69,8 @@ Route::prefix('human-training')->name('human-training.')->middleware(['auth', 'v
     Route::post('candles', [CandleTrainingController::class, 'store'])->middleware('throttle:12,1')->name('candles.start');
     Route::get('candles/{dataset}/history', [CandleTrainingController::class, 'history'])->whereUuid('dataset')->name('candles.history');
     Route::get('candles/{dataset}', [CandleTrainingController::class, 'show'])->whereUuid('dataset')->name('candles.show');
+    Route::post('candles/{dataset}/auto-label', [CandleTrainingController::class, 'autoLabel'])->whereUuid('dataset')->middleware('throttle:12,1')->name('candles.auto-label');
+    Route::post('candles/{dataset}/submit', [CandleTrainingController::class, 'submitLabels'])->whereUuid('dataset')->middleware('throttle:12,1')->name('candles.submit');
     Route::put('candles/{dataset}', [CandleTrainingController::class, 'update'])->whereUuid('dataset')->middleware('throttle:30,1')->name('candles.update');
     Route::delete('candles/{dataset}', [CandleTrainingController::class, 'destroy'])->whereUuid('dataset')->middleware('throttle:30,1')->name('candles.destroy');
     Route::get('{review}', [HumanTrainingController::class, 'show'])->whereUuid('review')->name('show');

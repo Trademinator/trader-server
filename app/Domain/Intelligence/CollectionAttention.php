@@ -17,24 +17,40 @@ final class CollectionAttention
         if ($feed === null) {
             return [['message' => 'The shared collection feed is missing. Re-enable this market subscription in Manage subscriptions.', 'commands' => []]];
         }
-        if ($feed->last_error !== null) {
-            $issues[] = ['message' => 'Collector '.$feed->status.': '.$feed->last_error,
-                'commands' => $feed->status === 'blocked' ? ['php artisan trademinator:refresh-exchanges --check'] : ['php artisan queue:failed']];
-        }
-        if ($feed->status === 'queued') {
-            $expired = $feed->lease_until === null || $feed->lease_until->isPast();
-            if ($expired || $chart['stale']) {
-                $issues[] = ['message' => $expired ? 'The collection job lease expired before completion. Queue a replacement and drain the default queue.'
-                    : 'Collection is queued while history is stale. Drain the default queue if no worker is processing it.',
-                    'commands' => $expired ? [$dispatch, $worker] : [$worker]];
+        $queuedLeaseExpired = $feed->status === 'queued'
+            && ($feed->lease_until === null || $feed->lease_until->isPast());
+        $periodProblemExplained = false;
+
+        if ($queuedLeaseExpired) {
+            $message = 'The collection job lease expired before completion. Queue a replacement and drain the default queue.';
+            if ($feed->last_error !== null) {
+                $message .= ' Previous attempt: '.$feed->last_error;
             }
-        } elseif (! in_array($feed->status, ['ready', 'active', 'pending'], true)) {
+            $issues[] = ['message' => $message, 'commands' => [$dispatch, $worker]];
+            $periodProblemExplained = $feed->selected_period === null;
+        } elseif ($feed->last_error !== null) {
+            $commands = $feed->status === 'blocked'
+                ? ['php artisan trademinator:refresh-exchanges --check']
+                : ($feed->selected_period === null ? [$dispatch, $worker] : ['php artisan queue:failed']);
+            $issues[] = ['message' => 'Collector '.$feed->status.': '.$feed->last_error, 'commands' => $commands];
+            $periodProblemExplained = $feed->selected_period === null;
+        }
+
+        if ($feed->status === 'queued' && ! $queuedLeaseExpired) {
+            if ($chart['stale']) {
+                $issues[] = ['message' => 'Collection is queued while history is stale. Drain the default queue if no worker is processing it.',
+                    'commands' => [$worker]];
+            }
+        } elseif (! in_array($feed->status, ['ready', 'active', 'pending', 'queued'], true)) {
             $issues[] = ['message' => 'Collection status: '.$feed->status.'. Resolve the reported exchange/configuration problem first; dispatch retries when they are due.',
                 'commands' => [$dispatch, $worker]];
         }
+
         if ($feed->selected_period === null) {
-            $issues[] = ['message' => 'No reliable candle period has been selected. Run due collection; a quiet or unsupported market may still fail the quality threshold.',
-                'commands' => [$dispatch, $worker]];
+            if (! $periodProblemExplained) {
+                $issues[] = ['message' => 'No reliable candle period has been selected. Run due collection; a quiet or unsupported market may still fail the quality threshold.',
+                    'commands' => [$dispatch, $worker]];
+            }
         } elseif ($chart['stale']) {
             $last = $chart['last_closed_at_ms'];
             $issues[] = ['message' => $last === null ? 'No valid closed '.$feed->selected_period.' candles are available.'
