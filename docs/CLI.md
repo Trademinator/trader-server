@@ -165,6 +165,21 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 - [`trademinator:select-candle-period`](#trademinatorselect-candle-period) — Select the shortest sufficiently informative candle period
 - [`trademinator:sync-ohlcv`](#trademinatorsync-ohlcv) — Fetch and upsert exchange candles, optionally inspect and repair missing ranges
 
+## trademinator:candle-gaps
+
+Description: Scan and report missing closed candles for active subscribed market feeds with suggested fixes
+
+Signature: `trademinator:candle-gaps {--exchange=} {--symbol=} {--period=} {--no-scan}`
+
+Scans locally stored candle history for gaps across active subscribed market feeds and reports repair status, missing-candle counts, affected ranges, and a suggested fix. The scan itself does not contact exchanges or queue repairs. Use `--no-scan` to report only already recorded gap state.
+
+```bash
+php artisan trademinator:candle-gaps
+php artisan trademinator:candle-gaps --exchange=kraken
+php artisan trademinator:candle-gaps --exchange=kraken --symbol=BTC/USD --period=5m
+php artisan trademinator:candle-gaps --no-scan
+```
+
 ## trademinator:backfill-ohlcv
 
 Description: Queue resumable older OHLCV history for subscribed markets, or inspect and resume paused backfills

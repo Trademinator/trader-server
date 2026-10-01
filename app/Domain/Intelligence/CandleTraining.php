@@ -254,44 +254,76 @@ final class CandleTraining
             $prepared[$decision] = ['row' => $row, 'action' => $action];
         }
 
+        // Snapshot verification is the expensive part. Resolve all non-null
+        // staged actions in one chronological history pass before DB writes.
+        $snapshotRows = [];
+        foreach ($prepared as $decision => $change) {
+            if ($change['action'] !== null) {
+                $snapshotRows[$decision] = $change['row'];
+            }
+        }
+        $snapshots = $this->snapshots->snapshotsForRows($manifest, array_values($snapshotRows));
+        foreach ($snapshotRows as $decision => $_row) {
+            if (($snapshots[$decision] ?? null) === null) {
+                throw ValidationException::withMessages([
+                    'changes' => 'A staged candle no longer matches the current source history and cannot be submitted.',
+                ]);
+            }
+        }
+
         $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
-        $saved = DB::transaction(function () use ($trainer, $manifest, $prepared, $deleteAll, $marketKey): int {
+        $saved = DB::transaction(function () use ($trainer, $prepared, $deleteAll, $marketKey, $snapshots): int {
             if ($deleteAll) {
                 HumanCandleLabel::query()->where('trainer_id', $trainer->user_id)
                     ->whereHas('snapshot', fn ($query) => $query->where('market_key', $marketKey)
                         ->where('version', HumanTraining::VERSION))
                     ->delete();
+            } else {
+                $deleteDecisions = array_keys(array_filter($prepared,
+                    fn (array $change): bool => $change['action'] === null));
+                foreach (array_chunk($deleteDecisions, 500) as $chunk) {
+                    if ($chunk === []) {
+                        continue;
+                    }
+                    $snapshotIds = HumanTrainingSnapshot::query()
+                        ->where('market_key', $marketKey)
+                        ->where('version', HumanTraining::VERSION)
+                        ->whereIn('decision_at_ms', $chunk)
+                        ->pluck('snapshot_id')
+                        ->all();
+                    if ($snapshotIds !== []) {
+                        HumanCandleLabel::query()->where('trainer_id', $trainer->user_id)
+                            ->whereIn('snapshot_id', $snapshotIds)->delete();
+                    }
+                }
             }
 
-            $saved = 0;
+            $now = now()->format('Y-m-d H:i:s.v');
+            $upserts = [];
             foreach ($prepared as $decision => $change) {
                 if ($change['action'] === null) {
-                    HumanCandleLabel::query()->where('trainer_id', $trainer->user_id)
-                        ->whereHas('snapshot', fn ($query) => $query->where('market_key', $marketKey)
-                            ->where('version', HumanTraining::VERSION)->where('decision_at_ms', $decision))
-                        ->delete();
                     continue;
                 }
-
-                $snapshot = $this->snapshots->snapshotForRow($manifest, $change['row']);
-                if ($snapshot === null) {
-                    throw ValidationException::withMessages([
-                        'changes' => 'A staged candle no longer matches the current source history and cannot be submitted.',
-                    ]);
-                }
-                $label = HumanCandleLabel::query()->where('snapshot_id', $snapshot->snapshot_id)
-                    ->where('trainer_id', $trainer->user_id)->lockForUpdate()->first();
-                if ($label === null) {
-                    $label = new HumanCandleLabel;
-                    $label->forceFill(['snapshot_id' => $snapshot->snapshot_id, 'trainer_id' => $trainer->user_id,
-                        'action' => $change['action']])->save();
-                } else {
-                    $label->forceFill(['action' => $change['action']])->save();
-                }
-                $saved++;
+                $snapshot = $snapshots[$decision];
+                $upserts[] = [
+                    'candle_label_id' => (string) \Illuminate\Support\Str::uuid7(),
+                    'snapshot_id' => $snapshot->snapshot_id,
+                    'trainer_id' => $trainer->user_id,
+                    'action' => $change['action'],
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
             }
 
-            return $saved;
+            foreach (array_chunk($upserts, 500) as $chunk) {
+                HumanCandleLabel::query()->upsert(
+                    $chunk,
+                    ['snapshot_id', 'trainer_id'],
+                    ['action', 'updated_at']
+                );
+            }
+
+            return count($upserts);
         });
 
         return ['saved' => $saved, 'deleted_all' => $deleteAll, 'stats' => $this->labelStats($trainer, $manifest)];

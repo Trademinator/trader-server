@@ -153,6 +153,324 @@ final class HumanTraining
                 'sha256' => HumanTrainingSnapshot::digest($payload), 'created_at' => now()]));
     }
 
+
+    /**
+     * Build or reuse immutable snapshots for many Candle Training rows with one
+     * chronological OHLCV history read. This avoids repeating the chart-history
+     * query once for every staged auto-label.
+     *
+     * @param  array<int, array<string, mixed>>  $rows
+     * @return array<int, HumanTrainingSnapshot|null> keyed by decision_at_ms
+     */
+    public function snapshotsForRows(array $manifest, array $rows): array
+    {
+        if ($rows === []) {
+            return [];
+        }
+
+        $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
+        $requested = [];
+        $keys = [];
+        foreach ($rows as $row) {
+            $decision = (int) ($row['decision_at_ms'] ?? 0);
+            if ($decision < 1) {
+                continue;
+            }
+            $requested[$decision] = $row;
+            $keys[$decision] = hash('sha256', $marketKey.'|'.$decision.'|'.self::VERSION);
+        }
+        if ($requested === []) {
+            return [];
+        }
+        ksort($requested, SORT_NUMERIC);
+
+        $existingByKey = [];
+        foreach (array_chunk(array_values($keys), 250) as $chunk) {
+            foreach (HumanTrainingSnapshot::query()->whereIn('snapshot_key', $chunk)->get() as $snapshot) {
+                $existingByKey[$snapshot->snapshot_key] = $snapshot;
+            }
+        }
+
+        $result = [];
+        $missing = [];
+        foreach ($requested as $decision => $row) {
+            $snapshot = $existingByKey[$keys[$decision]] ?? null;
+            if ($snapshot !== null) {
+                $result[$decision] = $this->snapshotMatchesRow($snapshot, $manifest, $row) ? $snapshot : null;
+            } else {
+                $missing[$decision] = $row;
+            }
+        }
+        if ($missing === []) {
+            return $result;
+        }
+
+        $payloads = $this->batchSnapshotPayloads($manifest, $missing);
+        $createdAt = now()->format('Y-m-d H:i:s');
+        $inserts = [];
+        foreach ($missing as $decision => $row) {
+            $payload = $payloads[$decision] ?? null;
+            if ($payload === null) {
+                $result[$decision] = null;
+                continue;
+            }
+            $inserts[] = [
+                'snapshot_id' => (string) \Illuminate\Support\Str::uuid7(),
+                'snapshot_key' => $keys[$decision],
+                'market_key' => $marketKey,
+                'dataset_id' => $manifest['dataset_id'],
+                'decision_at_ms' => $decision,
+                'version' => self::VERSION,
+                'sha256' => HumanTrainingSnapshot::digest($payload),
+                'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
+                'created_at' => $createdAt,
+            ];
+        }
+
+        // Snapshot payloads contain chart history, so use small bounded inserts.
+        foreach (array_chunk($inserts, 25) as $chunk) {
+            DB::table('human_training_snapshots')->insertOrIgnore($chunk);
+        }
+
+        $missingKeys = [];
+        foreach (array_keys($missing) as $decision) {
+            if (isset($keys[$decision])) {
+                $missingKeys[] = $keys[$decision];
+            }
+        }
+
+        $createdByKey = [];
+        foreach (array_chunk($missingKeys, 250) as $chunk) {
+            foreach (HumanTrainingSnapshot::query()->whereIn('snapshot_key', $chunk)->get() as $snapshot) {
+                $createdByKey[$snapshot->snapshot_key] = $snapshot;
+            }
+        }
+
+        foreach ($missing as $decision => $row) {
+            if (($payloads[$decision] ?? null) === null) {
+                $result[$decision] = null;
+                continue;
+            }
+            $snapshot = $createdByKey[$keys[$decision]] ?? null;
+            $result[$decision] = $snapshot !== null && $this->snapshotMatchesRow($snapshot, $manifest, $row)
+                ? $snapshot : null;
+        }
+
+        return $result;
+    }
+
+    private function snapshotMatchesRow(HumanTrainingSnapshot $snapshot, array $manifest, array $row): bool
+    {
+        $payload = $snapshot->verifiedPayload();
+        $vector = NormalizedVector::from($row['vector'], $manifest['keys']);
+
+        return ($payload['feature_version'] ?? null) === $manifest['feature_version']
+            && ($payload['keys'] ?? null) === $manifest['keys']
+            && ($payload['normalization'] ?? null) === NormalizedVector::VERSION
+            && ($payload['horizon_candles'] ?? null) === $manifest['label_definition']['horizon']
+            && ($payload['vector'] ?? null) == $vector
+            && ($payload['feature_sha256'] ?? null) === ($row['source']['feature_sha256'] ?? null);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $rows keyed by decision_at_ms
+     * @return array<int, array<string, mixed>|null>
+     */
+    private function batchSnapshotPayloads(array $manifest, array $rows): array
+    {
+        uasort($rows, fn (array $a, array $b): int => ((int) $a['microtimestamp']) <=> ((int) $b['microtimestamp']));
+        $first = reset($rows);
+        $last = end($rows);
+        if (! is_array($first) || ! is_array($last)) {
+            return [];
+        }
+
+        $period = $manifest['period'];
+        $from = (int) $first['microtimestamp'];
+        for ($i = 1; $i < config('human_training.chart_candles'); $i++) {
+            $from = max(0, $this->timeframe->previous($from, $period));
+        }
+        $to = (int) $last['microtimestamp'];
+
+        $history = [];
+        $historyTimes = [];
+        $historyIndex = [];
+        foreach ($this->tickers->streamHistory($manifest['exchange'], $manifest['symbol'], $period, $from, $to) as $bar) {
+            $index = count($history);
+            $timestamp = (int) ($bar['microtimestamp'] ?? 0);
+            $history[] = $bar;
+            $historyTimes[] = $timestamp;
+            $historyIndex[$timestamp] = $index;
+        }
+
+        $observations = $this->batchModelObservations($manifest, array_keys($rows));
+        $payloads = [];
+        foreach ($rows as $decision => $row) {
+            $timestamp = (int) $row['microtimestamp'];
+            $end = $historyIndex[$timestamp] ?? null;
+            if ($end === null) {
+                $payloads[$decision] = null;
+                continue;
+            }
+
+            $windowFrom = $timestamp;
+            for ($i = 1; $i < config('human_training.chart_candles'); $i++) {
+                $windowFrom = max(0, $this->timeframe->previous($windowFrom, $period));
+            }
+            $start = $this->historyLowerBound($historyTimes, $windowFrom);
+            $bars = array_slice($history, $start, $end - $start + 1);
+            $payloads[$decision] = $this->batchSnapshotPayload(
+                $manifest,
+                $row,
+                $bars,
+                $observations[$decision] ?? null
+            );
+        }
+
+        return $payloads;
+    }
+
+    /**
+     * Resolve the same latest historical Server observation used by snapshot(),
+     * but for all requested decisions in one query.
+     *
+     * @param  list<int>  $decisions
+     * @return array<int, array<string, mixed>|null>
+     */
+    private function batchModelObservations(array $manifest, array $decisions): array
+    {
+        $decisions = array_values(array_unique(array_map('intval', $decisions)));
+        sort($decisions, SORT_NUMERIC);
+        if ($decisions === []) {
+            return [];
+        }
+
+        $maximum = max($decisions);
+        $signals = MarketSignal::query()
+            ->whereHas('market', fn ($query) => $query->where('symbol', $manifest['symbol'])
+                ->whereHas('exchange', fn ($query) => $query->where('class', $manifest['exchange'])))
+            ->where('period', $manifest['period'])
+            ->whereNotNull('decision_at_ms')
+            ->where('recorded_at_ms', '<=', $maximum)
+            ->where('decision_at_ms', '<=', $maximum)
+            ->get(['market_signal_id', 'model_id', 'recorded_at_ms', 'decision_at_ms', 'action', 'reason'])
+            ->all();
+
+        usort($signals, function (MarketSignal $a, MarketSignal $b): int {
+            $availableA = max((int) $a->recorded_at_ms, (int) $a->decision_at_ms);
+            $availableB = max((int) $b->recorded_at_ms, (int) $b->decision_at_ms);
+
+            return $availableA <=> $availableB
+                ?: ((int) $a->recorded_at_ms <=> (int) $b->recorded_at_ms)
+                ?: strcmp((string) $a->market_signal_id, (string) $b->market_signal_id);
+        });
+
+        $result = [];
+        $cursor = 0;
+        $best = null;
+        foreach ($decisions as $decision) {
+            while ($cursor < count($signals)
+                && max((int) $signals[$cursor]->recorded_at_ms, (int) $signals[$cursor]->decision_at_ms) <= $decision) {
+                $candidate = $signals[$cursor++];
+                if ($best === null
+                    || (int) $candidate->recorded_at_ms > (int) $best->recorded_at_ms
+                    || ((int) $candidate->recorded_at_ms === (int) $best->recorded_at_ms
+                        && strcmp((string) $candidate->market_signal_id, (string) $best->market_signal_id) > 0)) {
+                    $best = $candidate;
+                }
+            }
+
+            $result[$decision] = $best === null ? null : [
+                'model_id' => $best->model_id,
+                'recorded_at_ms' => (int) $best->recorded_at_ms,
+                'decision_at_ms' => (int) $best->decision_at_ms,
+                'action' => $best->action,
+                'reason' => $best->reason,
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Build the immutable snapshot payload from an already loaded history window.
+     *
+     * @param  array<int, array<string, mixed>>  $bars
+     */
+    private function batchSnapshotPayload(array $manifest, array $row, array $bars, ?array $modelObservation): ?array
+    {
+        $decision = (int) $row['decision_at_ms'];
+        $timestamp = (int) $row['microtimestamp'];
+        $period = $manifest['period'];
+        if ($decision !== $this->timeframe->next($timestamp, $period) || $decision > now()->getTimestampMs()) {
+            return null;
+        }
+
+        $series = [];
+        $previous = null;
+        $gaps = 0;
+        foreach ($bars as $bar) {
+            foreach (['open', 'high', 'low', 'close', 'volume'] as $field) {
+                if (! is_numeric($bar[$field] ?? null) || ! is_finite((float) $bar[$field])) {
+                    return null;
+                }
+            }
+            if (min($bar['open'], $bar['low'], $bar['close']) <= 0 || $bar['volume'] < 0
+                || $bar['high'] < max($bar['open'], $bar['close'], $bar['low'])
+                || $bar['low'] > min($bar['open'], $bar['close'])
+                || $this->timeframe->next((int) $bar['microtimestamp'], $period) > $decision) {
+                return null;
+            }
+            if ($previous !== null && $this->timeframe->next($previous, $period) !== (int) $bar['microtimestamp']) {
+                $gaps++;
+            }
+            $previous = (int) $bar['microtimestamp'];
+            $series[] = ['time' => intdiv((int) $bar['microtimestamp'], 1000),
+                ...array_map('strval', array_intersect_key($bar, array_flip(['open', 'high', 'low', 'close', 'volume'])))];
+            if ((int) $bar['microtimestamp'] === $timestamp && isset($row['candle'])) {
+                foreach (['open', 'high', 'low', 'close', 'volume'] as $field) {
+                    if ((string) $bar[$field] !== (string) $row['candle'][$field]) {
+                        return null;
+                    }
+                }
+            }
+        }
+        if ($previous !== $timestamp || count($series) < 2) {
+            return null;
+        }
+
+        $vector = NormalizedVector::from($row['vector'], $manifest['keys']);
+
+        return ['version' => self::VERSION, 'feature_version' => $manifest['feature_version'],
+            'normalization' => NormalizedVector::VERSION, 'exchange' => $manifest['exchange'], 'symbol' => $manifest['symbol'],
+            'period' => $period, 'microtimestamp' => $timestamp, 'decision_at_ms' => $decision,
+            'horizon_candles' => $manifest['label_definition']['horizon'],
+            'keys' => $manifest['keys'], 'vector' => $vector,
+            'features' => array_combine($manifest['keys'], $row['vector']),
+            'feature_sha256' => $row['source']['feature_sha256'] ?? null,
+            'series' => $series, 'gaps' => $gaps,
+            'patterns' => array_map(fn (array $pattern): array => array_intersect_key($pattern,
+                array_flip(['type', 'length', 'stage', 'progress', 'similarity'])), $row['patterns'] ?? []),
+            'model_observation' => $modelObservation];
+    }
+
+    /** Return the first history index whose timestamp is >= the requested time. */
+    private function historyLowerBound(array $timestamps, int $wanted): int
+    {
+        $low = 0;
+        $high = count($timestamps);
+        while ($low < $high) {
+            $mid = intdiv($low + $high, 2);
+            if ((int) $timestamps[$mid] < $wanted) {
+                $low = $mid + 1;
+            } else {
+                $high = $mid;
+            }
+        }
+
+        return $low;
+    }
+
     private function snapshot(array $manifest, array $row): ?array
     {
         $decision = $row['decision_at_ms'];
