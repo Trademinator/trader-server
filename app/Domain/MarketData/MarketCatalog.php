@@ -15,7 +15,7 @@ final class MarketCatalog
 {
     public const EXCHANGES_CACHE = 'trademinator:market-catalog:exchanges:v5';
 
-    public const PAIRS_CACHE_PREFIX = 'trademinator:market-catalog:spot:v6:';
+    public const PAIRS_CACHE_PREFIX = 'trademinator:market-catalog:spot:v7:';
 
     public function __construct(private readonly ExchangeRepository $repository, private readonly ExchangeMetadata $metadata) {}
 

@@ -32,9 +32,10 @@ it('offers readable exchange names, spot pairs and only supported periods', func
         ->assertJsonMissing(['value' => '9m']);
 });
 
-it('prefers market-specific taker fees and falls back to the trusted NDAX fee', function () {
+it('prefers market-specific taker fees and uses trusted exchange fee fallbacks', function () {
     expect(MarketCatalog::takerFee('0.0015', 'ndax'))->toBe(0.0015)
         ->and(MarketCatalog::takerFee(null, 'ndax'))->toBe(0.002)
+        ->and(MarketCatalog::takerFee(null, 'cryptocom'))->toBe(0.005)
         ->and(MarketCatalog::takerFee(null, 'kraken'))->toBeNull();
 });
 
