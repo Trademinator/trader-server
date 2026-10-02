@@ -1,5 +1,11 @@
 <?php
 
+$trustedProxies = array_values(array_filter(array_map('trim', explode(',', (string) env('TRUSTED_PROXIES', '')))));
+$reverseProxySetting = env('REVERSE_PROXY_ENABLED');
+$reverseProxyEnabled = $reverseProxySetting === null
+    ? $trustedProxies !== []
+    : filter_var($reverseProxySetting, FILTER_VALIDATE_BOOL);
+
 return [
     'owner_uuid' => env('OWNER_UUID'),
     'owner_uuids' => array_values(array_filter(array_map('trim', explode(',', (string) env('OWNER_UUIDS', ''))))),
@@ -9,5 +15,6 @@ return [
     'access_enabled' => (bool) env('ACCESS_STATISTICS_ENABLED', true),
     'retention_days' => max(1, (int) env('ACCESS_STATISTICS_RETENTION_DAYS', 90)),
     'geoip_database' => env('GEOIP_DATABASE_PATH', storage_path('app/private/GeoLite2-City.mmdb')),
-    'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) env('TRUSTED_PROXIES', ''))))),
+    'reverse_proxy_enabled' => $reverseProxyEnabled,
+    'trusted_proxies' => $trustedProxies,
 ];

@@ -6,6 +6,7 @@ use App\Domain\Operations\AccessStatistics;
 use App\Domain\Operations\ActionContext;
 use App\Domain\Operations\ActionLog;
 use App\Domain\Operations\RecordObserver;
+use App\Domain\Operations\TrustedProxyConfiguration;
 use App\Models\CoinGeckoMarketMapping;
 use App\Models\Exchange;
 use App\Models\Market;
@@ -63,7 +64,14 @@ class OperationsServiceProvider extends ServiceProvider
         Gate::define('train-intelligence', fn (User $user): bool => config('human_training.enabled')
             && $user->suspended_at === null && $user->hasVerifiedEmail()
             && ($user->isOwner() || in_array(strtolower($user->user_id), array_map('strtolower', config('human_training.trainer_uuids')), true)));
-        TrustProxies::at(config('operations.trusted_proxies'));
+        $trustedProxies = config('operations.trusted_proxies', []);
+        $reverseProxyEnabled = (bool) config('operations.reverse_proxy_enabled');
+        if ($this->app->environment('production')) {
+            TrustedProxyConfiguration::assertSafeForProduction($reverseProxyEnabled, $trustedProxies);
+        }
+
+        // Do not trust forwarded client-address headers unless proxy mode is explicitly enabled.
+        TrustProxies::at($reverseProxyEnabled ? $trustedProxies : []);
         TrustProxies::withHeaders(Request::HEADER_X_FORWARDED_FOR | Request::HEADER_X_FORWARDED_PROTO | Request::HEADER_X_FORWARDED_PORT);
         $this->observeRequests();
         $this->observeCommands();
