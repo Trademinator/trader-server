@@ -36,6 +36,7 @@ it('renders actual history counts and failed validation requirements for an abst
     config(['research.path' => $path.'/research', 'intelligence.path' => $path.'/models',
         'intelligence.patterns.enabled' => true]);
     $owner = User::factory()->create();
+    config(['human_training.trainer_uuids' => [$owner->user_id]]);
     $exchange = Exchange::query()->create(['name' => 'Kraken', 'class' => 'kraken', 'config' => '{}']);
     $market = Market::query()->create(['exchange_id' => $exchange->exchange_id, 'symbol' => 'BTC/USD', 'tick_size' => '0.01']);
     MarketFeed::query()->create(['market_id' => $market->market_id, 'selected_period' => '1m', 'status' => 'active']);
@@ -48,6 +49,9 @@ it('renders actual history counts and failed validation requirements for an abst
 
         $response->assertOk()->assertSee('227 out of 250 retained neighbors')
             ->assertSee('227 out of 380')->assertSee('K selection requirements')
+            ->assertSee(route('human-training.index', [
+                'exchange' => $exchange->class, 'symbol' => $market->symbol, 'period' => '1m',
+            ]))
             ->assertSee('At least 50')->assertSee('Missing / failed')
             ->assertSee('Not evaluated: K selection must pass first.')
             ->assertSee('Pattern training history')->assertSee('0 out of 100')
