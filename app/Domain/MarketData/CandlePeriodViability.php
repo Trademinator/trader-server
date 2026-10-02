@@ -11,7 +11,7 @@ final class CandlePeriodViability
     use CandleAutoDetection;
 
     /**
-     * @param list<array<string, mixed>> $candles
+     * @param  list<array<string, mixed>>  $candles
      * @return array{passes: bool, buy: int, sell: int, hold: int, total: int, buy_ratio: float, sell_ratio: float, minimum_ratio: float}
      */
     public function evaluate(array $candles, float $takerFee, float $minimumRatio = 0.01): array
@@ -46,7 +46,7 @@ final class CandlePeriodViability
         $counts = ['buy' => 0, 'sell' => 0, 'hold' => 0];
         foreach ($tickers as $ticker) {
             $action = $ticker['action'] ?? null;
-            if (isset($counts[$action])) {
+            if (is_string($action) && isset($counts[$action])) {
                 $counts[$action]++;
             }
         }

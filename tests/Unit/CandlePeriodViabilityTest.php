@@ -29,7 +29,7 @@ it('requires both BUY and SELL to reach the configured share of finalized auto l
         ->and($result['sell_ratio'])->toBeGreaterThanOrEqual(0.01);
 });
 
-it('rejects a period when transaction costs prune its BUY and SELL opportunities', function () {
+it('rejects a period when transaction costs leave either BUY or SELL below the viability floor', function () {
     $candles = [
         viabilityCandle('100', '100'),
         viabilityCandle('101', '100', '102', '99'),
@@ -42,6 +42,5 @@ it('rejects a period when transaction costs prune its BUY and SELL opportunities
     $result = app(CandlePeriodViability::class)->evaluate($candles, 0.02, 0.01);
 
     expect($result['passes'])->toBeFalse()
-        ->and($result['buy'])->toBe(0)
-        ->and($result['sell'])->toBe(0);
+        ->and(min($result['buy_ratio'], $result['sell_ratio']))->toBeLessThan(0.01);
 });

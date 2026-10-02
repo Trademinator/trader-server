@@ -80,12 +80,15 @@ final class CandlePeriodReevaluation
                             $queued = $this->history->dispatchCandidate($feed, $period, $fromMs);
                             $this->scheduleRetry($feed, (int) config('candle_period.backfill_retry_minutes', 15));
 
-                            return $this->result($feed, 'pending', $queued
+                            $reason = $queued
                                 ? "Queued {$period} history back to {$days} days for evaluation."
-                                : "{$period} history is not complete yet; waiting for the existing backfill.", $attempts);
+                                : "{$period} history is not complete yet; waiting for the existing backfill.";
+
+                            return $this->result($feed, 'pending', $this->withPreviousEconomicFailure($reason, $attempts), $attempts);
                         }
 
-                        return $this->result($feed, 'needs_backfill', "{$period} needs history back to {$days} days.", $attempts);
+                        return $this->result($feed, 'needs_backfill',
+                            $this->withPreviousEconomicFailure("{$period} needs history back to {$days} days.", $attempts), $attempts);
                     }
                     if ($historyState === 'unavailable') {
                         $attempts[] = ['period' => $period, 'days' => $days, 'status' => 'history_unavailable'];
@@ -263,21 +266,63 @@ final class CandlePeriodReevaluation
         $feed->refresh();
     }
 
+    /** @param list<array<string, mixed>> $attempts */
+    private function withPreviousEconomicFailure(string $reason, array $attempts): string
+    {
+        $failed = $this->latestEconomicAttempt($attempts, true);
+        if ($failed === null) {
+            return $reason;
+        }
+
+        return sprintf(
+            '%s failed %d-day viability (BUY %.2f%%, SELL %.2f%%); %s',
+            $failed['period'],
+            $failed['days'],
+            (float) $failed['buy_ratio'] * 100,
+            (float) $failed['sell_ratio'] * 100,
+            lcfirst($reason),
+        );
+    }
+
+    /** @param list<array<string, mixed>> $attempts
+     * @return array<string, mixed>|null
+     */
+    private function latestEconomicAttempt(array $attempts, bool $failedOnly = false): ?array
+    {
+        for ($index = count($attempts) - 1; $index >= 0; $index--) {
+            $attempt = $attempts[$index];
+            if (! array_key_exists('buy_ratio', $attempt) || ! array_key_exists('sell_ratio', $attempt)) {
+                continue;
+            }
+            if ($failedOnly && ($attempt['status'] ?? null) !== 'economic_failed') {
+                continue;
+            }
+
+            return $attempt;
+        }
+
+        return null;
+    }
+
     /** @return array<string, mixed> */
     private function result(MarketFeed $feed, string $status, string $reason, array $attempts = [],
         ?string $period = null, ?int $days = null, ?array $economic = null): array
     {
+        $lastEconomic = $economic ?? $this->latestEconomicAttempt($attempts);
+
         return [
             'market_id' => $feed->market_id,
             'exchange' => $feed->market->exchange->class,
             'symbol' => $feed->market->symbol,
             'current_period' => $feed->selected_period,
-            'selected_period' => $period ?? $feed->selected_period,
+            // Result means a candidate that actually passed. Keep it null while
+            // evaluation is pending, blocked or waiting for candidate history.
+            'selected_period' => $period,
             'status' => $status,
             'reason' => $reason,
-            'window_days' => $days,
-            'buy_ratio' => $economic['buy_ratio'] ?? null,
-            'sell_ratio' => $economic['sell_ratio'] ?? null,
+            'window_days' => $days ?? ($lastEconomic['days'] ?? null),
+            'buy_ratio' => $lastEconomic['buy_ratio'] ?? null,
+            'sell_ratio' => $lastEconomic['sell_ratio'] ?? null,
             'attempts' => $attempts,
         ];
     }
