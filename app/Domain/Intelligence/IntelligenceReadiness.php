@@ -2,10 +2,12 @@
 
 namespace App\Domain\Intelligence;
 
+use App\Domain\Features\ContextFeatures;
 use App\Domain\Features\FeatureEngine;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\Research\FeatureSchema;
 use App\Jobs\TrainMarketIntelligence;
+use App\Models\CoinGeckoMarketMapping;
 use App\Models\MarketFeature;
 use App\Models\MarketFeed;
 use Carbon\CarbonImmutable;
@@ -27,12 +29,13 @@ final class IntelligenceReadiness
             'settings' => $settings, 'horizon' => $horizon, 'history' => null,
             'eta' => null, 'eta_note' => 'ETA unavailable until a candle period and recent complete features are available.',
             'issues' => [], 'tuning' => null, 'holdout' => null, 'next_training' => $this->nextTraining(),
-            'queue' => config('intelligence.queue'), 'source' => $this->source($report),
+            'queue' => config('intelligence.queue'), 'source' => $this->source($report), 'schema' => null, 'full_schema' => null,
             'evidence_evaluated' => in_array($signal['reason'], ['supported', 'no_similar_history',
                 'insufficient_effective_neighbors', 'tied_votes', 'weak_consensus'], true),
             'action' => $this->action($signal['reason']),
             'pattern_minimum' => $report['pattern_settings']['min_samples'] ?? config('intelligence.patterns.min_samples'),
         ];
+        $data['schema'] = $data['source']['schema'] ?? (string) config('intelligence.schema');
         if (! config('intelligence.enabled')) {
             $data['issues'][] = 'Automatic intelligence training is disabled (INTELLIGENCE_ENABLED).';
         }
@@ -67,6 +70,7 @@ final class IntelligenceReadiness
         $keys = $report['keys'] ?? FeatureSchema::keys(config('intelligence.schema'));
         $history = $this->history($exchange, $symbol, $period, $keys, $horizon);
         $data['history'] = $history;
+        $data['full_schema'] = $this->fullSchema($exchange, $symbol, $period);
         if ($history['closed'] === 0) {
             $data['issues'][] = 'No current-version closed-candle features exist for this market and period. Run the M2 feature builder.';
         } elseif ($history['stale']) {
@@ -163,6 +167,50 @@ final class IntelligenceReadiness
         }
 
         return $result;
+    }
+
+    private function fullSchema(string $exchange, string $symbol, string $period): array
+    {
+        $contextKeys = ContextFeatures::KEYS;
+        $technicalKeys = FeatureSchema::keys('technical');
+        $latest = MarketFeature::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+            ->where('version', FeatureEngine::VERSION)->where('available_at_ms', '<=', now()->getTimestampMs())
+            ->orderByDesc('microtimestamp')->first();
+        $mapping = CoinGeckoMarketMapping::query()
+            ->whereHas('market', fn ($market) => $market->where('symbol', $symbol)
+                ->whereHas('exchange', fn ($query) => $query->where('class', $exchange)))
+            ->first();
+        $features = $latest?->payload['features'] ?? [];
+        $contextMissing = array_values(array_filter($contextKeys, fn (string $key): bool => ($features[$key] ?? null) === null));
+        $technicalMissing = array_values(array_filter($technicalKeys, fn (string $key): bool => ($features[$key] ?? null) === null));
+        $technicalReady = false;
+        $fullReady = false;
+        $invalid = false;
+        if ($latest !== null) {
+            try {
+                $technicalReady = FeatureSchema::vector($latest->payload, $technicalKeys) !== null;
+                $fullReady = FeatureSchema::vector($latest->payload, FeatureSchema::keys('full')) !== null;
+            } catch (InvalidArgumentException) {
+                $invalid = true;
+            }
+        }
+
+        return [
+            'context_available' => count($contextKeys) - count($contextMissing),
+            'context_total' => count($contextKeys),
+            'missing' => $contextMissing,
+            'technical_missing' => $technicalMissing,
+            'technical_ready' => $technicalReady,
+            'full_ready' => $fullReady,
+            'invalid' => $invalid,
+            'mapping' => [
+                'status' => $mapping?->status ?? 'missing',
+                'coin_id' => $mapping?->coin_id,
+                'coin_name' => $mapping?->coin_name,
+                'vs_currency' => $mapping?->vs_currency,
+                'error' => $mapping?->last_error,
+            ],
+        ];
     }
 
     private function source(?array $report): ?array
