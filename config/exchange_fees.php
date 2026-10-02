@@ -3,12 +3,13 @@
 return [
     /*
     |--------------------------------------------------------------------------
-    | Trusted exchange taker-fee fallbacks
+    | Trusted exchange taker-fee ceilings for training/economic evaluation
     |--------------------------------------------------------------------------
     |
-    | Market-specific CCXT fees always take precedence. These entries are used
-    | only when CCXT omits the fee for a specific market. Keep every override
-    | sourced and review it when an exchange changes its published fee schedule.
+    | Trademinator training and candle-period selection use the highest known
+    | applicable one-side taker fee. If CCXT reports a lower market/account fee,
+    | the configured published ceiling wins so training remains conservative.
+    | Keep every ceiling sourced and review it when an exchange changes fees.
     |
     | Rates are decimal fractions: 0.002 = 0.20%, 0.005 = 0.50%.
     |
@@ -25,6 +26,12 @@ return [
             'reviewed_at' => '2026-10-01',
             'source' => 'https://crypto.com/exchange/document/fees-limits',
             'note' => 'Crypto.com Exchange Level 1 base spot taker fee without CRO balance is 0.50%; account volume/CRO discounts may reduce the actual fee.',
+        ],
+        'kraken' => [
+            'rate' => 0.008,
+            'reviewed_at' => '2026-10-02',
+            'source' => 'https://www.kraken.com/features/fee-schedule',
+            'note' => 'Kraken Pro Tier 1 spot taker fee is 0.80%; higher-volume/AoP tiers reduce the fee, so training uses the 0.80% ceiling.',
         ],
     ],
 ];

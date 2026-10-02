@@ -134,21 +134,25 @@ final class MarketCatalog
     }
 
     /**
-     * Prefer CCXT's market-specific taker fee. If that market omits a fee,
-     * fall back only to an operator-maintained, sourced Trademinator override.
-     * Unknown remains null; we never invent a fee for Candle Training.
+     * Return the conservative one-side taker fee used by training/economic logic.
+     * When an exchange has variable fee tiers, use the highest known fee between
+     * CCXT's market metadata and the operator-maintained published ceiling.
      */
     public static function takerFee(mixed $marketFee, string $exchangeClass): ?float
     {
         $market = self::nonNegativeNumber($marketFee);
-        if ($market !== null) {
+        $override = config('exchange_fees.taker_overrides.'.strtolower($exchangeClass));
+        $rate = is_array($override) ? ($override['rate'] ?? null) : $override;
+        $ceiling = self::nonNegativeNumber($rate);
+
+        if ($market === null) {
+            return $ceiling;
+        }
+        if ($ceiling === null) {
             return $market;
         }
 
-        $override = config('exchange_fees.taker_overrides.'.strtolower($exchangeClass));
-        $rate = is_array($override) ? ($override['rate'] ?? null) : $override;
-
-        return self::nonNegativeNumber($rate);
+        return max($market, $ceiling);
     }
 
     public static function tickSize(mixed $pricePrecision, mixed $mode): ?string

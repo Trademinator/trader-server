@@ -14,6 +14,8 @@ use Illuminate\Validation\ValidationException;
 
 class ApiKeyController extends Controller
 {
+    private const API_KEY_PREFIX_LENGTH = 20;
+
     public function edit(Request $request)
     {
         return view('settings.api-key', [
@@ -37,7 +39,7 @@ class ApiKeyController extends Controller
 
         do {
             $secret = 'tmk_'.rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
-            $prefix = substr($secret, 0, 12);
+            $prefix = substr($secret, 0, self::API_KEY_PREFIX_LENGTH);
         } while (ClientApiKey::query()->where('prefix', $prefix)->exists());
 
         $key = ClientApiKey::query()->create([

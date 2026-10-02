@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Domain\MarketData\AllowMarketSubscriptions;
 use App\Domain\MarketData\MarketSubscriptionEntitlement;
+use App\Domain\Operations\ProductionSecurityConfiguration;
 use App\Events\MarketSubscriptionCreated;
 use App\Listeners\EnsureCoinGeckoMarketMapping;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -27,6 +28,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Keep Artisan recovery commands available even when production HTTP settings are unsafe.
+        if (! $this->app->runningInConsole()) {
+            (new ProductionSecurityConfiguration)->assertSafe($this->app['config']);
+        }
+
         RateLimiter::for('registration', function (Request $request): array {
             return [
                 Limit::perMinute(5)->by('registration-minute:'.$request->ip()),

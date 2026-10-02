@@ -14,6 +14,8 @@ it('creates a hashed client api key and shows the secret only in the redirect fl
 
     $key = ClientApiKey::query()->where('user_id', $user->user_id)->firstOrFail();
     expect($key->label)->toBe('Desktop Client')
+        ->and($key->prefix)->toBe(substr($secret, 0, 20))
+        ->and(strlen($key->prefix))->toBe(20)
         ->and($key->secret_hash)->toBe(hash('sha256', $secret))
         ->and($key->secret_hash)->not->toContain($secret);
 });

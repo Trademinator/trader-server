@@ -2,13 +2,13 @@
 
 use App\Models\ClientApiKey;
 use App\Models\ClientExecutionReport;
-use App\Models\ClientMarketSetting;
 use App\Models\Exchange;
 use App\Models\Market;
 use App\Models\MarketFeed;
 use App\Models\MarketSignal;
 use App\Models\MarketSubscription;
 use App\Models\User;
+use Illuminate\Support\Str;
 
 function m5Bearer(User $user): string
 {
@@ -37,6 +37,41 @@ it('requires a valid bearer token for the versioned client api', function () {
     $secret = m5Bearer($user);
     $this->withToken($secret)->getJson('/api/v1/client/markets')
         ->assertOk()->assertJsonPath('api_version', 1);
+});
+
+it('continues to authenticate migrated legacy uuid bearer keys', function () {
+    $user = User::factory()->create();
+    $secret = (string) Str::uuid();
+    ClientApiKey::query()->create([
+        'user_id' => $user->user_id, 'label' => 'legacy', 'prefix' => substr($secret, 0, 12),
+        'secret_hash' => hash('sha256', $secret),
+    ]);
+
+    $this->withToken($secret)->getJson('/api/v1/client/markets')
+        ->assertOk()->assertJsonPath('api_version', 1);
+});
+
+it('rate limits repeated failed client api authentication attempts by source ip', function () {
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.40']);
+    $invalid = 'tmk_'.str_repeat('z', 43);
+
+    for ($attempt = 0; $attempt < 30; $attempt++) {
+        $this->withToken($invalid)->getJson('/api/v1/client/markets')->assertUnauthorized();
+    }
+
+    $this->withToken($invalid)->getJson('/api/v1/client/markets')
+        ->assertStatus(429)->assertJsonPath('error.code', 'authentication_rate_limited')
+        ->assertHeader('Retry-After');
+});
+
+it('does not charge successful client requests against the authentication failure limiter', function () {
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.41']);
+    $user = User::factory()->create();
+    $secret = m5Bearer($user);
+
+    for ($request = 0; $request < 31; $request++) {
+        $this->withToken($secret)->getJson('/api/v1/client/markets')->assertOk();
+    }
 });
 
 it('keeps trading disabled until explicitly enabled per market', function () {
