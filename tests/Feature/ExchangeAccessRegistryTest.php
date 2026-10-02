@@ -1,6 +1,6 @@
 <?php
 
-use App\Domain\MarketData\CandlePeriodSelector;
+use App\Domain\MarketData\CandlePeriodReevaluation;
 use App\Domain\MarketData\ExchangeMetadata;
 use App\Domain\MarketData\ExchangeMetadataBuilder;
 use App\Domain\MarketData\MarketCatalog;
@@ -141,8 +141,8 @@ it('pauses unreviewed feeds before network access and preserves the active subsc
     $repository->shouldNotReceive('setExchange');
     app()->instance(ExchangeRepository::class, $repository);
     (new CollectMarketFeed($market->market_id, 'lease'))->handle(
-        app(CandlePeriodSelector::class), $repository,
-        app(MarketDataSynchronizer::class), Mockery::mock(TickerRepository::class), $metadata);
+        app(CandlePeriodReevaluation::class), app(MarketDataSynchronizer::class),
+        Mockery::mock(TickerRepository::class), $metadata);
     expect($feed->fresh()->status)->toBe('blocked')->and($feed->fresh()->lease_token)->toBeNull()
         ->and($feed->fresh()->last_error)->toBe('Pending access review.')
         ->and($feed->fresh()->next_pull_at->isFuture())->toBeTrue()

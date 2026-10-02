@@ -13,7 +13,8 @@ use RuntimeException;
 
 final class FeatureBuilder
 {
-    public function build(string $exchange, string $symbol, string $period, ?int $cutoffMs = null, ?int $fromMs = null): int
+    public function build(string $exchange, string $symbol, string $period, ?int $cutoffMs = null, ?int $fromMs = null,
+        ?int $checkpointBeforeMs = null): int
     {
         $cutoffMs = min($cutoffMs ?? PHP_INT_MAX, (int) floor(microtime(true) * 1000));
         $lock = Cache::lock('trademinator:features:'.hash('sha256', "$exchange|$symbol|$period"), 720);
@@ -23,7 +24,9 @@ final class FeatureBuilder
         try {
             $tickers = app(TickerRepository::class);
             $checkpoints = app(FeatureCheckpointStore::class);
-            $checkpoint = $fromMs === null ? null : $checkpoints->before($exchange, $symbol, $period, $fromMs);
+            $checkpointBoundary = $checkpointBeforeMs ?? $fromMs;
+            $checkpoint = $checkpointBoundary === null ? null : $checkpoints->before($exchange, $symbol, $period, $checkpointBoundary);
+            $resumeThroughMs = isset($checkpoint['through_ms']) ? (int) $checkpoint['through_ms'] : null;
             $sourceFrom = 0;
             if ($checkpoint !== null) {
                 $elapsed = [];
@@ -66,7 +69,16 @@ final class FeatureBuilder
                     $latestCheckpoint = $state;
                 }) as $row) {
                 if (microtime(true) - $started > 540) {
-                    throw new RuntimeException('Feature replay exceeded 540 seconds; reduce the stored history or run a dedicated offline dataset build.');
+                    if ($pending) {
+                        $this->save($pending);
+                        $pending = [];
+                    }
+                    if ($latestCheckpoint !== null) {
+                        $this->saveCheckpoint($checkpoints, $exchange, $symbol, $period, $latestCheckpoint);
+                    }
+                    throw new FeatureReplayTimeout(
+                        isset($latestCheckpoint['through_ms']) ? (int) $latestCheckpoint['through_ms'] : $resumeThroughMs
+                    );
                 }
                 while ($snapshots !== null && $snapshots->valid() && $snapshots->current()->observed_at_ms <= $row['available_at_ms']) {
                     $snapshot = (array) $snapshots->current();
@@ -113,8 +125,7 @@ final class FeatureBuilder
                 $this->save($pending);
             }
             if ($latestCheckpoint !== null) {
-                $latestCheckpoint['feature_version'] = FeatureEngine::VERSION;
-                $checkpoints->save($exchange, $symbol, $period, (int) $latestCheckpoint['through_ms'], $latestCheckpoint);
+                $this->saveCheckpoint($checkpoints, $exchange, $symbol, $period, $latestCheckpoint);
             }
 
             app(ActionLog::class)->write('features.built', ['exchange' => $exchange,
@@ -124,6 +135,12 @@ final class FeatureBuilder
         } finally {
             $lock->release();
         }
+    }
+
+    private function saveCheckpoint(FeatureCheckpointStore $checkpoints, string $exchange, string $symbol, string $period, array $checkpoint): void
+    {
+        $checkpoint['feature_version'] = FeatureEngine::VERSION;
+        $checkpoints->save($exchange, $symbol, $period, (int) $checkpoint['through_ms'], $checkpoint);
     }
 
     private function save(array $rows): void

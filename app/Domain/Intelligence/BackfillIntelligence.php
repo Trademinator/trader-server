@@ -64,6 +64,16 @@ final class BackfillIntelligence
         return DB::table('market_history_backfills')->where('history_id', $id)->where('build_lease_token', $token);
     }
 
+    public function renew(string $id, string $token): bool
+    {
+        return $this->owned($id, $token)->update([
+            'build_lease_until' => now()->addMinutes(15),
+            'build_next_attempt_at' => null,
+            'build_error' => null,
+            'updated_at' => now(),
+        ]) > 0;
+    }
+
     public function release(string $id, string $token, array $changes = [], int $delay = 0): void
     {
         $this->owned($id, $token)->update(array_merge([

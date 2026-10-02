@@ -465,7 +465,7 @@ it('opens a technical review for an owned subscription when a preference match i
     'inactive subscription' => [null, false, 'No saved preferences'],
 ]);
 
-it('does not use another users subscription to grant a technical review', function () {
+it('does not use another users subscription to mark a technical review as subscribed', function () {
     $exchange = suggestionExchange();
     $owner = User::factory()->create();
     $other = User::factory()->create();
@@ -474,5 +474,6 @@ it('does not use another users subscription to grant a technical review', functi
     MarketSubscription::query()->create(['user_id' => $owner->user_id, 'market_id' => $market->market_id, 'active' => true]);
     $url = route('markets.suggestions.review', ['exchange' => 'kraken', 'symbol' => 'BTC/CAD', 'user_id' => $owner->user_id]);
 
-    $this->actingAs($other)->getJson($url)->assertNotFound()->assertJsonMissingPath('evidence');
+    $this->actingAs($other)->get($url)->assertOk()->assertSee('Not subscribed')
+        ->assertSee('Subscribe to BTC/CAD')->assertDontSee('Subscribed market');
 });

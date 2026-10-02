@@ -23,6 +23,12 @@ final class FeatureCheckpointStore
         ]);
     }
 
+    public function clear(string $exchange, string $symbol, string $period): int
+    {
+        return DB::table('feature_checkpoints')->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+            ->where('feature_version', FeatureEngine::VERSION)->delete();
+    }
+
     public function before(string $exchange, string $symbol, string $period, int $beforeMs): ?array
     {
         $row = DB::table('feature_checkpoints')->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)

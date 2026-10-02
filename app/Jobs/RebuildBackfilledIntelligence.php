@@ -2,11 +2,14 @@
 
 namespace App\Jobs;
 
+use App\Domain\Archive\FeatureCheckpointStore;
 use App\Domain\Features\FeatureBuilder;
+use App\Domain\Features\FeatureReplayTimeout;
 use App\Domain\Intelligence\BackfillIntelligence;
 use App\Domain\Intelligence\MarketIntelligence;
 use App\Domain\Intelligence\ModelStore;
 use App\Models\MarketFeed;
+use App\Repositories\TickerRepository;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
@@ -27,8 +30,15 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
 
     public ?string $schema = null;
 
-    public function __construct(public readonly string $historyId, public readonly string $leaseToken, ?string $schema = null)
-    {
+    public function __construct(
+        public readonly string $historyId,
+        public readonly string $leaseToken,
+        ?string $schema = null,
+        public readonly ?int $featureStartMs = null,
+        public readonly ?int $featureCutoffMs = null,
+        public readonly bool $featureFinal = true,
+        public readonly ?int $featureRevision = null,
+    ) {
         $this->schema = $schema ?? (string) config('intelligence.schema');
     }
 
@@ -56,10 +66,50 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
         }
         try {
             if ($state->build_stage === 'features') {
-                // Fold in every completed import that arrived before this job started.
-                // Imports arriving during the rebuild remain dirty for a later pass.
-                $revision = (int) $state->history_revision;
-                $features->build($exchange, $symbol, $state->period);
+                // Coalesce imports that completed before the root rebuild actually
+                // started. Split children then carry this exact revision so imports
+                // arriving while the chain runs remain dirty for the next rebuild.
+                $rootReplay = $this->featureRevision === null;
+                $revision = $this->featureRevision ?? (int) $state->history_revision;
+                if ($revision <= 0) {
+                    throw new RuntimeException('Invalid backfill feature revision.');
+                }
+                if ($rootReplay) {
+                    $builds->owned($this->historyId, $this->leaseToken)->update([
+                        'build_revision' => $revision, 'updated_at' => now(),
+                    ]);
+                }
+
+                $cutoffMs = $this->featureCutoffMs ?? (int) floor(microtime(true) * 1000);
+                $startMs = $this->featureStartMs ?? ($state->oldest_candle_ms === null
+                    ? $this->firstCandleMs($exchange, $symbol, $state->period, $cutoffMs)
+                    : (int) $state->oldest_candle_ms);
+
+                // A root rebuild must not resume indicator state produced before the
+                // historical revision that triggered it. Split children keep the
+                // checkpoints created by their parent/sibling jobs.
+                if ($this->featureCutoffMs === null) {
+                    app(FeatureCheckpointStore::class)->clear($exchange, $symbol, $state->period);
+                }
+                $builds->renew($this->historyId, $this->leaseToken);
+
+                try {
+                    $checkpointBeforeMs = $this->featureCutoffMs === null ? null
+                        : ($cutoffMs === PHP_INT_MAX ? PHP_INT_MAX : $cutoffMs + 1);
+                    $features->build($exchange, $symbol, $state->period, cutoffMs: $cutoffMs,
+                        checkpointBeforeMs: $checkpointBeforeMs);
+                } catch (FeatureReplayTimeout $timeout) {
+                    $this->splitFeatureReplay($builds, $startMs, $cutoffMs, $timeout, $revision);
+
+                    return;
+                }
+
+                if (! $this->featureFinal) {
+                    $builds->renew($this->historyId, $this->leaseToken);
+
+                    return;
+                }
+
                 $builds->release($this->historyId, $this->leaseToken, [
                     'build_stage' => 'knn', 'build_revision' => $revision, 'build_error' => null,
                 ]);
@@ -82,6 +132,40 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
         } finally {
             $lock->release();
         }
+    }
+
+    private function splitFeatureReplay(BackfillIntelligence $builds, int $startMs, int $cutoffMs,
+        FeatureReplayTimeout $timeout, int $revision): void
+    {
+        $resumeMs = max($startMs, $timeout->throughMs ?? $startMs);
+        if ($resumeMs >= $cutoffMs - 1) {
+            throw $timeout;
+        }
+        $middleMs = $resumeMs + intdiv($cutoffMs - $resumeMs, 2);
+        if ($middleMs <= $resumeMs || $middleMs >= $cutoffMs) {
+            throw $timeout;
+        }
+
+        $queue = (string) config('intelligence.queue');
+        $first = (new self($this->historyId, $this->leaseToken, $this->schema,
+            $resumeMs, $middleMs, false, $revision))->onQueue($queue);
+        $second = (new self($this->historyId, $this->leaseToken, $this->schema,
+            $middleMs, $cutoffMs, $this->featureFinal, $revision))->onQueue($queue);
+
+        // The current job returns successfully after installing its replacements.
+        // Laravel deletes it and dispatches the first child. The second child waits
+        // in the chain because recursive indicators cannot be calculated in parallel.
+        $this->prependToChain([$first, $second]);
+        $builds->renew($this->historyId, $this->leaseToken);
+    }
+
+    private function firstCandleMs(string $exchange, string $symbol, string $period, int $cutoffMs): int
+    {
+        foreach (app(TickerRepository::class)->streamHistory($exchange, $symbol, $period, 0, $cutoffMs) as $timestamp => $_) {
+            return (int) $timestamp;
+        }
+
+        return 0;
     }
 
     public function failed(?Throwable $exception): void

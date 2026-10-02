@@ -1,6 +1,6 @@
 <?php
 
-use App\Domain\MarketData\CandlePeriodSelector;
+use App\Domain\MarketData\CandlePeriodReevaluation;
 use App\Domain\MarketData\ExchangeCredentials;
 use App\Domain\MarketData\ExchangeMetadata;
 use App\Domain\MarketData\MarketCatalogException;
@@ -198,7 +198,7 @@ it('uses subscriber keys in the scheduled collector with no signed-in web user',
     $repository = credentialCoinbaseRepository();
     app()->instance(ExchangeRepository::class, $repository);
 
-    (new CollectMarketFeed($market->market_id, 'test-lease'))->handle(app(CandlePeriodSelector::class), $repository,
+    (new CollectMarketFeed($market->market_id, 'test-lease'))->handle(app(CandlePeriodReevaluation::class),
         app(MarketDataSynchronizer::class), app(TickerRepository::class), app(ExchangeMetadata::class));
 
     expect($feed->fresh()->status)->toBe('ready');

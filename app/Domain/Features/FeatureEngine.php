@@ -133,19 +133,20 @@ final class FeatureEngine
             $this->calculateSlice($slice);
             $carry = $this->ticker_slice($slice, 20, 3);
             $last = end($carry);
-            if (is_array($last)) {
-                $checkpointCallback?->__invoke([
-                    'carry' => array_values($carry),
-                    'through_ms' => (int) $last['microtimestamp'],
-                    'history_start_ms' => (int) $last['history_start_ms'],
-                    'feature_count' => (int) ($last['__feature_count'] ?? 0),
-                ]);
-            }
+            $checkpointState = is_array($last) ? [
+                'carry' => array_values($carry),
+                'through_ms' => (int) $last['microtimestamp'],
+                'history_start_ms' => (int) $last['history_start_ms'],
+                'feature_count' => (int) ($last['__feature_count'] ?? 0),
+            ] : null;
             $pending = [];
             foreach ($newKeys as $key) {
                 $row = $slice[$key];
                 unset($row['__ticker_position'], $row['__ticker_seed'], $row['__ticker_cached']);
                 yield $key => $row;
+            }
+            if ($checkpointState !== null) {
+                $checkpointCallback?->__invoke($checkpointState);
             }
         };
 

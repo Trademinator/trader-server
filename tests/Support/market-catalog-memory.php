@@ -3,7 +3,7 @@
 require dirname(__DIR__, 2).'/vendor/autoload.php';
 
 use App\Domain\Features\FeatureBuilder;
-use App\Domain\MarketData\CandlePeriodSelector;
+use App\Domain\MarketData\CandlePeriodReevaluation;
 use App\Domain\MarketData\ExchangeMetadata;
 use App\Domain\MarketData\MarketDataSynchronizer;
 use App\Domain\MarketSuggestions\Questionnaire;
@@ -81,14 +81,23 @@ $probe = new class('testProbe') extends TestCase
                 $this->assertSame(1, FixtureBinance::$requests);
             } else {
                 $market = Market::query()->create(['exchange_id' => $exchange->getKey(), 'symbol' => 'BTC/USDT', 'tick_size' => '0.01']);
-                MarketFeed::query()->create(['market_id' => $market->getKey(), 'status' => 'pending']);
+                // This probe measures collector/feature memory, not automatic period
+                // reevaluation. Give the feed the already-selected period that the
+                // collector would have after evaluation completes.
+                MarketFeed::query()->create(['market_id' => $market->getKey(), 'selected_period' => '1m', 'status' => 'pending']);
                 MarketSubscription::query()->create(['user_id' => $user->getKey(), 'market_id' => $market->getKey(), 'active' => true]);
                 // Run real collector and feature services in a fresh worker-sized process.
 
+                // The legacy inline selector used to leave a few hundred candles in
+                // storage. Seed the equivalent history through the real bounded
+                // synchronizer so the feature-memory assertion still exercises >200 rows.
+                $to = time() - 60;
+                app(MarketDataSynchronizer::class)->sync('binance', 'BTC/USDT', '1m', $to - 240 * 60, $to, false, false, 90);
+
                 for ($i = 0; $i < 3; $i++) {
                     $market->feed->update(['lease_token' => 'memory-pass-'.$i, 'lease_until' => now()->addMinutes(15)]);
-                    (new CollectMarketFeed($market->getKey(), 'memory-pass-'.$i))->handle(app(CandlePeriodSelector::class),
-                        $repository, app(MarketDataSynchronizer::class), app(TickerRepository::class), app(ExchangeMetadata::class));
+                    (new CollectMarketFeed($market->getKey(), 'memory-pass-'.$i))->handle(app(CandlePeriodReevaluation::class),
+                        app(MarketDataSynchronizer::class), app(TickerRepository::class), app(ExchangeMetadata::class));
                     $this->assertSame('ready', $market->feed->fresh()->status);
                     gc_collect_cycles();
                     gc_mem_caches();
