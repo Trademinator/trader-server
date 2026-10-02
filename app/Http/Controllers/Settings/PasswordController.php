@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers\Settings;
 
+use App\Domain\Security\PasswordCredentialRotation;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules;
 use Illuminate\View\View;
 
@@ -18,16 +18,15 @@ class PasswordController extends Controller
         ]);
     }
 
-    public function update(Request $request): RedirectResponse
+    public function update(Request $request, PasswordCredentialRotation $rotation): RedirectResponse
     {
         $validated = $request->validate([
             'current_password' => ['required', 'current_password'],
             'password' => ['required', Rules\Password::defaults(), 'confirmed'],
         ]);
 
-        $request->user()->update([
-            'password' => Hash::make($validated['password']),
-        ]);
+        $rotation->rotate($request->user(), $validated['password']);
+        $request->session()->forget('auth.password_confirmed_at');
 
         return back()->with('status', 'password-updated');
     }

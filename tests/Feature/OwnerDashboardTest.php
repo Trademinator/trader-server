@@ -10,6 +10,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 
+beforeEach(function () {
+    $this->withSession(['auth.password_confirmed_at' => time()]);
+});
+
 function serverOwner(): User
 {
     $user = User::factory()->create();

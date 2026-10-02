@@ -54,13 +54,16 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('settings/profile', [Settings\ProfileController::class, 'destroy'])->name('settings.profile.destroy');
     Route::get('settings/password', [Settings\PasswordController::class, 'edit'])->name('settings.password.edit');
     Route::put('settings/password', [Settings\PasswordController::class, 'update'])->name('settings.password.update');
+    Route::get('settings/appearance', [Settings\AppearanceController::class, 'edit'])->name('settings.appearance.edit');
+});
+
+Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('settings/api-key', [Settings\ApiKeyController::class, 'edit'])->name('settings.api-key.edit');
     Route::post('settings/api-key', [Settings\ApiKeyController::class, 'store'])->middleware('throttle:12,1')->name('settings.api-key.store');
     Route::delete('settings/api-key/{key}', [Settings\ApiKeyController::class, 'destroy'])->whereUuid('key')->middleware('throttle:30,1')->name('settings.api-key.destroy');
     Route::get('settings/exchange-keys', [Settings\ExchangeCredentialController::class, 'index'])->name('settings.exchange-keys.index');
     Route::put('settings/exchange-keys/{exchange}', [Settings\ExchangeCredentialController::class, 'update'])->whereUuid('exchange')->middleware('throttle:12,1')->name('settings.exchange-keys.update');
     Route::delete('settings/exchange-keys/{exchange}', [Settings\ExchangeCredentialController::class, 'destroy'])->whereUuid('exchange')->middleware('throttle:12,1')->name('settings.exchange-keys.destroy');
-    Route::get('settings/appearance', [Settings\AppearanceController::class, 'edit'])->name('settings.appearance.edit');
 });
 
 require __DIR__.'/auth.php';
@@ -84,7 +87,7 @@ Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-
     Route::get('/', [ReportController::class, 'index'])->name('overview');
     Route::get('users', [UserController::class, 'index'])->name('users');
     Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
-    Route::put('users/{user}', [UserController::class, 'update'])->middleware('throttle:12,1')->name('users.update');
+    Route::put('users/{user}', [UserController::class, 'update'])->middleware(['password.confirm', 'throttle:12,1'])->name('users.update');
     Route::get('subscriptions', [ReportController::class, 'subscriptions'])->name('subscriptions');
     Route::get('markets/{market}', [ReportController::class, 'market'])->name('markets.show');
     Route::get('intelligence', [ReportController::class, 'intelligence'])->name('intelligence');
@@ -94,7 +97,7 @@ Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-
     Route::post('archives/archive', [ArchiveController::class, 'archive'])->middleware('throttle:6,1')->name('archives.archive');
     Route::post('archives/verify', [ArchiveController::class, 'verify'])->middleware('throttle:6,1')->name('archives.verify');
     Route::post('archives/rebuild', [ArchiveController::class, 'rebuild'])->middleware('throttle:2,1')->name('archives.rebuild');
-    Route::post('archives/restore', [ArchiveController::class, 'restore'])->middleware('throttle:6,1')->name('archives.restore');
-    Route::post('archives/export', [ArchiveController::class, 'export'])->middleware('throttle:2,1')->name('archives.export');
-    Route::post('archives/import', [ArchiveController::class, 'import'])->middleware('throttle:2,1')->name('archives.import');
+    Route::post('archives/restore', [ArchiveController::class, 'restore'])->middleware(['password.confirm', 'throttle:6,1'])->name('archives.restore');
+    Route::post('archives/export', [ArchiveController::class, 'export'])->middleware(['password.confirm', 'throttle:2,1'])->name('archives.export');
+    Route::post('archives/import', [ArchiveController::class, 'import'])->middleware(['password.confirm', 'throttle:2,1'])->name('archives.import');
 });
