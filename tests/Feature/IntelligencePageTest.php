@@ -24,10 +24,30 @@ it('restricts intelligence pages to the active subscription owner and escapes ma
     $this->actingAs($owner)->get($url)->assertSee('HOLD')->assertSee('0.0%')
         ->assertSee('Training has not completed')->assertSee('What is missing?')
         ->assertSee('M2/M3 jobs alone do not train an M4 model.')
-        ->assertSee('ETA unavailable')->assertSee('fallback zeros')
+        ->assertSee('fallback zeros')->assertDontSee('ETA')
         ->assertSee('&lt;script&gt;', false)->assertDontSee('<script>alert(1)</script>', false);
     $subscription->update(['active' => false]);
     $this->get($url)->assertNotFound();
+});
+
+it('shows same-pair peer exchanges and a subscribe action for an unfollowed peer', function () {
+    $user = User::factory()->create();
+    $kraken = Exchange::query()->create(['name' => 'Kraken', 'class' => 'kraken', 'config' => '{}']);
+    $market = Market::query()->create(['exchange_id' => $kraken->exchange_id, 'symbol' => 'BTC/USD', 'tick_size' => '0.01']);
+    MarketFeed::query()->create(['market_id' => $market->market_id, 'selected_period' => '1m', 'status' => 'active']);
+    $subscription = MarketSubscription::query()->create(['user_id' => $user->user_id, 'market_id' => $market->market_id, 'active' => true]);
+
+    $bitso = Exchange::query()->create(['name' => 'Bitso', 'class' => 'bitso', 'config' => '{}']);
+    $peer = Market::query()->create(['exchange_id' => $bitso->exchange_id, 'symbol' => 'BTC/USD', 'tick_size' => '0.01']);
+    MarketFeed::query()->create(['market_id' => $peer->market_id, 'selected_period' => '1m', 'status' => 'idle']);
+
+    $reviewUrl = route('markets.suggestions.review', ['exchange' => 'bitso', 'symbol' => 'BTC/USD']);
+    $this->actingAs($user)->get(route('markets.intelligence', $subscription->getKey()))
+        ->assertOk()->assertSee('Same pair on other exchanges')->assertSee('Bitso')->assertSee('Available')
+        ->assertSee($reviewUrl);
+
+    $this->get($reviewUrl)->assertOk()->assertSee('Available market')->assertSee('Not subscribed')
+        ->assertSee('Subscribe to BTC/USD');
 });
 
 it('renders actual history counts and failed validation requirements for an abstaining model', function () {

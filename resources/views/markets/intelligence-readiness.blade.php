@@ -72,12 +72,6 @@
         @endif
         <p class="guide-help">CoinGecko does not need to list this exchange. Trademinator maps the base asset and exact quote currency; the exchange remains the authoritative source for its own candles.</p>
     @endif
-    <h3>ETA</h3>
-    @if ($progress['eta'])
-        <p><strong>Earliest data estimate: {{ $progress['eta']->diffForHumans() }}</strong> · <x-display-time :value="$progress['eta']" /></p>
-    @endif
-    <p>{{ $progress['eta_note'] }}</p>
-    <p><strong>Validated-model ETA: unknown.</strong> Reaching the row minimum permits evaluation; it does not guarantee acceptable precision, coverage or similar neighbors.</p>
     @if ($progress['next_training'])
         <p>Next weekly training dispatch: <x-display-time :value="$progress['next_training']" /> ({{ $progress['next_training']->diffForHumans() }}). This is a schedule, not confirmation that a worker is running.</p>
     @endif

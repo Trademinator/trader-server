@@ -124,7 +124,7 @@
                         <x-intelligence-progress :label="ucwords(str_replace('_', ' ', $type)).' samples'" :value="$patternReport['samples']" :target="$progress['pattern_minimum']" />
                         <p class="guide-help">{{ match ($patternReport['status']) {
                             'validated' => 'Validated. A calibrated pattern model is available.',
-                            'insufficient_samples' => 'More examples of this pattern are needed. Their occurrence has no predictable ETA.',
+                            'insufficient_samples' => 'More examples of this pattern are needed.',
                             'insufficient_chronological_classes' => 'The chronological blocks need enough rows and both completed and failed examples.',
                             'no_improvement_over_prior' => 'Validation did not improve on the prior baseline. More samples do not guarantee a passing model.',
                             default => 'Pattern validation is pending.',

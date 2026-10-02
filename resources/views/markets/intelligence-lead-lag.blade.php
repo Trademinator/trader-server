@@ -2,6 +2,28 @@
     <h2>Cross-exchange lead / lag</h2>
     <p>Tests whether another exchange's movement helps explain a later movement here. Timing is measured in whole closed candles; smaller delays cannot be resolved at this period.</p>
     <p class="guide-help">Only matching spot symbols, quote currencies and selected candle periods are compared. Subscribe to the same pair on another exchange to collect overlapping history. Region and timezone are context, not proof of customer location.</p>
+    @if ($peerMarkets->isNotEmpty())
+        <h3>Same pair on other exchanges</h3>
+        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3 mt-4 mb-4">
+            @foreach ($peerMarkets as $peer)
+                <a class="dashboard-market" href="{{ route('markets.suggestions.review', ['exchange' => $peer['exchange']->class, 'symbol' => $item->market->symbol]) }}">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <p class="flex items-center gap-2">
+                                <span class="dashboard-exchange-logo" aria-hidden="true">
+                                    @if ($peer['logo_url'])<img src="{{ $peer['logo_url'] }}" height="24" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">@endif
+                                    <span>{{ mb_strtoupper(mb_substr($peer['label'], 0, 1)) }}</span>
+                                </span>
+                                <strong>{{ $peer['label'] }}</strong>
+                            </p>
+                            <p class="dashboard-muted mt-2">{{ $item->market->symbol }} · {{ $peer['period'] ?? 'Selecting period' }}</p>
+                        </div>
+                        <span class="guide-badge">{{ $peer['following'] ? 'Following' : 'Available' }}</span>
+                    </div>
+                </a>
+            @endforeach
+        </div>
+    @endif
     @if (!isset($report['lead_lag']))
         <p>Build a current model to evaluate cross-exchange evidence.</p>
     @elseif (($report['lead_lag']['report'] ?? []) === [])
@@ -37,7 +59,7 @@
             <p>{{ $report['lead_lag']['peers_omitted_by_cap'] }} additional peers were omitted by the configured build limit.</p>
         @endif
     @endif
-    <p class="guide-help">Sample counts alone do not establish a relationship. Direction, baseline improvement and persistence must pass. Eligible shared markets are reevaluated daily when daily refresh is enabled; the intelligence worker must run. No reliable passing-model ETA exists.</p>
+    <p class="guide-help">Sample counts alone do not establish a relationship. Direction, baseline improvement and persistence must pass. Eligible shared markets are reevaluated daily when daily refresh is enabled; the intelligence worker must run.</p>
     @php
         $nextLeadLag = \Carbon\CarbonImmutable::now(config('app.timezone'))->setTime(3, 45);
         if ($nextLeadLag->isPast()) {

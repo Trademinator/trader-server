@@ -9,6 +9,7 @@ use App\Domain\MarketSuggestions\PairSuggestions;
 use App\Domain\MarketSuggestions\Questionnaire;
 use App\Http\Controllers\Controller;
 use App\Models\Exchange;
+use App\Models\Market;
 use App\Models\MarketPreferenceProfile;
 use App\Models\MarketSubscription;
 use Illuminate\Database\Eloquent\Builder;
@@ -32,10 +33,20 @@ final class SuggestionReviewController extends Controller
             ->whereHas('market', fn (Builder $query) => $query->where('symbol', $input['symbol'])
                 ->whereHas('exchange', fn (Builder $query) => $query->where('class', $input['exchange'])))
             ->first();
+        $market = $subscription?->market;
+        if ($market === null) {
+            $markets = Market::query()->with('exchange', 'feed')
+                ->where('symbol', $input['symbol'])
+                ->whereHas('exchange', fn (Builder $query) => $query->where('class', $input['exchange']))
+                ->limit(2)->get();
+            if ($markets->count() === 1) {
+                $market = $markets->first();
+            }
+        }
         $profile = MarketPreferenceProfile::query()->find($request->user()->user_id);
         if (! $profile) {
-            if ($subscription !== null) {
-                return $this->subscriptionReview($request, $subscription, $evidence, $input,
+            if ($market !== null) {
+                return $this->technicalReview($request, $market, $subscription, $evidence, $input,
                     'No saved preferences are available for a personal match assessment.');
             }
 
@@ -44,11 +55,12 @@ final class SuggestionReviewController extends Controller
                 : redirect()->route('markets.suggestions')->with('status', 'Save your preferences to review a suggested pair.');
         }
         $answers = array_replace(Questionnaire::defaults(), $profile->answers);
-        if ($input['exchange'] !== $answers['exchange'] && $subscription !== null) {
-            return $this->subscriptionReview($request, $subscription, $evidence, $input,
+        if ($input['exchange'] !== $answers['exchange']) {
+            abort_if($market === null, 404);
+
+            return $this->technicalReview($request, $market, $subscription, $evidence, $input,
                 'Your saved preferences describe a different exchange. Holdings and access confirmation from that exchange are not applied here.');
         }
-        abort_unless($input['exchange'] === $answers['exchange'], 404);
         $exchange = null;
         $results = null;
         $item = null;
@@ -74,9 +86,9 @@ final class SuggestionReviewController extends Controller
             $failure = $error['message'].' Reference: '.$error['reference'];
             $status = 503;
         }
-        if ($failure !== null && $status === 409 && $subscription !== null) {
-            return $this->subscriptionReview($request, $subscription, $evidence, $input,
-                'This subscribed pair is not in your current suggestions. Availability, preferences or screening results may have changed.');
+        if ($failure !== null && $status === 409 && $market !== null) {
+            return $this->technicalReview($request, $market, $subscription, $evidence, $input,
+                'This pair is not in your current suggestions. Availability, preferences or screening results may have changed.');
         }
         if ($request->expectsJson()) {
             return response()->json($failure !== null ? ['message' => $failure] : [
@@ -94,9 +106,9 @@ final class SuggestionReviewController extends Controller
     }
 
     /** @param array{exchange: string, symbol: string} $input */
-    private function subscriptionReview(Request $request, MarketSubscription $subscription, CandleEvidence $inspector, array $input, string $notice): Response|JsonResponse
+    private function technicalReview(Request $request, Market $market, ?MarketSubscription $subscription, CandleEvidence $inspector, array $input, string $notice): Response|JsonResponse
     {
-        $market = $subscription->market;
+        $market->loadMissing('exchange', 'feed');
         $evidence = $inspector->inspect($input['exchange'], $input['symbol'], $market->feed?->selected_period,
             'unsure', includeSeries: true);
         if ($request->expectsJson()) {
@@ -110,9 +122,9 @@ final class SuggestionReviewController extends Controller
         [$base, $quote] = explode('/', $input['symbol']);
 
         return response()->view('markets.subscription-review', [
-            'subscription' => $subscription, 'exchange' => $market->exchange, 'notice' => $notice,
+            'subscription' => $subscription, 'exchange' => $market->exchange, 'feed' => $market->feed, 'notice' => $notice,
             'evidence' => $evidence, 'reviewUrl' => route('markets.suggestions.review', $input),
-            'item' => ['symbol' => $input['symbol'], 'base' => $base, 'quote' => $quote, 'subscribed' => $subscription->active],
+            'item' => ['symbol' => $input['symbol'], 'base' => $base, 'quote' => $quote, 'subscribed' => $subscription?->active ?? false],
             'market' => ['tick_size' => $market->tick_size],
         ])->header('Cache-Control', 'private, no-store');
     }
