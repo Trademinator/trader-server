@@ -2,15 +2,13 @@
 
 namespace App\Jobs;
 
-use App\Domain\MarketData\CandlePeriodSelector;
+use App\Domain\MarketData\CandlePeriodReevaluation;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\MarketData\ExchangeMetadata;
-use App\Domain\MarketData\HistoryDepth;
 use App\Domain\MarketData\MarketCatalogException;
 use App\Domain\MarketData\MarketDataSynchronizer;
 use App\Domain\Operations\ActionLog;
 use App\Models\MarketFeed;
-use App\Repositories\ExchangeRepository;
 use App\Repositories\TickerRepository;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -34,8 +32,8 @@ final class CollectMarketFeed implements ShouldQueue
 
     public function __construct(public readonly string $marketId, public readonly string $leaseToken) {}
 
-    public function handle(CandlePeriodSelector $selector, ExchangeRepository $exchanges,
-        MarketDataSynchronizer $synchronizer, TickerRepository $tickers, ExchangeMetadata $metadata): void
+    public function handle(CandlePeriodReevaluation $reevaluation, MarketDataSynchronizer $synchronizer,
+        TickerRepository $tickers, ExchangeMetadata $metadata): void
     {
         $lock = Cache::lock('trademinator:market-feed:'.$this->marketId, 720);
         if (! $lock->get()) {
@@ -63,46 +61,14 @@ final class CollectMarketFeed implements ShouldQueue
                 return;
             }
             if ($feed->selected_period === null) {
-                $exchanges->setExchange($exchange, symbol: $market->symbol);
-                $periods = array_values(array_intersect(
-                    ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'],
-                    array_keys($exchanges->periods())));
-                if (! $periods) {
-                    throw new RuntimeException('The exchange has no supported candle periods.');
-                }
-                $exchanges->prepareCandleMarket($market->symbol);
-                $depth = app(HistoryDepth::class);
-                // A period must be informative now and retrievable far enough back
-                // to support the normal training/validation window. This prevents
-                // a short-retention adapter from winning only because its latest
-                // candles look good.
-                $selected = null;
-                foreach ($periods as $period) {
-                    $to = time();
-                    $from = $to - min(365 * 86400, 260 * periods_to_seconds($period));
-                    $candidate = $selector->select($exchange->class, $market->symbol, [$period],
-                        (float) $market->tick_size, $from, $to);
-                    if ($candidate === null) {
-                        continue;
-                    }
-                    $probe = $depth->depthProbe($period, $to * 1000);
-                    if (! $exchanges->hasHistoricalData($market->symbol, $period,
-                        $probe['from'], $probe['until'], $probe['limit'])) {
-                        continue;
-                    }
-                    $selected = $candidate;
-                    break;
-                }
-                if ($selected === null) {
-                    $this->finish('pending', now()->addMinutes(15),
-                        'No candle period meets the quality, coverage and historical-depth thresholds yet.');
+                $result = $reevaluation->evaluate($feed);
+                $feed->refresh();
+                if ($feed->selected_period === null) {
+                    $next = $feed->selection_next_attempt_at ?? now()->addMinutes(15);
+                    $this->finish('pending', $next, $result['reason'] ?? 'Automatic candle-period evaluation is pending.');
 
                     return;
                 }
-                $feed->selected_period = $selected['period'];
-                // Save the choice before ingestion so a failed request does not redo selection.
-                MarketFeed::query()->whereKey($this->marketId)->where('lease_token', $this->leaseToken)
-                    ->update(['selected_period' => $selected['period']]);
             }
             $period = $feed->selected_period;
             if (! in_array($period, CandleTimeframe::SUPPORTED, true)) {

@@ -42,7 +42,9 @@ final class BackfillMarketHistory implements ShouldQueue
             return;
         }
         $feed = MarketFeed::query()->with('market.exchange')->find($state->market_id);
-        if (! config('history_backfill.enabled') || $feed === null || $feed->selected_period !== $state->period
+        $candidate = $state->target_start_ms !== null;
+        if (! config('history_backfill.enabled') || $feed === null
+            || (! $candidate && $feed->selected_period !== $state->period)
             || ! $feed->market->subscriptions()->where('active', true)->exists()) {
             $history->release($this->historyId, $this->leaseToken, ['status' => 'idle', 'reason' => 'inactive_feed']);
 
@@ -72,19 +74,6 @@ final class BackfillMarketHistory implements ShouldQueue
             $deadline = microtime(true) + min(60, max(1, (int) config('history_backfill.max_seconds')));
             $metadata->assertUsable($exchange, spotOnly: false, symbol: $market->symbol);
             $timeframe = new CandleTimeframe;
-            if ($state->before_ms === null) {
-                $oldest = Ticker::query()->where('exchange', $exchange->class)->where('symbol', $market->symbol)
-                    ->where('period', $state->period)->min('microtimestamp');
-                if ($oldest === null || $timeframe->next((int) $oldest, $state->period) > now()->getTimestampMs()) {
-                    $history->release($this->historyId, $this->leaseToken, ['reason' => 'waiting_for_live_history']);
-
-                    return;
-                }
-                $state->before_ms = $state->oldest_candle_ms = (int) $oldest;
-                $history->owned($this->historyId, $this->leaseToken)->update([
-                    'before_ms' => $oldest, 'oldest_candle_ms' => $oldest,
-                ]);
-            }
             $exchanges->setExchange($exchange, ['timeout' => 15000], symbol: $market->symbol);
             $exchanges->prepareCandleMarket($market->symbol);
             if (! array_key_exists($state->period, $exchanges->periods())) {
@@ -94,14 +83,67 @@ final class BackfillMarketHistory implements ShouldQueue
             if ($size < 1 || $size > 100) {
                 throw new InvalidArgumentException('History page size must be between 1 and 100 candles.');
             }
+
+            if ($state->before_ms === null) {
+                $oldest = Ticker::query()->where('exchange', $exchange->class)->where('symbol', $market->symbol)
+                    ->where('period', $state->period)->min('microtimestamp');
+                if ($oldest === null) {
+                    // Candidate periods do not have a live collector yet. Seed a
+                    // recent closed page, then reuse the normal backward cursor.
+                    $until = now()->getTimestampMs();
+                    $from = $until;
+                    for ($i = 0; $i < $size; $i++) {
+                        $from = max(0, $timeframe->previous($from, $state->period));
+                    }
+                    $page = $exchanges->fetchHistoryPage($market->symbol, $state->period, $from, $until, $size);
+                    $closed = [];
+                    foreach ($page as $candle) {
+                        $timestamp = (int) $candle['microtimestamp'];
+                        if ($timestamp >= $from && $timestamp < $until
+                            && $timeframe->next($timestamp, $state->period) <= $until) {
+                            $closed[$timestamp] = $candle;
+                        }
+                    }
+                    ksort($closed, SORT_NUMERIC);
+                    if ($closed === []) {
+                        $history->release($this->historyId, $this->leaseToken, [
+                            'status' => 'paused', 'reason' => 'no_recent_history', 'next_attempt_at' => null,
+                        ]);
+
+                        return;
+                    }
+                    $tickers->saveTickers($exchange->class, $market->symbol, $state->period, array_values($closed));
+                    $oldest = array_key_first($closed);
+                }
+                if ($timeframe->next((int) $oldest, $state->period) > now()->getTimestampMs()) {
+                    $history->release($this->historyId, $this->leaseToken, ['reason' => 'waiting_for_live_history']);
+
+                    return;
+                }
+                $state->before_ms = $state->oldest_candle_ms = (int) $oldest;
+                $history->owned($this->historyId, $this->leaseToken)->update([
+                    'before_ms' => $oldest, 'oldest_candle_ms' => $oldest,
+                ]);
+            }
+
             $requests = min(20, max(1, (int) config('history_backfill.requests_per_job')));
             for ($request = 0; $request < $requests && microtime(true) < $deadline; $request++) {
                 $state = $history->owned($this->historyId, $this->leaseToken)->first();
                 if ($state === null) {
                     return;
                 }
+                if ($state->target_start_ms !== null && $state->before_ms !== null
+                    && (int) $state->before_ms <= (int) $state->target_start_ms) {
+                    $history->release($this->historyId, $this->leaseToken, [
+                        'status' => 'complete', 'reason' => 'target_reached', 'next_attempt_at' => null,
+                    ]);
+
+                    return;
+                }
                 if ((int) $state->before_ms <= 0) {
-                    $history->release($this->historyId, $this->leaseToken, ['status' => 'complete', 'reason' => 'unix_epoch']);
+                    $history->release($this->historyId, $this->leaseToken, [
+                        'status' => 'complete', 'reason' => 'unix_epoch', 'next_attempt_at' => null,
+                    ]);
 
                     return;
                 }
@@ -160,7 +202,8 @@ final class BackfillMarketHistory implements ShouldQueue
                     return;
                 }
                 if ($changes['reason'] === 'exchange_history_boundary'
-                    && config('history_backfill.reselect_shallow_periods') && $depth !== null) {
+                    && config('history_backfill.reselect_shallow_periods') && $depth !== null
+                    && $feed->selected_period === $state->period) {
                     $stored = Ticker::query()->where('exchange', $exchange->class)->where('symbol', $market->symbol)
                         ->where('period', $state->period);
                     $oldest = (clone $stored)->min('microtimestamp');
@@ -168,7 +211,8 @@ final class BackfillMarketHistory implements ShouldQueue
                     if ($oldest !== null && $latest !== null
                         && ! $depth->spanIsSufficient($state->period, (int) $oldest, (int) $latest)) {
                         MarketFeed::query()->whereKey($state->market_id)->where('selected_period', $state->period)->update([
-                            'selected_period' => null, 'status' => 'pending', 'next_pull_at' => now(),
+                            'selected_period' => null, 'selection_version' => 0, 'selection_next_attempt_at' => now(),
+                            'status' => 'pending', 'next_pull_at' => now(),
                             'last_error' => 'Selected candle period has insufficient retrievable history; automatic reselection requested.',
                             'updated_at' => now(),
                         ]);
@@ -176,7 +220,9 @@ final class BackfillMarketHistory implements ShouldQueue
                 }
                 if ($changes['status'] === 'paused' || $changes['window_start_ms'] === null) {
                     $history->release($this->historyId, $this->leaseToken, ['status' => $changes['status']]);
-                    $intelligence->dispatchDue($exchange->class, $market->symbol, $state->period);
+                    if ($feed->selected_period === $state->period) {
+                        $intelligence->dispatchDue($exchange->class, $market->symbol, $state->period);
+                    }
 
                     return;
                 }

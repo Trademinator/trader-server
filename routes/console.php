@@ -17,6 +17,11 @@ Schedule::command('trademinator:dispatch-market-feeds')
 Schedule::command('trademinator:backfill-ohlcv')
     ->everyMinute()->onOneServer()->withoutOverlapping(5);
 
+// Algorithm versions are reevaluated in small shared-market batches. The
+// current selected period remains live until a replacement fully qualifies.
+Schedule::command('trademinator:evaluate-candle-period --outdated-only')
+    ->everyFifteenMinutes()->onOneServer()->withoutOverlapping(15);
+
 Schedule::command('trademinator:collect-market-context')
     ->hourly()->onOneServer()->withoutOverlapping(60);
 

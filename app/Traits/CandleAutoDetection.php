@@ -19,11 +19,12 @@ trait CandleAutoDetection
     use Patterns;
 
     // All black candles are BUY candidates; all white candles are SELL candidates.
+    // Broadly mark BUY/SELL candidates, excluding candles already reserved for HOLD.
     public function mark_all_blacks_and_whites(array &$tickers): array
     {
         $count = count($tickers);
         foreach ($tickers as $index => &$ticker) {
-            if ($index <= 0 || $index >= $count - 2) {
+            if ($index <= 0 || $index >= $count - 2 || $this->candle_auto_is_reserved_hold($ticker)) {
                 continue;
             }
             if (($ticker['is_black()'] ?? 0) === 1) {
@@ -38,22 +39,40 @@ trait CandleAutoDetection
     }
 
     // Remove consecutive identical actions; only the last candidate matters.
+    // Collapse consecutive BUY/SELL candidates to the strongest CLOSE extreme.
+    // HOLD is invisible to this rule and never resets the surviving trade action.
+    // Collapse consecutive BUY/SELL candidates to the strongest CLOSE extreme.
+    // HOLD and reserved HOLD candidates are invisible to this rule.
     public function remove_consequitive_actions(array &$tickers): array
     {
-        if ($tickers === []) {
-            return $tickers;
-        }
+        $survivorIndex = null;
 
-        $count = count($tickers);
-        $lastStateIndex = 0;
-        for ($index = 1; $index < $count - 2; $index++) {
-            if (isset($tickers[$index]['action'], $tickers[$lastStateIndex]['action'])
-                && $tickers[$index]['action'] === $tickers[$lastStateIndex]['action']) {
-                unset($tickers[$lastStateIndex]['action']);
+        foreach (array_keys($tickers) as $index) {
+            $action = $tickers[$index]['action'] ?? null;
+            if (! in_array($action, ['buy', 'sell'], true)) {
+                continue;
             }
 
-            if (($tickers[$index]['is_super_doji()'] ?? 0) === 0) {
-                $lastStateIndex = $index;
+            if ($survivorIndex === null) {
+                $survivorIndex = $index;
+                continue;
+            }
+
+            $survivorAction = $tickers[$survivorIndex]['action'] ?? null;
+            if ($survivorAction !== $action) {
+                $survivorIndex = $index;
+                continue;
+            }
+
+            if ($this->candle_auto_same_action_candidate_wins(
+                $tickers[$survivorIndex],
+                $tickers[$index],
+                $action,
+            )) {
+                unset($tickers[$survivorIndex]['action']);
+                $survivorIndex = $index;
+            } else {
+                unset($tickers[$index]['action']);
             }
         }
 
@@ -62,81 +81,31 @@ trait CandleAutoDetection
 
     // Remove BUY -> SELL pairs whose CLOSE movement cannot clear twice the one-side taker fee.
     // Deliberately no ATR here: this pass is only the economic floor.
+    // Keep only alternating BUY/SELL pivots whose CLOSE movement clears twice the taker fee.
+    // A rejected opposite candidate does not replace the last surviving pivot.
+    // HOLD labels are ignored completely.
+    // Keep alternating BUY/SELL pivots whose CLOSE movement clears twice the taker fee.
+    // A rejected opposite candidate does not replace the last surviving pivot.
+    // HOLD labels and reserved HOLD candidates are ignored completely.
     public function remove_unprofitable_transactions(array &$tickers, mixed $taker_fee): array
     {
-        $minProfit = $this->candle_auto_double_taker_fee($taker_fee);
-        $index = 0;
-
-        while (($firstBuyIndex = $this->candle_auto_find_next_action_index($tickers, 'buy', $index)) !== null) {
-            $index = $firstBuyIndex + 1;
-            $firstSellIndex = $this->candle_auto_find_next_action_index($tickers, 'sell', $index);
-            if ($firstSellIndex === null) {
-                continue;
-            }
-            $index = $firstSellIndex + 1;
-
-            $buyClose = $this->bcconv($tickers[$firstBuyIndex]['close']);
-            $sellClose = $this->bcconv($tickers[$firstSellIndex]['close']);
-            if (bccomp($buyClose, '0', EXCHANGE_ROUND_DECIMALS * 2) <= 0) {
-                unset($tickers[$firstBuyIndex]['action'], $tickers[$firstSellIndex]['action']);
-                continue;
-            }
-
-            $profit = bcsub(
-                bcdiv($sellClose, $buyClose, EXCHANGE_ROUND_DECIMALS * 2),
-                '1',
-                EXCHANGE_ROUND_DECIMALS * 2
-            );
-            if (bccomp($buyClose, $sellClose, EXCHANGE_ROUND_DECIMALS * 2) >= 0
-                || bccomp($profit, $minProfit, EXCHANGE_ROUND_DECIMALS * 2) <= 0) {
-                unset($tickers[$firstBuyIndex]['action'], $tickers[$firstSellIndex]['action']);
-            }
-        }
-
-        return $tickers;
+        return $this->candle_auto_prune_trade_actions($tickers, $taker_fee);
     }
 
     // Remove SELL -> BUY zigzags whose CLOSE movement cannot clear twice the one-side taker fee.
     // Deliberately no ATR here: profitable historical swings should not be removed by volatility.
+    // Compatibility cleanup: the surviving-pivot pass already handles SELL -> BUY zigzags.
+    // Re-running it is intentionally idempotent and still ignores HOLD labels.
+    // The surviving-pivot pass already handles SELL -> BUY zigzags.
+    // Re-running it is intentionally idempotent and ignores HOLDs.
     public function remove_zigzags(array &$tickers, mixed $taker_fee): array
     {
-        if ($tickers === []) {
-            return $tickers;
-        }
-
-        $minimumMovement = $this->candle_auto_double_taker_fee($taker_fee);
-        $index = 0;
-
-        while (($firstSellIndex = $this->candle_auto_find_next_action_index($tickers, 'sell', $index)) !== null) {
-            $index = $firstSellIndex + 1;
-            $nextBuyIndex = $this->candle_auto_find_next_action_index($tickers, 'buy', $index);
-            if ($nextBuyIndex === null) {
-                continue;
-            }
-            $index = $nextBuyIndex + 1;
-
-            $sellClose = $this->bcconv($tickers[$firstSellIndex]['close']);
-            $buyClose = $this->bcconv($tickers[$nextBuyIndex]['close']);
-            if (bccomp($sellClose, '0', EXCHANGE_ROUND_DECIMALS * 2) <= 0) {
-                unset($tickers[$firstSellIndex]['action'], $tickers[$nextBuyIndex]['action']);
-                continue;
-            }
-
-            $movement = bcsub(
-                '1',
-                bcdiv($buyClose, $sellClose, EXCHANGE_ROUND_DECIMALS * 2),
-                EXCHANGE_ROUND_DECIMALS * 2
-            );
-
-            if (bccomp($movement, $minimumMovement, EXCHANGE_ROUND_DECIMALS * 2) <= 0) {
-                unset($tickers[$firstSellIndex]['action'], $tickers[$nextBuyIndex]['action']);
-            }
-        }
-
-        return $tickers;
+        return $this->candle_auto_prune_trade_actions($tickers, $taker_fee);
     }
 
     // Between surviving SELLs, move the BUY label to the lowest black CLOSE.
+    // Between surviving SELLs, move the BUY label to the lowest eligible black CLOSE.
+    // Candles reserved for HOLD are not eligible BUY candidates.
     public function find_new_bottoms(array &$tickers): array
     {
         $index = 0;
@@ -149,7 +118,8 @@ trait CandleAutoDetection
 
             $newBottomIndex = null;
             for ($candidate = $firstSellIndex + 1; $candidate < $nextSellIndex; $candidate++) {
-                if (($tickers[$candidate]['is_black()'] ?? 0) !== 1) {
+                if ($this->candle_auto_is_reserved_hold($tickers[$candidate])
+                    || ($tickers[$candidate]['is_black()'] ?? 0) !== 1) {
                     continue;
                 }
                 if ($newBottomIndex === null || bccomp(
@@ -175,12 +145,18 @@ trait CandleAutoDetection
     }
 
     // Keep the old behaviour: only completely flat OHLC candles are auto-HOLD.
+    // Apply HOLD to candles reserved as completely flat OHLC dojis.
+    // Completely flat OHLC candles are HOLD. The reservation flag lets
+    // the earlier BUY/SELL passes ignore them, but this method also remains
+    // correct when called independently.
     public function hodl_all_dojis(array &$tickers): array
     {
         foreach ($tickers as &$ticker) {
-            if (($ticker['is_super_doji()'] ?? 0) === 1) {
+            if (($ticker['_auto_hold_doji'] ?? false) === true
+                || ($ticker['is_super_doji()'] ?? 0) === 1) {
                 $ticker['action'] = 'hold';
             }
+            unset($ticker['_auto_hold_doji']);
         }
         unset($ticker);
 
@@ -188,24 +164,172 @@ trait CandleAutoDetection
     }
 
     // Label interior candles in long same-colour chains as HOLD candidates.
+    // Apply HOLD to same-colour chain candles reserved before BUY/SELL pruning.
+    // Label interior candles in long same-colour chains as HOLD.
+    // Reserved flags protect them during earlier BUY/SELL selection, while the
+    // direct pattern check preserves this method's standalone behaviour.
     public function hodl_middle_chains(array &$tickers): array
     {
         $count = count($tickers);
+
+        for ($index = 0; $index < $count; $index++) {
+            $reserved = ($tickers[$index]['_auto_hold_middle'] ?? false) === true;
+            $middleChain = false;
+
+            if ($index >= 2 && $index < $count - 2) {
+                $middleChain = (
+                    ($tickers[$index]['is_black()'] ?? 0) === 1
+                    && ($tickers[$index - 1]['is_black()'] ?? 0) === 1
+                    && ($tickers[$index + 1]['is_black()'] ?? 0) === 1
+                    && ($tickers[$index + 2]['is_black()'] ?? 0) === 1
+                ) || (
+                    ($tickers[$index]['is_white()'] ?? 0) === 1
+                    && ($tickers[$index - 1]['is_white()'] ?? 0) === 1
+                    && ($tickers[$index + 1]['is_white()'] ?? 0) === 1
+                    && ($tickers[$index + 2]['is_white()'] ?? 0) === 1
+                );
+            }
+
+            if ($reserved || $middleChain) {
+                $tickers[$index]['action'] = 'hold';
+            }
+
+            unset($tickers[$index]['_auto_hold_middle']);
+        }
+
+        return $tickers;
+    }
+
+
+    /**
+     * Process BUY/SELL candidates chronologically against the last surviving
+     * trade pivot. HOLD and every other action are deliberately invisible.
+     */
+
+
+
+    /** Reserve future HOLDs before broad BUY/SELL assignment. */
+    private function candle_auto_mark_hold_candidates(array &$tickers): array
+    {
+        foreach ($tickers as &$ticker) {
+            if (($ticker['is_super_doji()'] ?? 0) === 1) {
+                $ticker['_auto_hold_doji'] = true;
+            }
+        }
+        unset($ticker);
+
+        $count = count($tickers);
         for ($index = 2; $index < $count - 2; $index++) {
-            if (($tickers[$index]['is_black()'] ?? 0) === 1
+            $blackChain = ($tickers[$index]['is_black()'] ?? 0) === 1
                 && ($tickers[$index - 1]['is_black()'] ?? 0) === 1
                 && ($tickers[$index + 1]['is_black()'] ?? 0) === 1
-                && ($tickers[$index + 2]['is_black()'] ?? 0) === 1) {
-                $tickers[$index]['action'] = 'hold';
-            } elseif (($tickers[$index]['is_white()'] ?? 0) === 1
+                && ($tickers[$index + 2]['is_black()'] ?? 0) === 1;
+            $whiteChain = ($tickers[$index]['is_white()'] ?? 0) === 1
                 && ($tickers[$index - 1]['is_white()'] ?? 0) === 1
                 && ($tickers[$index + 1]['is_white()'] ?? 0) === 1
-                && ($tickers[$index + 2]['is_white()'] ?? 0) === 1) {
-                $tickers[$index]['action'] = 'hold';
+                && ($tickers[$index + 2]['is_white()'] ?? 0) === 1;
+
+            if ($blackChain || $whiteChain) {
+                $tickers[$index]['_auto_hold_middle'] = true;
             }
         }
 
         return $tickers;
+    }
+
+    private function candle_auto_is_reserved_hold(array $ticker): bool
+    {
+        return ($ticker['_auto_hold_doji'] ?? false) === true
+            || ($ticker['_auto_hold_middle'] ?? false) === true;
+    }
+
+    /** Process BUY/SELL candidates against the last surviving trade pivot. */
+    private function candle_auto_prune_trade_actions(array &$tickers, mixed $taker_fee): array
+    {
+        $minimumMovement = $this->candle_auto_double_taker_fee($taker_fee);
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $survivorIndex = null;
+
+        foreach (array_keys($tickers) as $index) {
+            $action = $tickers[$index]['action'] ?? null;
+            if (! in_array($action, ['buy', 'sell'], true)
+                || $this->candle_auto_is_reserved_hold($tickers[$index])) {
+                continue;
+            }
+
+            if ($survivorIndex === null) {
+                $survivorIndex = $index;
+                continue;
+            }
+
+            $survivorAction = $tickers[$survivorIndex]['action'] ?? null;
+            if (! in_array($survivorAction, ['buy', 'sell'], true)) {
+                $survivorIndex = $index;
+                continue;
+            }
+
+            if ($survivorAction === $action) {
+                if ($this->candle_auto_same_action_candidate_wins(
+                    $tickers[$survivorIndex],
+                    $tickers[$index],
+                    $action,
+                )) {
+                    unset($tickers[$survivorIndex]['action']);
+                    $survivorIndex = $index;
+                } else {
+                    unset($tickers[$index]['action']);
+                }
+                continue;
+            }
+
+            $survivorClose = $this->bcconv($tickers[$survivorIndex]['close']);
+            $candidateClose = $this->bcconv($tickers[$index]['close']);
+
+            if (bccomp($survivorClose, '0', $scale) <= 0) {
+                unset($tickers[$survivorIndex]['action']);
+                $survivorIndex = $index;
+                continue;
+            }
+            if (bccomp($candidateClose, '0', $scale) <= 0) {
+                unset($tickers[$index]['action']);
+                continue;
+            }
+
+            $movement = $survivorAction === 'buy'
+                ? bcsub(bcdiv($candidateClose, $survivorClose, $scale), '1', $scale)
+                : bcsub('1', bcdiv($candidateClose, $survivorClose, $scale), $scale);
+
+            if (bccomp($movement, $minimumMovement, $scale) <= 0) {
+                unset($tickers[$index]['action']);
+                continue;
+            }
+
+            $survivorIndex = $index;
+        }
+
+        return $tickers;
+    }
+
+    private function candle_auto_same_action_candidate_wins(array $survivor, array $candidate, string $action): bool
+    {
+        $comparison = bccomp(
+            $this->bcconv($candidate['close']),
+            $this->bcconv($survivor['close']),
+            EXCHANGE_ROUND_DECIMALS * 2,
+        );
+
+        return $action === 'buy' ? $comparison <= 0 : $comparison >= 0;
+    }
+
+    private function candle_auto_double_taker_fee(mixed $taker_fee): string
+    {
+        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $fee = $this->bcconv($taker_fee);
+        if (bccomp($fee, '0', $scale) < 0 || bccomp($fee, '1', $scale) >= 0) {
+            throw new \InvalidArgumentException('Taker fee must be a decimal fraction between zero and one.');
+        }
+
+        return bcmul($fee, '2', $scale);
     }
 
     private function candle_auto_find_next_action_index(array $tickers, string $action, int $start = 0): ?int
@@ -219,14 +343,4 @@ trait CandleAutoDetection
         return null;
     }
 
-    private function candle_auto_double_taker_fee(mixed $taker_fee): string
-    {
-        $scale = EXCHANGE_ROUND_DECIMALS * 2;
-        $fee = $this->bcconv($taker_fee);
-        if (bccomp($fee, '0', $scale) < 0 || bccomp($fee, '1', $scale) >= 0) {
-            throw new \InvalidArgumentException('Taker fee must be a decimal fraction between zero and one.');
-        }
-
-        return bcmul($fee, '2', $scale);
-    }
 }

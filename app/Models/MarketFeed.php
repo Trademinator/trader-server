@@ -13,11 +13,19 @@ class MarketFeed extends Model
 
     protected $keyType = 'string';
 
-    protected $fillable = ['market_id', 'selected_period', 'status', 'next_pull_at', 'last_pulled_at', 'lease_until', 'lease_token', 'last_error'];
+    protected $fillable = ['market_id', 'selected_period', 'selection_version', 'selection_checked_at', 'selection_next_attempt_at',
+        'status', 'next_pull_at', 'last_pulled_at', 'lease_until', 'lease_token', 'last_error'];
 
     protected function casts(): array
     {
-        return ['next_pull_at' => 'datetime', 'last_pulled_at' => 'datetime', 'lease_until' => 'datetime'];
+        return [
+            'selection_version' => 'integer',
+            'selection_checked_at' => 'datetime',
+            'selection_next_attempt_at' => 'datetime',
+            'next_pull_at' => 'datetime',
+            'last_pulled_at' => 'datetime',
+            'lease_until' => 'datetime',
+        ];
     }
 
     public function market(): BelongsTo

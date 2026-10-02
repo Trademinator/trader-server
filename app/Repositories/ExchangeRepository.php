@@ -277,6 +277,18 @@ class ExchangeRepository extends BaseRepository
         throw new \InvalidArgumentException('The exchange does not support this symbol.');
     }
 
+    /** Return the exact normalized CCXT market already prepared for candle access. */
+    public function candleMarketMetadata(string $symbol): array
+    {
+        $this->prepareCandleMarket($symbol);
+        $market = $this->ccxtExchange->market($symbol);
+        if (! is_array($market)) {
+            throw new \UnexpectedValueException('The exchange returned invalid market metadata.');
+        }
+
+        return $market;
+    }
+
     /** Read-only spot metadata, without load_markets' currency and market indexes. */
     public function spotMarkets(): array
     {

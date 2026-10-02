@@ -163,7 +163,29 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 - [`trademinator:mailgun-check`](#trademinatormailgun-check) — Check Mailgun settings and optionally send a test message
 - [`trademinator:market-subscription`](#trademinatormarket-subscription) — Manage user subscriptions that drive shared market collection
 - [`trademinator:select-candle-period`](#trademinatorselect-candle-period) — Select the shortest sufficiently informative candle period
+- [`trademinator:evaluate-candle-period`](#trademinatorevaluate-candle-period) — Reevaluate shared automatic periods with fee-aware label density
 - [`trademinator:sync-ohlcv`](#trademinatorsync-ohlcv) — Fetch and upsert exchange candles, optionally inspect and repair missing ranges
+
+## trademinator:evaluate-candle-period
+
+Description: Evaluate and optionally update automatic candle periods for subscribed markets
+
+Signature: `trademinator:evaluate-candle-period {--exchange=} {--pair=} {--dry-run} {--outdated-only}`
+
+Evaluates shared subscribed markets from the shortest supported period upward. Each candidate must pass candle-data quality and historical-depth checks, then the finalized M4/M5 auto-label pipeline must produce at least the configured BUY and SELL share (1% each by default) of `BUY + SELL + HOLD`. The first pass uses the latest seven days. If that window does not qualify, Trademinator extends the same candidate another seven days backward and evaluates the full 14-day window before trying a larger period.
+
+Missing candidate history is collected with the same resumable history actions used by `trademinator:backfill-ohlcv`; the current selected period remains active while that happens. A successful replacement is switched atomically and its history cursor is returned to normal selected-period backfill. Existing historical candles are retained.
+
+With no filters, the command evaluates all active shared markets. `--exchange=` limits the run to one configured exchange class and `--pair=` limits it to an exact exchange symbol such as `BTC/USD`; the two filters may be combined. `--dry-run` is read-only: it never changes `selected_period` and never queues missing history. `--outdated-only` is used by the scheduler to process only feeds whose saved selection algorithm version is older than the configured version, respecting the reevaluation retry time and the configured per-run batch limit.
+
+```bash
+php artisan trademinator:evaluate-candle-period --dry-run
+php artisan trademinator:evaluate-candle-period --pair=BTC/USD --dry-run
+php artisan trademinator:evaluate-candle-period --exchange=cryptocom
+php artisan trademinator:evaluate-candle-period --exchange=cryptocom --pair=BTC/USD
+```
+
+The scheduler runs `--outdated-only` every 15 minutes. Deploying a higher `CANDLE_PERIOD_SELECTION_VERSION` makes existing feeds eligible automatically; users do not resubscribe. If reevaluation cannot qualify a replacement, the old selected period continues to collect normally and the evaluation is retried later.
 
 ## trademinator:candle-gaps
 

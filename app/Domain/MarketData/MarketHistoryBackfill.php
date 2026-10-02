@@ -47,28 +47,111 @@ final class MarketHistoryBackfill
                     'last_error' => null, 'next_attempt_at' => now(), 'updated_at' => now(),
                 ]);
             }
-            $token = (string) Str::uuid7();
-            $claimed = $this->unleased(clone $query)->whereNotIn('status', ['paused', 'complete'])
-                ->where('next_attempt_at', '<=', now())->update([
-                    'status' => 'queued', 'lease_token' => $token, 'lease_until' => now()->addMinutes(15), 'updated_at' => now(),
-                ]);
-            if (! $claimed) {
-                continue;
+            if ($this->claimAndDispatch($feed->market_id, (string) $feed->selected_period)) {
+                $count++;
             }
-            $id = $query->value('history_id');
-            try {
-                BackfillMarketHistory::dispatch($id, $token)->onQueue(config('history_backfill.queue'));
-            } catch (Throwable $error) {
-                $this->release($id, $token, ['status' => 'retrying', 'reason' => 'dispatch_failed',
-                    'last_error' => mb_substr($error->getMessage(), 0, 1000)]);
-                throw $error;
+            if ($count >= 100) {
+                return $count;
             }
-            if (++$count >= 100) {
-                break;
+        }
+
+        // Candidate-period evaluations use the same resumable history worker,
+        // but they are intentionally not the feed's selected period yet.
+        if (! $resume && $count < 100) {
+            $candidates = DB::table('market_history_backfills as history')
+                ->join('markets', 'markets.market_id', '=', 'history.market_id')
+                ->join('exchanges', 'exchanges.exchange_id', '=', 'markets.exchange_id')
+                ->join('market_feeds as feeds', 'feeds.market_id', '=', 'history.market_id')
+                ->whereNotNull('history.target_start_ms')
+                ->where(fn ($query) => $query->whereNull('feeds.selected_period')
+                    ->orWhereColumn('feeds.selected_period', '<>', 'history.period'))
+                ->whereExists(fn ($query) => $query->selectRaw('1')->from('market_subscriptions')
+                    ->whereColumn('market_subscriptions.market_id', 'history.market_id')->where('active', true))
+                ->when($exchange !== null, fn ($query) => $query->where('exchanges.class', $exchange))
+                ->when($symbol !== null, fn ($query) => $query->where('markets.symbol', $symbol))
+                ->when($period !== null, fn ($query) => $query->where('history.period', $period))
+                ->where(fn ($query) => $query->whereNull('history.next_attempt_at')->orWhere('history.next_attempt_at', '<=', now()))
+                ->where(fn ($query) => $query->whereNull('history.lease_until')->orWhere('history.lease_until', '<=', now()))
+                ->whereNotIn('history.status', ['paused', 'complete'])
+                ->orderBy('history.next_attempt_at')
+                ->limit(100 - $count)
+                ->get(['history.market_id', 'history.period']);
+
+            foreach ($candidates as $candidate) {
+                if ($this->claimAndDispatch((string) $candidate->market_id, (string) $candidate->period)) {
+                    $count++;
+                }
             }
         }
 
         return $count;
+    }
+
+    public function dispatchCandidate(MarketFeed $feed, string $period, int $targetStartMs): bool
+    {
+        if (! in_array($period, CandleTimeframe::SUPPORTED, true) || $targetStartMs < 0
+            || in_array(config('queue.default'), ['sync', 'null'], true)
+            || ! $feed->market()->whereHas('subscriptions', fn ($query) => $query->where('active', true))->exists()) {
+            return false;
+        }
+
+        DB::transaction(function () use ($feed, $period, $targetStartMs): void {
+            DB::table('market_history_backfills')->insertOrIgnore([
+                'history_id' => (string) Str::uuid7(),
+                'market_id' => $feed->market_id,
+                'period' => $period,
+                'target_start_ms' => $targetStartMs,
+                'next_attempt_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $query = DB::table('market_history_backfills')->where('market_id', $feed->market_id)
+                ->where('period', $period);
+            $row = (clone $query)->lockForUpdate()->first();
+            if ($row === null) {
+                return;
+            }
+
+            $target = $row->target_start_ms === null ? $targetStartMs : min((int) $row->target_start_ms, $targetStartMs);
+            $changes = ['target_start_ms' => $target, 'updated_at' => now()];
+            $covered = $row->before_ms !== null && (int) $row->before_ms <= $target;
+            if (! $covered && ($row->status === 'complete' || $row->status === 'idle'
+                || ($row->status === 'paused' && $row->reason === 'target_reached'))) {
+                $changes += [
+                    'status' => 'active', 'reason' => null, 'empty_windows' => 0, 'failures' => 0,
+                    'last_error' => null, 'next_attempt_at' => now(),
+                ];
+            }
+            $query->update($changes);
+        });
+
+        return $this->claimAndDispatch($feed->market_id, $period);
+    }
+
+    private function claimAndDispatch(string $marketId, string $period): bool
+    {
+        $query = DB::table('market_history_backfills')->where('market_id', $marketId)->where('period', $period);
+        $token = (string) Str::uuid7();
+        $claimed = $this->unleased(clone $query)->whereNotIn('status', ['paused', 'complete'])
+            ->where(fn ($query) => $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now()))
+            ->update([
+                'status' => 'queued', 'lease_token' => $token, 'lease_until' => now()->addMinutes(15), 'updated_at' => now(),
+            ]);
+        if (! $claimed) {
+            return false;
+        }
+
+        $id = $query->value('history_id');
+        try {
+            BackfillMarketHistory::dispatch($id, $token)->onQueue(config('history_backfill.queue'));
+        } catch (Throwable $error) {
+            $this->release($id, $token, ['status' => 'retrying', 'reason' => 'dispatch_failed',
+                'last_error' => mb_substr($error->getMessage(), 0, 1000)]);
+            throw $error;
+        }
+
+        return true;
     }
 
     public function owned(string $id, string $token): QueryBuilder

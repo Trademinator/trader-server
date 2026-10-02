@@ -190,11 +190,13 @@ final class CandleTraining
 
         // Order is part of the algorithm: broad labels first, excess removed later.
         $this->candle_anatomy($tickers);
+        $this->candle_auto_mark_hold_candidates($tickers);
         $this->mark_all_blacks_and_whites($tickers);
         $this->remove_consequitive_actions($tickers);
         $this->remove_unprofitable_transactions($tickers, $takerFee);
         $this->remove_zigzags($tickers, $takerFee);
         $this->find_new_bottoms($tickers);
+        $this->remove_consequitive_actions($tickers);
         $this->hodl_all_dojis($tickers);
         $this->hodl_middle_chains($tickers);
 
