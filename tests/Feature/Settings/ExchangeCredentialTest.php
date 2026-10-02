@@ -38,7 +38,10 @@ it('encrypts saved keys and never returns them in the form or model serializatio
     expect($credential->is_shared)->toBeFalse();
     $this->get(route('settings.exchange-keys.index', ['exchange' => $exchange->exchange_id]))
         ->assertOk()->assertHeader('Cache-Control', 'no-store, private')
-        ->assertSee('READ-ONLY KEYS ONLY')->assertSee('Your saved keys')
+        ->assertSee('READ-ONLY KEYS ONLY')
+        ->assertSee('Trademinator cannot automatically verify the permissions you selected at the exchange.')
+        ->assertSee('name="read_only_confirmed"', false)
+        ->assertSee('Your saved keys')
         ->assertDontSee($values['apiKey'])->assertDontSee('FIRST')->assertDontSee('SECOND')
         ->assertDontSee('name="is_shared"', false);
 });
