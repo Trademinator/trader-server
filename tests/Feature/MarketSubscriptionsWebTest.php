@@ -27,6 +27,26 @@ it('requires sign in and restricts unsubscribe to the subscription owner', funct
     expect($item->fresh()->active)->toBeFalse();
 });
 
+it('requires a verified email before accessing markets', function () {
+    $user = User::factory()->unverified()->create();
+
+    $this->actingAs($user)->get(route('markets.index'))
+        ->assertRedirect(route('verification.notice'));
+    $this->post(route('markets.store'), [])
+        ->assertRedirect(route('verification.notice'));
+});
+
+it('throttles market subscription writes', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user)->withServerVariables(['REMOTE_ADDR' => '198.51.100.20']);
+
+    for ($attempt = 0; $attempt < 6; $attempt++) {
+        $this->post(route('markets.store'), [])->assertSessionHasErrors(['exchange', 'symbol']);
+    }
+
+    $this->post(route('markets.store'), [])->assertStatus(429);
+});
+
 it('lets a signed-in user subscribe once to a configured market', function () {
     $user = User::factory()->create();
     $exchange = Exchange::query()->create(['name' => 'Demo', 'class' => 'kraken', 'config' => '{}']);

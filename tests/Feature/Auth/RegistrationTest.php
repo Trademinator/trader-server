@@ -27,3 +27,13 @@ test('new users can register', function () {
 
     $this->assertAuthenticated();
 });
+
+test('registration attempts are throttled by source IP', function () {
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.10']);
+
+    for ($attempt = 0; $attempt < 5; $attempt++) {
+        $this->post('/register', [])->assertSessionHasErrors(['name', 'email', 'password']);
+    }
+
+    $this->post('/register', [])->assertStatus(429);
+});

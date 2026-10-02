@@ -32,7 +32,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->name('dashboard.suggestions.restore');
 });
 
-Route::middleware(['auth'])->group(function () {
+Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('markets', [SubscriptionController::class, 'index'])->name('markets.index');
     Route::get('markets/suggestions', [SuggestionController::class, 'index'])->middleware('throttle:12,1')->name('markets.suggestions');
     Route::get('markets/suggestions/review', [SuggestionReviewController::class, 'show'])->middleware('throttle:12,1')->name('markets.suggestions.review');
@@ -42,8 +42,11 @@ Route::middleware(['auth'])->group(function () {
         ->middleware('throttle:30,1')->name('markets.options');
     Route::get('markets/{subscription}/intelligence', [IntelligenceController::class, 'show'])
         ->middleware('throttle:30,1')->name('markets.intelligence');
-    Route::post('markets', [SubscriptionController::class, 'store'])->name('markets.store');
+    Route::post('markets', [SubscriptionController::class, 'store'])->middleware('throttle:market-subscriptions')->name('markets.store');
     Route::delete('markets/{subscription}', [SubscriptionController::class, 'destroy'])->name('markets.destroy');
+});
+
+Route::middleware(['auth'])->group(function () {
     Route::redirect('settings', 'settings/profile');
 
     Route::get('settings/profile', [Settings\ProfileController::class, 'edit'])->name('settings.profile.edit');
