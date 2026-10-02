@@ -7,7 +7,7 @@ use App\Domain\Intelligence\PatternCatalog;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\Operations\ActionLog;
 use App\Models\MarketFeature;
-use App\Models\Ticker;
+use App\Repositories\TickerRepository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -17,7 +17,7 @@ use Throwable;
 
 final class DatasetSnapshotBuilder
 {
-    public function __construct(private DatasetStore $store) {}
+    public function __construct(private DatasetStore $store, private TickerRepository $tickers) {}
 
     public function build(string $exchange, string $symbol, string $period, LabelDefinition|SemanticLabels $definition,
         string $schema = 'core', array $custom = [], ?int $fromMs = null, ?int $toMs = null, ?int $asOfMs = null): array
@@ -60,18 +60,19 @@ final class DatasetSnapshotBuilder
                 if ($first === null) {
                     throw new RuntimeException('No M2 features in this range. Run trademinator:build-features first.');
                 }
-                $candles = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
-                    ->whereBetween('microtimestamp', [$first->microtimestamp, $asOfMs])->orderBy('microtimestamp')->lazy(500)->getIterator();
+                $candles = $this->tickers->streamHistory(
+                    $exchange, $symbol, $period, (int) $first->microtimestamp, $asOfMs
+                );
                 $candles->rewind();
                 $window = [];
                 $past = $patternHistory = [];
                 $history = null;
                 if ($definition instanceof SemanticLabels) {
-                    $historyStart = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
-                        ->where('microtimestamp', '<=', $first->microtimestamp)->orderByDesc('microtimestamp')
-                        ->limit($definition->lookback)->pluck('microtimestamp')->last();
-                    $history = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
-                        ->whereBetween('microtimestamp', [$historyStart ?? 0, $asOfMs])->orderBy('microtimestamp')->lazy(500)->getIterator();
+                    $historyStart = (int) $first->microtimestamp;
+                    for ($i = 1; $i < $definition->lookback; $i++) {
+                        $historyStart = max(0, $timeframe->previous($historyStart, $period));
+                    }
+                    $history = $this->tickers->streamHistory($exchange, $symbol, $period, $historyStart, $asOfMs);
                     $history->rewind();
                 }
                 $counts = array_fill_keys(['missing_features', 'missing_source', 'gaps', 'immature'], 0);
@@ -95,10 +96,9 @@ final class DatasetSnapshotBuilder
                         throw new RuntimeException('M2 feature time/version mismatch; rebuild features.');
                     }
                     if ($history !== null) {
-                        while ($history->valid() && $history->current()->microtimestamp <= $timestamp) {
-                            $ticker = $history->current();
-                            $bar = json_decode($ticker->payload, true, flags: JSON_THROW_ON_ERROR);
-                            $bar['microtimestamp'] = (int) $ticker->microtimestamp;
+                        while ($history->valid() && (int) $history->key() <= $timestamp) {
+                            $bar = $history->current();
+                            $bar['microtimestamp'] = (int) $history->key();
                             $this->validateCandle($bar);
                             if ($past !== [] && $timeframe->next($past[array_key_last($past)]['microtimestamp'], $period) !== $bar['microtimestamp']) {
                                 $past = [];
@@ -126,13 +126,12 @@ final class DatasetSnapshotBuilder
                         continue;
                     }
                     $window = array_values(array_filter($window, fn ($bar) => $bar['microtimestamp'] >= $timestamp));
-                    while ($candles->valid() && $candles->current()->microtimestamp < $timestamp) {
+                    while ($candles->valid() && (int) $candles->key() < $timestamp) {
                         $candles->next();
                     }
                     while (count($window) <= $definition->horizon && $candles->valid()) {
-                        $ticker = $candles->current();
-                        $raw = json_decode($ticker->payload, true, flags: JSON_THROW_ON_ERROR);
-                        $raw['microtimestamp'] = (int) $ticker->microtimestamp;
+                        $raw = $candles->current();
+                        $raw['microtimestamp'] = (int) $candles->key();
                         $window[] = $raw;
                         $candles->next();
                     }

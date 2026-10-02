@@ -3,6 +3,7 @@
 namespace App\Domain\Archive;
 
 use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\MarketData\TickerHistoryCache;
 use App\Jobs\ExportPortableArchivePart;
 use App\Jobs\ImportPortableArchivePart;
 use App\Jobs\VerifyPortableArchivePart;
@@ -360,42 +361,57 @@ final class MultipartPortableArchive
         $this->assertFileDigest($part, $path);
 
         $pending = [];
+        $changed = [];
         $inserted = $identical = 0;
-        $metadata = $this->readPart($path, $transfer, $part, function (array $data) use (&$pending, &$inserted, &$identical): void {
-            $existing = Ticker::query()->where('exchange', $data['exchange'])->where('symbol', $data['symbol'])
-                ->where('period', $data['period'])->where('microtimestamp', $data['microtimestamp'])->first();
-            if ($existing !== null) {
-                $hot = json_decode($existing->payload, true, flags: JSON_THROW_ON_ERROR);
-                if (PortableJson::encode($hot) !== PortableJson::encode($data['payload'])) {
-                    throw new ArchiveIntegrityException('Portable import conflict at '.$this->logicalKey($data).'.');
-                }
-                $identical++;
+        try {
+            $metadata = $this->readPart(
+                $path,
+                $transfer,
+                $part,
+                function (array $data) use (&$pending, &$changed, &$inserted, &$identical): void {
+                    $existing = Ticker::query()->where('exchange', $data['exchange'])->where('symbol', $data['symbol'])
+                        ->where('period', $data['period'])->where('microtimestamp', $data['microtimestamp'])->first();
+                    if ($existing !== null) {
+                        $hot = json_decode($existing->payload, true, flags: JSON_THROW_ON_ERROR);
+                        if (PortableJson::encode($hot) !== PortableJson::encode($data['payload'])) {
+                            throw new ArchiveIntegrityException('Portable import conflict at '.$this->logicalKey($data).'.');
+                        }
+                        $identical++;
 
-                return;
-            }
-            $idCollision = Ticker::query()->whereKey($data['ticker_id'])->exists();
-            if ($idCollision) {
-                throw new ArchiveIntegrityException('Portable ticker UUID conflicts with a different stored row.');
-            }
-            $pending[] = [
-                'ticker_id' => $data['ticker_id'],
-                'exchange' => $data['exchange'],
-                'symbol' => $data['symbol'],
-                'period' => $data['period'],
-                'microtimestamp' => $data['microtimestamp'],
-                'payload' => PortableJson::encode($data['payload']),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ];
-            if (count($pending) >= 250) {
+                        return;
+                    }
+                    $idCollision = Ticker::query()->whereKey($data['ticker_id'])->exists();
+                    if ($idCollision) {
+                        throw new ArchiveIntegrityException('Portable ticker UUID conflicts with a different stored row.');
+                    }
+                    $changed[$data['exchange']."\0".$data['symbol']."\0".$data['period']] = [
+                        $data['exchange'], $data['symbol'], $data['period'],
+                    ];
+                    $pending[] = [
+                        'ticker_id' => $data['ticker_id'],
+                        'exchange' => $data['exchange'],
+                        'symbol' => $data['symbol'],
+                        'period' => $data['period'],
+                        'microtimestamp' => $data['microtimestamp'],
+                        'payload' => PortableJson::encode($data['payload']),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                    if (count($pending) >= 250) {
+                        DB::table('tickers')->insert($pending);
+                        $inserted += count($pending);
+                        $pending = [];
+                    }
+                }
+            );
+            if ($pending !== []) {
                 DB::table('tickers')->insert($pending);
                 $inserted += count($pending);
-                $pending = [];
             }
-        });
-        if ($pending !== []) {
-            DB::table('tickers')->insert($pending);
-            $inserted += count($pending);
+        } finally {
+            foreach ($changed as [$exchange, $symbol, $period]) {
+                app(TickerHistoryCache::class)->invalidate($exchange, $symbol, $period);
+            }
         }
         $this->assertPartMetadata($part, $metadata);
 

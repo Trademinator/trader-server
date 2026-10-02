@@ -2,6 +2,7 @@
 
 namespace App\Domain\Archive;
 
+use App\Domain\MarketData\TickerHistoryCache;
 use App\Models\Ticker;
 use Illuminate\Support\Facades\DB;
 
@@ -67,6 +68,7 @@ final class PortablePackage
         $header = null;
         $inserted = $identical = $rows = 0;
         $pending = [];
+        $changed = [];
         try {
             while (! gzeof($gz)) {
                 $line = gzgets($gz);
@@ -109,6 +111,9 @@ final class PortablePackage
                     continue;
                 }
                 if (! $validateOnly) {
+                    $changed[$data['exchange']."\0".$data['symbol']."\0".$data['period']] = [
+                        $data['exchange'], $data['symbol'], $data['period'],
+                    ];
                     $pending[] = [
                         'ticker_id' => $data['ticker_id'], 'exchange' => $data['exchange'], 'symbol' => $data['symbol'],
                         'period' => $data['period'], 'microtimestamp' => $data['microtimestamp'],
@@ -133,6 +138,11 @@ final class PortablePackage
             }
         } finally {
             gzclose($gz);
+            if (! $validateOnly) {
+                foreach ($changed as [$exchange, $symbol, $period]) {
+                    app(TickerHistoryCache::class)->invalidate($exchange, $symbol, $period);
+                }
+            }
         }
 
         return ['rows' => $rows, 'inserted' => $inserted, 'identical' => $identical, 'validated_only' => $validateOnly];

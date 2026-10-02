@@ -22,6 +22,8 @@ final class TestEnvironment
             'APP_ENV' => 'testing', 'APP_KEY' => self::$key,
             'DB_CONNECTION' => 'sqlite', 'DB_DATABASE' => ':memory:', 'DB_URL' => '',
             'CACHE_STORE' => 'array', 'SESSION_DRIVER' => 'array', 'QUEUE_CONNECTION' => 'sync', 'MAIL_MAILER' => 'array',
+            'TICKER_HISTORY_CACHE_ENABLED' => 'false',
+            'TICKER_HISTORY_CACHE_STORE' => 'array',
             // Ignore deployment caches without clearing or overwriting them.
             'APP_CONFIG_CACHE' => self::$cachePath.'/config.php',
             'APP_ROUTES_CACHE' => self::$cachePath.'/routes.php',

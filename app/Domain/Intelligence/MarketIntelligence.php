@@ -10,7 +10,7 @@ use App\Domain\Research\DatasetStore;
 use App\Domain\Research\FeatureSchema;
 use App\Domain\Research\SemanticLabels;
 use App\Models\MarketFeature;
-use App\Models\Ticker;
+use App\Repositories\TickerRepository;
 use Illuminate\Support\Facades\Cache;
 use InvalidArgumentException;
 use RuntimeException;
@@ -27,6 +27,7 @@ final class MarketIntelligence
         private LeadLagIntelligence $leadLag,
         private HumanGuidance $humanGuidance,
         private CandleGuidance $candleGuidance,
+        private TickerRepository $tickers,
     ) {}
 
     public function build(string $exchange, string $symbol, string $period, ?string $dataset = null,
@@ -119,13 +120,21 @@ final class MarketIntelligence
         if ($current->available_at_ms <= $model['available_at_ms']) {
             return [...WeightedKnn::abstain('no_post_training_candle'), ...$context];
         }
-        $tickers = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
-            ->whereIn('microtimestamp', $features->pluck('microtimestamp'))->get()->keyBy('microtimestamp');
+        $wantedTimestamps = $features->pluck('microtimestamp')->map(fn ($value): int => (int) $value)->all();
+        $wanted = array_fill_keys($wantedTimestamps, true);
+        $tickers = [];
+        foreach ($this->tickers->streamHistory(
+            $exchange, $symbol, $period, min($wantedTimestamps), max($wantedTimestamps)
+        ) as $timestamp => $candle) {
+            if (isset($wanted[$timestamp])) {
+                $tickers[$timestamp] = $candle;
+            }
+        }
+
         $history = [];
         foreach ($features as $feature) {
             $payload = $feature->payload;
-            $ticker = $tickers->get($feature->microtimestamp);
-            $candle = $ticker === null ? null : json_decode($ticker->payload, true, flags: JSON_THROW_ON_ERROR);
+            $candle = $tickers[(int) $feature->microtimestamp] ?? null;
             if ($candle === null || ($payload['version'] ?? null) !== FeatureEngine::VERSION
                 || ($payload['microtimestamp'] ?? null) !== $feature->microtimestamp
                 || ($payload['available_at_ms'] ?? null) !== $timeframe->next($feature->microtimestamp, $period)

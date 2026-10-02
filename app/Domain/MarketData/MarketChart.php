@@ -4,11 +4,11 @@ namespace App\Domain\MarketData;
 
 use App\Models\Market;
 use App\Models\MarketSignal;
-use App\Models\Ticker;
+use App\Repositories\TickerRepository;
 
 final class MarketChart
 {
-    public function __construct(private CandleTimeframe $timeframe) {}
+    public function __construct(private CandleTimeframe $timeframe, private TickerRepository $tickers) {}
 
     public function data(Market $market, int $limit = 360): array
     {
@@ -21,25 +21,19 @@ final class MarketChart
             return $data;
         }
         $limit = max(2, min(720, $limit));
-        $rows = Ticker::query()->where('exchange', $market->exchange->class)->where('symbol', $market->symbol)
-            ->where('period', $period)->where('microtimestamp', '<=', $now)
-            ->orderByDesc('microtimestamp')->limit($limit + 1)->get(['microtimestamp', 'payload']);
-        $data['has_older'] = $rows->count() > $limit;
-        $rows = $rows->reverse();
+        $timestamps = $this->tickers->pageTimestamps(
+            $market->exchange->class, $market->symbol, $period, 'latest', null, $now, $limit + 1
+        );
+        $data['has_older'] = count($timestamps) > $limit;
+        $rows = $this->rows($market, $period, $timestamps);
+
         $last = null;
-        foreach ($rows as $row) {
-            $time = (int) $row->microtimestamp;
+        foreach ($rows as $time => $raw) {
             $closeAt = $this->timeframe->next($time, $period);
             if ($closeAt > $now) {
                 continue;
             }
-            $raw = json_decode($row->payload, true);
-            $valid = $time >= 0 && $time % 1000 === 0;
-            foreach (['open', 'high', 'low', 'close', 'volume'] as $field) {
-                $valid = $valid && is_numeric($raw[$field] ?? null) && is_finite((float) $raw[$field]);
-            }
-            if (! $valid || min($raw['open'], $raw['low'], $raw['close']) <= 0 || $raw['volume'] < 0
-                || $raw['high'] < max($raw['open'], $raw['close']) || $raw['low'] > min($raw['open'], $raw['close'])) {
+            if (! $this->valid($time, $raw)) {
                 $data['invalid_candles']++;
 
                 continue;
@@ -72,6 +66,7 @@ final class MarketChart
 
         return $data;
     }
+
     public function page(Market $market, string $direction, ?int $anchorMs, int $untilMs, int $limit = 90): array
     {
         $period = $market->feed?->selected_period;
@@ -82,45 +77,31 @@ final class MarketChart
         }
 
         $limit = max(2, min(360, $limit));
-        $query = Ticker::query()->where('exchange', $market->exchange->class)->where('symbol', $market->symbol)
-            ->where('period', $period)->where('microtimestamp', '<', $untilMs);
+        $pageDirection = in_array($direction, ['older', 'newer'], true) ? $direction : 'initial';
+        $timestamps = $this->tickers->pageTimestamps(
+            $market->exchange->class, $market->symbol, $period, $pageDirection, $anchorMs, $untilMs - 1, $limit + 1
+        );
+        $extra = count($timestamps) > $limit;
 
-        if ($direction === 'older') {
-            $query->where('microtimestamp', '<', $anchorMs)->orderByDesc('microtimestamp');
-        } elseif ($direction === 'newer') {
-            $query->where('microtimestamp', '>', $anchorMs)->orderBy('microtimestamp');
-        } else {
-            $query->orderBy('microtimestamp');
-        }
-
-        $rows = $query->limit($limit + 1)->get(['microtimestamp', 'payload']);
-        $extra = $rows->count() > $limit;
-        $rows = $rows->take($limit);
-
-        if ($direction === 'older') {
-            $rows = $rows->reverse();
+        if ($pageDirection === 'older') {
+            $timestamps = array_slice($timestamps, -$limit);
             $data['has_older'] = $extra;
             $data['has_newer'] = true;
-        } elseif ($direction === 'newer') {
+        } elseif ($pageDirection === 'newer') {
+            $timestamps = array_slice($timestamps, 0, $limit);
             $data['has_older'] = true;
             $data['has_newer'] = $extra;
         } else {
+            $timestamps = array_slice($timestamps, 0, $limit);
             $data['has_newer'] = $extra;
         }
 
         $last = null;
-        foreach ($rows as $row) {
-            $time = (int) $row->microtimestamp;
+        foreach ($this->rows($market, $period, $timestamps) as $time => $raw) {
             if ($this->timeframe->next($time, $period) > $untilMs) {
                 continue;
             }
-            $raw = json_decode($row->payload, true);
-            $valid = $time >= 0 && $time % 1000 === 0;
-            foreach (['open', 'high', 'low', 'close', 'volume'] as $field) {
-                $valid = $valid && is_numeric($raw[$field] ?? null) && is_finite((float) $raw[$field]);
-            }
-            if (! $valid || min($raw['open'], $raw['low'], $raw['close']) <= 0 || $raw['volume'] < 0
-                || $raw['high'] < max($raw['open'], $raw['close']) || $raw['low'] > min($raw['open'], $raw['close'])) {
+            if (! $this->valid($time, $raw)) {
                 $data['invalid_candles']++;
 
                 continue;
@@ -148,4 +129,38 @@ final class MarketChart
         return $data;
     }
 
+    /** @return array<int, array<string, mixed>> */
+    private function rows(Market $market, string $period, array $timestamps): array
+    {
+        if ($timestamps === []) {
+            return [];
+        }
+
+        $wanted = array_fill_keys($timestamps, true);
+        $rows = [];
+        foreach ($this->tickers->streamHistory(
+            $market->exchange->class,
+            $market->symbol,
+            $period,
+            min($timestamps),
+            max($timestamps)
+        ) as $timestamp => $payload) {
+            if (isset($wanted[$timestamp])) {
+                $rows[$timestamp] = $payload;
+            }
+        }
+
+        return $rows;
+    }
+
+    private function valid(int $time, array $raw): bool
+    {
+        $valid = $time >= 0 && $time % 1000 === 0;
+        foreach (['open', 'high', 'low', 'close', 'volume'] as $field) {
+            $valid = $valid && is_numeric($raw[$field] ?? null) && is_finite((float) $raw[$field]);
+        }
+
+        return $valid && min($raw['open'], $raw['low'], $raw['close']) > 0 && $raw['volume'] >= 0
+            && $raw['high'] >= max($raw['open'], $raw['close']) && $raw['low'] <= min($raw['open'], $raw['close']);
+    }
 }

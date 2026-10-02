@@ -27,6 +27,19 @@ The Server collects canonical exchange candles, computes features, trains and va
 | **M4.4 — Human-guided supervised learning** | **Implemented** | Future-hidden random historical snapshots, independent versioned human labels, trainer agreement, portable JSONL export and a separately trained opinion model. Combined intelligence requires chronological tuning and holdout improvement over machine-only evidence. |
 | **M5 — Decisions, paper trading and Client integration** | **Implemented** | Versioned subscription-gated Client API, hashed multi-key authentication, explicit per-market trading/paper selection, expiring risk-gated decision context, cost-aware paper evaluation, immutable idempotent execution/fill reports and dashboard provenance. The Server still does not hold exchange credentials or place orders. |
 | M6 — Commercial access | Planned | Stripe/PayPal billing, renewals, entitlements and limits through the existing market-subscription entitlement boundary. Purchasing a plan must never enable trading. |
+| **M7 — Optimizations and internal data API** | **In progress** | Performance work that preserves model/data semantics: one canonical OHLCV read gateway, bounded shared Redis history caching, SQL-visible generated metadata for JSON predicates, KNN hot-path optimization and profiling-led indicator work. |
+
+## M7 acceptance gates — optimizations and internal data API
+
+1. **One OHLCV payload gateway:** application and page features that need candle payloads use `TickerRepository::streamHistory()` as the canonical read entry point. Metadata-only operations such as timestamp paging, counts, min/max timestamps, archive enumeration, export cursors and write-conflict checks may query indexed ticker columns directly.
+2. **Transparent hot+cold semantics:** the gateway preserves M4.3 behavior by merging authoritative hot MariaDB rows and verified cold archive rows chronologically, accepting identical overlap and rejecting conflicting overlap.
+3. **Bounded shared cache:** explicitly bounded ranges whose theoretical candle count is at most `TICKER_HISTORY_CACHE_MAX_ROWS` may be materialized in the configured shared cache (Redis by default). Larger or unbounded history remains generator-driven and is never converted into a giant cache value.
+4. **Short TTL, explicit invalidation:** cached decoded ranges and timestamp pages default to 30 seconds. Production ticker writes/corrections/imports/derived rebuilds rotate a market+symbol+period generation token so stale entries become unreachable immediately; old entries expire naturally. Cache failure is fail-open.
+5. **Shared-market reuse:** user-facing chart and market-evidence readers reuse the same cached market/period ranges across users. The cache contains public market history only; it is not user-specific.
+6. **JSON predicate extraction:** on MariaDB 12.3, SQL-filtered ticker metadata such as `payload.derived_from` is exposed as an indexed virtual generated column. OHLCV fields stay in the portable JSON payload until profiling proves persistent columns worthwhile.
+7. **Internal API review gate:** regression coverage scans application/page OHLCV consumers and rejects reintroduction of direct `Ticker::query()` payload reads. New features needing OHLCV must route through the repository gateway.
+8. **KNN hot path:** P2 validates/casts vectors once before repeated scans and uses bounded early distance rejection without changing vector values, distance semantics or model version.
+9. **Indicator optimization is profiling-led:** P1 rolling-indicator work remains deferred until measurements show it is material. Exact BCMath technical calculations remain unchanged unless a separately versioned numerical contract is approved.
 
 ## M4.2 acceptance and implementation
 

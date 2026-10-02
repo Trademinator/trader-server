@@ -2,6 +2,7 @@
 
 namespace App\Domain\Archive;
 
+use App\Domain\MarketData\TickerHistoryCache;
 use App\Models\Ticker;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -212,29 +213,41 @@ final class TickerArchive
         if ($fromMs < (int) $manifest['coverage']['start_ms'] || $toMs > (int) $manifest['coverage']['end_ms'] || $fromMs > $toMs) {
             throw new ArchiveIntegrityException('Restore range must be inside the manifest coverage.');
         }
-        foreach ($this->streamData($dataPath) as $record) {
-            if ((int) $record['microtimestamp'] < $fromMs || (int) $record['microtimestamp'] > $toMs) {
-                continue;
-            }
-            $existing = Ticker::query()->where('exchange', $record['exchange'])->where('symbol', $record['symbol'])
-                ->where('period', $record['period'])->where('microtimestamp', $record['microtimestamp'])->first();
-            if ($existing !== null) {
-                $hot = json_decode($existing->payload, true, flags: JSON_THROW_ON_ERROR);
-                if (PortableJson::encode($hot) !== PortableJson::encode($record['payload'])) {
-                    throw new ArchiveIntegrityException('Restore conflict at '.$this->logicalKey($record).'.');
+        $mutated = false;
+        try {
+            foreach ($this->streamData($dataPath) as $record) {
+                if ((int) $record['microtimestamp'] < $fromMs || (int) $record['microtimestamp'] > $toMs) {
+                    continue;
                 }
-                $identical++;
+                $existing = Ticker::query()->where('exchange', $record['exchange'])->where('symbol', $record['symbol'])
+                    ->where('period', $record['period'])->where('microtimestamp', $record['microtimestamp'])->first();
+                if ($existing !== null) {
+                    $hot = json_decode($existing->payload, true, flags: JSON_THROW_ON_ERROR);
+                    if (PortableJson::encode($hot) !== PortableJson::encode($record['payload'])) {
+                        throw new ArchiveIntegrityException('Restore conflict at '.$this->logicalKey($record).'.');
+                    }
+                    $identical++;
 
-                continue;
+                    continue;
+                }
+                if (! $validateOnly) {
+                    DB::table('tickers')->insert([
+                        'ticker_id' => $record['ticker_id'], 'exchange' => $record['exchange'], 'symbol' => $record['symbol'],
+                        'period' => $record['period'], 'microtimestamp' => $record['microtimestamp'], 'payload' => PortableJson::encode($record['payload']),
+                        'created_at' => now(), 'updated_at' => now(),
+                    ]);
+                    $mutated = true;
+                }
+                $inserted++;
             }
-            if (! $validateOnly) {
-                DB::table('tickers')->insert([
-                    'ticker_id' => $record['ticker_id'], 'exchange' => $record['exchange'], 'symbol' => $record['symbol'],
-                    'period' => $record['period'], 'microtimestamp' => $record['microtimestamp'], 'payload' => PortableJson::encode($record['payload']),
-                    'created_at' => now(), 'updated_at' => now(),
-                ]);
+        } finally {
+            if ($mutated) {
+                app(TickerHistoryCache::class)->invalidate(
+                    $manifest['market']['exchange'],
+                    $manifest['market']['symbol'],
+                    $manifest['market']['period']
+                );
             }
-            $inserted++;
         }
 
         return ['inserted' => $inserted, 'identical' => $identical, 'validated_only' => $validateOnly];

@@ -6,6 +6,7 @@ use App\Domain\Archive\ArchiveIntegrityException;
 use App\Domain\Archive\PortableJson;
 use App\Domain\Archive\TickerArchive;
 use App\Domain\MarketData\ExchangeCredentials;
+use App\Domain\MarketData\TickerHistoryCache;
 use App\Domain\Operations\ActionLog;
 use App\Models\Ticker;
 use App\Traits\TickerManipulation;
@@ -56,27 +57,114 @@ class TickerRepository extends BaseRepository
         return $myTickers;
     }
 
-    public function fetchFromDB(string $exchange, string $symbol, string $period, ?int $startFetching = null, ?int $endFetching = null): array
-    {
-        $tickers = [];
-        foreach ($this->streamHistory($exchange, $symbol, $period, $startFetching, $endFetching) as $raw) {
-            $tickers[] = $raw;
-        }
-
-        return $tickers;
-    }
-
     /**
-     * Chronological hot+cold history. Only the required archive shards are
-     * decompressed, and the two sorted streams are merged one row at a time.
-     * Identical overlap is accepted; conflicting overlap is an integrity error.
+     * Chronological hot+cold OHLCV history. This is the canonical application
+     * entry point for ticker payload reads.
+     *
+     * Small explicitly bounded ranges may be materialized into the shared
+     * cache. Large or unbounded requests remain generator-driven.
      *
      * @return \Generator<int, array<string, mixed>>
      */
     public function streamHistory(string $exchange, string $symbol, string $period, ?int $fromMs = null, ?int $toMs = null): \Generator
     {
+        $bounded = $fromMs !== null && $toMs !== null;
         $fromMs ??= 0;
         $toMs ??= PHP_INT_MAX;
+
+        if ($bounded && $this->historyCache()->shouldCacheRange($period, $fromMs, $toMs)) {
+            $cached = $this->historyCache()->range($exchange, $symbol, $period, $fromMs, $toMs);
+            if ($cached !== null) {
+                foreach ($cached as $timestamp => $payload) {
+                    yield (int) $timestamp => $payload;
+                }
+
+                return;
+            }
+
+            $rows = iterator_to_array(
+                $this->streamUncachedHistory($exchange, $symbol, $period, $fromMs, $toMs),
+                true
+            );
+            $this->historyCache()->putRange($exchange, $symbol, $period, $fromMs, $toMs, $rows);
+
+            foreach ($rows as $timestamp => $payload) {
+                yield (int) $timestamp => $payload;
+            }
+
+            return;
+        }
+
+        yield from $this->streamUncachedHistory($exchange, $symbol, $period, $fromMs, $toMs);
+    }
+
+    /**
+     * Metadata-only paging. OHLCV payloads selected by these timestamps must be
+     * read through streamHistory().
+     *
+     * @return list<int>
+     */
+    public function pageTimestamps(
+        string $exchange,
+        string $symbol,
+        string $period,
+        string $direction,
+        ?int $anchorMs,
+        int $untilMs,
+        int $limit
+    ): array {
+        if ($limit < 1 || ! in_array($direction, ['latest', 'older', 'newer', 'initial'], true)
+            || (in_array($direction, ['older', 'newer'], true) && $anchorMs === null)) {
+            throw new \InvalidArgumentException('Invalid ticker timestamp page request.');
+        }
+
+        $scopeParts = [$direction, $anchorMs, $untilMs, $limit];
+        $scope = 'page:'.hash('sha256', json_encode($scopeParts, JSON_THROW_ON_ERROR));
+        $cached = $this->historyCache()->metadata($exchange, $symbol, $period, $scope);
+        if (is_array($cached)) {
+            return array_map('intval', $cached);
+        }
+
+        $query = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)
+            ->where('period', $period)->where('microtimestamp', '<=', $untilMs);
+
+        if ($direction === 'older') {
+            $query->where('microtimestamp', '<', $anchorMs)->orderByDesc('microtimestamp');
+        } elseif ($direction === 'newer') {
+            $query->where('microtimestamp', '>', $anchorMs)->orderBy('microtimestamp');
+        } elseif ($direction === 'latest') {
+            $query->orderByDesc('microtimestamp');
+        } else {
+            $query->orderBy('microtimestamp');
+        }
+
+        $timestamps = $query->limit($limit)->pluck('microtimestamp')
+            ->map(fn ($value): int => (int) $value)->all();
+
+        if (in_array($direction, ['latest', 'older'], true)) {
+            $timestamps = array_reverse($timestamps);
+        }
+
+        $this->historyCache()->putMetadata($exchange, $symbol, $period, $scope, $timestamps);
+
+        return $timestamps;
+    }
+
+    public function invalidateHistory(string $exchange, string $symbol, string $period): void
+    {
+        $this->historyCache()->invalidate($exchange, $symbol, $period);
+    }
+
+    /**
+     * @return \Generator<int, array<string, mixed>>
+     */
+    private function streamUncachedHistory(
+        string $exchange,
+        string $symbol,
+        string $period,
+        int $fromMs,
+        int $toMs
+    ): \Generator {
         $query = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
             ->whereBetween('microtimestamp', [$fromMs, $toMs])->orderBy('microtimestamp');
         if (App::hasDebugModeEnabled()) {
@@ -125,6 +213,11 @@ class TickerRepository extends BaseRepository
 
     public function latestTimestamp(string $exchange, string $symbol, string $period): ?int
     {
+        $cached = $this->historyCache()->metadata($exchange, $symbol, $period, 'latest');
+        if (is_int($cached)) {
+            return $cached;
+        }
+
         $timestamp = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)
             ->where('period', $period)->max('microtimestamp');
 
@@ -135,7 +228,10 @@ class TickerRepository extends BaseRepository
             return null;
         }
 
-        return max((int) ($timestamp ?? 0), (int) ($archived ?? 0));
+        $latest = max((int) ($timestamp ?? 0), (int) ($archived ?? 0));
+        $this->historyCache()->putMetadata($exchange, $symbol, $period, 'latest', $latest);
+
+        return $latest;
     }
 
     /** @return list<int> */
@@ -199,6 +295,10 @@ class TickerRepository extends BaseRepository
             $affected += $this->update($data, $unique, $update);
         }
 
+        if ($affected > 0) {
+            $this->invalidateHistory($exchange, $symbol, $period);
+        }
+
         return $affected;
     }
 
@@ -215,5 +315,10 @@ class TickerRepository extends BaseRepository
     public function setTicker(Ticker $ticker): void
     {
         $this->ticker = $ticker;
+    }
+
+    private function historyCache(): TickerHistoryCache
+    {
+        return app(TickerHistoryCache::class);
     }
 }

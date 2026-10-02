@@ -41,7 +41,7 @@ final class DerivedMarketHistory
         $count = 0;
         try {
             $target = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period);
-            if ((clone $target)->where(fn ($query) => $query->whereNull('payload->derived_from')->orWhere('payload->derived_from', '!=', $base))->exists()) {
+            if ((clone $target)->where(fn ($query) => $query->whereNull('derived_from')->orWhere('derived_from', '!=', $base))->exists()) {
                 throw new InvalidArgumentException('Target contains exchange candles or another derivation; existing source history will not be overwritten.');
             }
             $started = microtime(true);
@@ -74,6 +74,7 @@ final class DerivedMarketHistory
                 DB::table('market_features')->where('exchange', $exchange)->where('symbol', $symbol)
                     ->where('period', $period)->where('microtimestamp', '>=', $fromMs)->delete();
             });
+            $this->tickers->invalidateHistory($exchange, $symbol, $period);
         } finally {
             $lock->release();
         }

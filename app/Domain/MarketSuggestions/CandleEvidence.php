@@ -3,12 +3,14 @@
 namespace App\Domain\MarketSuggestions;
 
 use App\Domain\MarketData\CandleTimeframe;
-use App\Models\Ticker;
+use App\Repositories\TickerRepository;
 
 use function Trademinator\Time\periods_to_seconds;
 
 final class CandleEvidence
 {
+    public function __construct(private TickerRepository $tickers) {}
+
     public function inspect(string $exchange, string $symbol, ?string $feedPeriod, string $horizon, bool $inverse = false, bool $includeSeries = false): array
     {
         $hours = match ($horizon) {
@@ -22,8 +24,9 @@ final class CandleEvidence
         if ($includeSeries) {
             $sample['series'] = [];
         }
-        $query = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol);
-        $period = (clone $query)->where('period', '1d')->exists() ? '1d' : $feedPeriod;
+        $nowMs = now()->getTimestamp() * 1000;
+        $hasDaily = $this->tickers->pageTimestamps($exchange, $symbol, '1d', 'latest', null, $nowMs, 1) !== [];
+        $period = $hasDaily ? '1d' : $feedPeriod;
         // Fixed intervals only, so spacing and holding-window comparisons are exact.
         if (! in_array($period, CandleTimeframe::SUPPORTED, true) || str_contains((string) $period, 'M') || $period === '1y') {
             return $sample;
@@ -32,32 +35,38 @@ final class CandleEvidence
         $window = max(1, (int) ceil($hours * 3600000 / $step));
         $sample = array_replace($sample, ['period' => $period, 'window_candles' => $window,
             'effective_window_hours' => $window * $step / 3600000, 'required_candles' => max(30, $window * 3 + 1)]);
-        $nowMs = now()->getTimestamp() * 1000;
-        $rows = $query->where('period', $period)->where('microtimestamp', '<=', $nowMs - $step)
-            ->orderByDesc('microtimestamp')->limit(max(30, min(2000, (int) config('market_suggestions.candle_limit', 720))))
-            ->get(['microtimestamp', 'payload'])->reverse();
+        $limit = max(30, min(2000, (int) config('market_suggestions.candle_limit', 720)));
+        $timestamps = $this->tickers->pageTimestamps(
+            $exchange, $symbol, $period, 'latest', null, $nowMs - $step, $limit
+        );
+        $wanted = array_fill_keys($timestamps, true);
         $closes = [];
-        $timestamps = [];
+        $actualTimestamps = [];
         $series = [];
         $zeroVolume = 0;
-        foreach ($rows as $row) {
-            $raw = json_decode($row->payload, true);
+        $rows = $timestamps === []
+            ? []
+            : $this->tickers->streamHistory($exchange, $symbol, $period, min($timestamps), max($timestamps));
+        foreach ($rows as $timestamp => $raw) {
+            if (! isset($wanted[$timestamp])) {
+                continue;
+            }
             foreach (['open', 'high', 'low', 'close', 'volume'] as $field) {
                 if (! is_numeric($raw[$field] ?? null) || ! is_finite((float) $raw[$field])) {
                     return array_replace($sample, ['message' => 'Stored candles contain invalid data.']);
                 }
             }
             $close = (float) $raw['close'];
-            $timestamp = (int) $row->microtimestamp;
+            $timestamp = (int) $timestamp;
             if ($close <= 0 || $raw['open'] <= 0 || $raw['low'] <= 0 || $raw['volume'] < 0
                 || $raw['high'] < max($close, $raw['open']) || $raw['low'] > min($close, $raw['open'])
                 || $timestamp < 0 || $timestamp % 1000 !== 0 || ($inverse && ! is_finite(1 / $close))) {
                 return array_replace($sample, ['message' => 'Stored candles contain invalid prices or timestamps.']);
             }
-            if ($timestamps !== [] && $timestamp <= $timestamps[array_key_last($timestamps)]) {
+            if ($actualTimestamps !== [] && $timestamp <= $actualTimestamps[array_key_last($actualTimestamps)]) {
                 return array_replace($sample, ['message' => 'Stored candles contain duplicate or unordered timestamps.']);
             }
-            $timestamps[] = $timestamp;
+            $actualTimestamps[] = $timestamp;
             $closes[] = $inverse ? 1 / $close : $close;
             $zeroVolume += (int) ((float) $raw['volume'] === 0.0);
             if ($includeSeries) {
@@ -70,6 +79,7 @@ final class CandleEvidence
         if ($count === 0) {
             return $sample;
         }
+        $timestamps = $actualTimestamps;
         $last = $timestamps[$count - 1];
         $continuous = true;
         for ($i = 1; $i < $count; $i++) {

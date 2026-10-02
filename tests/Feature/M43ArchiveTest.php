@@ -40,7 +40,10 @@ it('creates verified monthly shards and can serve cold ticker history after hot 
         ->and(DB::table('archive_catalog')->where('verification_state', 'verified')->count())->toBe(1);
 
     Ticker::query()->delete(); // Simulate a future, separately-approved prune.
-    $rows = $repo->fetchFromDB('kraken', 'BTC/USD', '1m', $first, $first + 60000);
+    $rows = array_values(iterator_to_array(
+        $repo->streamHistory('kraken', 'BTC/USD', '1m', $first, $first + 60000),
+        true
+    ));
     expect($rows)->toHaveCount(2)->and($rows[1]['close'])->toBe('101.00000000');
 });
 
