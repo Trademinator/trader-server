@@ -64,12 +64,7 @@ trait CandleAutoDetection
     // Deliberately no ATR here: this pass is only the economic floor.
     public function remove_unprofitable_transactions(array &$tickers, mixed $taker_fee): array
     {
-        $scale = EXCHANGE_ROUND_DECIMALS * 2;
-        $fee = $this->bcconv($taker_fee);
-        if (bccomp($fee, '0', $scale) < 0 || bccomp($fee, '1', $scale) >= 0) {
-            throw new \InvalidArgumentException('Taker fee must be a decimal fraction between zero and one.');
-        }
-        $minProfit = bcmul($fee, '2', $scale);
+        $minProfit = $this->candle_auto_double_taker_fee($taker_fee);
         $index = 0;
 
         while (($firstBuyIndex = $this->candle_auto_find_next_action_index($tickers, 'buy', $index)) !== null) {
@@ -101,15 +96,15 @@ trait CandleAutoDetection
         return $tickers;
     }
 
-    // Remove SELL -> BUY zigzags that do not clear both the fee floor and 1x ATRP(3, EMA).
+    // Remove SELL -> BUY zigzags whose CLOSE movement cannot clear twice the one-side taker fee.
+    // Deliberately no ATR here: profitable historical swings should not be removed by volatility.
     public function remove_zigzags(array &$tickers, mixed $taker_fee): array
     {
         if ($tickers === []) {
             return $tickers;
         }
 
-        $minProfit = $this->candle_auto_transaction_cost_floor($taker_fee);
-        $keyAtrp3 = $this->atrp($tickers, 3, 'ema');
+        $minimumMovement = $this->candle_auto_double_taker_fee($taker_fee);
         $index = 0;
 
         while (($firstSellIndex = $this->candle_auto_find_next_action_index($tickers, 'sell', $index)) !== null) {
@@ -122,25 +117,18 @@ trait CandleAutoDetection
 
             $sellClose = $this->bcconv($tickers[$firstSellIndex]['close']);
             $buyClose = $this->bcconv($tickers[$nextBuyIndex]['close']);
-            if (bccomp($buyClose, '0', EXCHANGE_ROUND_DECIMALS * 2) <= 0) {
+            if (bccomp($sellClose, '0', EXCHANGE_ROUND_DECIMALS * 2) <= 0) {
                 unset($tickers[$firstSellIndex]['action'], $tickers[$nextBuyIndex]['action']);
                 continue;
             }
 
-            $offset = $this->bcabs(bcsub(
+            $movement = bcsub(
                 '1',
-                bcdiv($sellClose, $buyClose, EXCHANGE_ROUND_DECIMALS * 2),
-                EXCHANGE_ROUND_DECIMALS * 2
-            ));
-            // atrp() is a percentage; movement/fee floors are decimal fractions.
-            $atrpFloor = bcdiv(
-                $this->bcconv($tickers[$nextBuyIndex][$keyAtrp3] ?? '0'),
-                '100',
+                bcdiv($buyClose, $sellClose, EXCHANGE_ROUND_DECIMALS * 2),
                 EXCHANGE_ROUND_DECIMALS * 2
             );
-            $minimumMovement = $this->bcmax($minProfit, $atrpFloor);
 
-            if (bccomp($offset, $minimumMovement, EXCHANGE_ROUND_DECIMALS * 2) <= 0) {
+            if (bccomp($movement, $minimumMovement, EXCHANGE_ROUND_DECIMALS * 2) <= 0) {
                 unset($tickers[$firstSellIndex]['action'], $tickers[$nextBuyIndex]['action']);
             }
         }
@@ -231,15 +219,14 @@ trait CandleAutoDetection
         return null;
     }
 
-    private function candle_auto_transaction_cost_floor(mixed $taker_fee): string
+    private function candle_auto_double_taker_fee(mixed $taker_fee): string
     {
         $scale = EXCHANGE_ROUND_DECIMALS * 2;
         $fee = $this->bcconv($taker_fee);
         if (bccomp($fee, '0', $scale) < 0 || bccomp($fee, '1', $scale) >= 0) {
             throw new \InvalidArgumentException('Taker fee must be a decimal fraction between zero and one.');
         }
-        $ownerRemaining = bcsub('1', $fee, $scale);
 
-        return bcsub('1', bcmul($ownerRemaining, $ownerRemaining, $scale), $scale);
+        return bcmul($fee, '2', $scale);
     }
 }

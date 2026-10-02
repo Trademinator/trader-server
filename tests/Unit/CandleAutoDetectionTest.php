@@ -61,6 +61,30 @@ it('requires movement strictly greater than twice the one-side taker fee', funct
         ->and($aboveFloor[1]['action'])->toBe('sell');
 });
 
+it('keeps SELL BUY zigzags whose close movement exceeds twice the taker fee', function () {
+    $tickers = [
+        [...autoCandle('99', '100', '105', '95'), 'action' => 'sell'],
+        [...autoCandle('100', '99.5', '105', '95'), 'action' => 'buy'],
+    ];
+
+    candleAutoDetector()->remove_zigzags($tickers, '0.002');
+
+    expect($tickers[0]['action'])->toBe('sell')
+        ->and($tickers[1]['action'])->toBe('buy');
+});
+
+it('removes SELL BUY zigzags at exactly twice the taker fee', function () {
+    $tickers = [
+        [...autoCandle('99', '100'), 'action' => 'sell'],
+        [...autoCandle('100', '99.6'), 'action' => 'buy'],
+    ];
+
+    candleAutoDetector()->remove_zigzags($tickers, '0.002');
+
+    expect($tickers[0])->not->toHaveKey('action')
+        ->and($tickers[1])->not->toHaveKey('action');
+});
+
 it('labels only completely flat dojis as HOLD in the doji cleanup pass', function () {
     $tickers = [
         autoCandle('10', '10', '11', '9'),
