@@ -1,6 +1,7 @@
 <?php
 
 use App\Domain\Archive\ArchiveIntegrityException;
+use App\Domain\Archive\PortableJson;
 use App\Domain\Archive\PortablePackage;
 use App\Domain\Archive\TickerArchive;
 use App\Models\Ticker;
@@ -77,4 +78,67 @@ it('validates a portable package before mutation and imports identical data idem
     expect(Ticker::query()->count())->toBe(1);
     $again = app(PortablePackage::class)->import($path);
     expect($again['identical'])->toBe(1)->and(Ticker::query()->count())->toBe(1);
+});
+
+it('rejects manifest data_file values that are not leaf gzip filenames', function (string $dataFile) {
+    $repo = app(TickerRepository::class);
+    $first = gmmktime(0, 0, 0, 4, 2, 2026) * 1000;
+    $repo->saveTickers('kraken', 'BTC/USD', '1m', [m43Candle($first, '100.00000000')]);
+    $result = app(TickerArchive::class)->archiveMonth('kraken', 'BTC/USD', '1m', 2026, 4);
+    $manifestPath = $this->archiveRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $result['manifest']);
+    $manifest = PortableJson::decode(trim((string) file_get_contents($manifestPath)));
+    $manifest['data_file'] = $dataFile;
+    file_put_contents($manifestPath, PortableJson::encode($manifest)."\n");
+
+    expect(fn () => app(TickerArchive::class)->verifyManifest($result['manifest']))
+        ->toThrow(ArchiveIntegrityException::class, 'Archive manifest data file is unsafe.');
+})->with([
+    'parent traversal' => '../../outside.jsonl.gz',
+    'nested path' => 'nested/data.jsonl.gz',
+    'backslash path' => 'nested\\data.jsonl.gz',
+    'bare parent' => '..',
+    'nul byte' => "data\0.jsonl.gz",
+]);
+
+it('rejects unsafe manifest paths before filesystem access', function (string $path) {
+    expect(fn () => app(TickerArchive::class)->verifyManifest($path))
+        ->toThrow(ArchiveIntegrityException::class, 'Unsafe archive path.');
+})->with([
+    'bare parent' => '..',
+    'trailing parent' => 'tickers/..',
+    'dot segment' => 'tickers/./file.manifest.json',
+    'nul byte' => "tickers/bad\0.manifest.json",
+]);
+
+it('rejects archive data symlinks that escape the configured root', function () {
+    if (! function_exists('symlink')) {
+        $this->markTestSkipped('Symlinks are unavailable on this platform.');
+    }
+
+    $repo = app(TickerRepository::class);
+    $first = gmmktime(0, 0, 0, 5, 2, 2026) * 1000;
+    $repo->saveTickers('kraken', 'BTC/USD', '1m', [m43Candle($first, '100.00000000')]);
+    $result = app(TickerArchive::class)->archiveMonth('kraken', 'BTC/USD', '1m', 2026, 5);
+    $dataPath = $this->archiveRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $result['data']);
+
+    $outsideDir = dirname($this->archiveRoot).DIRECTORY_SEPARATOR.'archive-outside-'.bin2hex(random_bytes(4));
+    mkdir($outsideDir, 0770, true);
+    $outsidePath = $outsideDir.DIRECTORY_SEPARATOR.basename($dataPath);
+    rename($dataPath, $outsidePath);
+    if (! @symlink($outsidePath, $dataPath)) {
+        rename($outsidePath, $dataPath);
+        rmdir($outsideDir);
+        $this->markTestSkipped('Unable to create a test symlink.');
+    }
+
+    try {
+        expect(fn () => app(TickerArchive::class)->verifyManifest($result['manifest']))
+            ->toThrow(ArchiveIntegrityException::class, 'Archive path escapes configured root.');
+    } finally {
+        @unlink($dataPath);
+        if (is_file($outsidePath)) {
+            rename($outsidePath, $dataPath);
+        }
+        @rmdir($outsideDir);
+    }
 });

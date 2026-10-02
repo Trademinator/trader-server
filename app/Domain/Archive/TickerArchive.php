@@ -113,10 +113,7 @@ final class TickerArchive
         }
         $manifest = PortableJson::decode(trim((string) file_get_contents($manifestPath)));
         $this->validateManifest($manifest);
-        $dataPath = dirname($manifestPath).DIRECTORY_SEPARATOR.$manifest['data_file'];
-        if (! is_file($dataPath)) {
-            throw new ArchiveIntegrityException('Archive data file is missing: '.$manifest['data_file']);
-        }
+        $dataPath = $this->manifestDataPath($root, $manifestPath, $manifest['data_file']);
         $sha = hash_file('sha256', $dataPath);
         $size = filesize($dataPath);
         if (! is_string($sha) || ! hash_equals($manifest['sha256'], $sha) || $size !== $manifest['compressed_size']) {
@@ -190,8 +187,9 @@ final class TickerArchive
             }
             $previousEnd = (int) $catalog->range_end_ms;
             $manifest = $this->verifyManifest($catalog->path);
-            $dataPath = dirname($this->safePath(rtrim((string) config('archive.root'), DIRECTORY_SEPARATOR), $catalog->path))
-                .DIRECTORY_SEPARATOR.$manifest['data_file'];
+            $root = rtrim((string) config('archive.root'), DIRECTORY_SEPARATOR);
+            $manifestPath = $this->safePath($root, $catalog->path);
+            $dataPath = $this->manifestDataPath($root, $manifestPath, $manifest['data_file']);
             foreach ($this->streamData($dataPath) as $record) {
                 $ts = (int) $record['microtimestamp'];
                 if ($ts < $fromMs || $ts > $toMs) {
@@ -207,7 +205,7 @@ final class TickerArchive
         $manifest = $this->verifyManifest($manifestRelative);
         $root = rtrim((string) config('archive.root'), DIRECTORY_SEPARATOR);
         $manifestPath = $this->safePath($root, $manifestRelative);
-        $dataPath = dirname($manifestPath).DIRECTORY_SEPARATOR.$manifest['data_file'];
+        $dataPath = $this->manifestDataPath($root, $manifestPath, $manifest['data_file']);
         $inserted = $identical = 0;
         $fromMs ??= (int) $manifest['coverage']['start_ms'];
         $toMs ??= (int) $manifest['coverage']['end_ms'];
@@ -273,6 +271,13 @@ final class TickerArchive
             if (! is_int($manifest['coverage'][$field] ?? null) || $manifest['coverage'][$field] < 0) {
                 throw new ArchiveIntegrityException('Archive coverage is invalid.');
             }
+        }
+        $dataFile = $manifest['data_file'] ?? null;
+        if (! is_string($dataFile) || $dataFile === '' || str_contains($dataFile, "\0")
+            || str_contains($dataFile, '/') || str_contains($dataFile, '\\')
+            || in_array($dataFile, ['.', '..'], true) || $dataFile !== basename($dataFile)
+            || ! str_ends_with($dataFile, '.jsonl.gz')) {
+            throw new ArchiveIntegrityException('Archive manifest data file is unsafe.');
         }
         if (! is_int($manifest['row_count'] ?? null) || $manifest['row_count'] < 1
             || ! is_string($manifest['sha256'] ?? null) || ! preg_match('/^[a-f0-9]{64}$/D', $manifest['sha256'])
@@ -354,13 +359,46 @@ final class TickerArchive
         return $paths;
     }
 
+    private function manifestDataPath(string $root, string $manifestPath, string $dataFile): string
+    {
+        $candidate = dirname($manifestPath).DIRECTORY_SEPARATOR.$dataFile;
+        $resolved = $this->containedPath($root, $candidate);
+        if (! is_file($resolved)) {
+            throw new ArchiveIntegrityException('Archive data file is missing: '.$dataFile);
+        }
+
+        return $resolved;
+    }
+
     private function safePath(string $root, string $relative): string
     {
         $relative = str_replace('\\', '/', $relative);
-        if ($relative === '' || str_starts_with($relative, '/') || str_contains($relative, '../')) {
+        $segments = explode('/', $relative);
+        if ($relative === '' || str_contains($relative, "\0") || str_starts_with($relative, '/')
+            || preg_match('/^[A-Za-z]:\//D', $relative)
+            || in_array('', $segments, true) || in_array('.', $segments, true) || in_array('..', $segments, true)) {
             throw new ArchiveIntegrityException('Unsafe archive path.');
         }
 
-        return $root.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $relative);
+        return $this->containedPath($root, $root.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $relative));
+    }
+
+    private function containedPath(string $root, string $candidate): string
+    {
+        $rootPath = realpath($root);
+        if ($rootPath === false || ! is_dir($rootPath)) {
+            throw new ArchiveIntegrityException('Archive root is missing or inaccessible.');
+        }
+
+        $candidatePath = realpath($candidate);
+        if ($candidatePath === false) {
+            return $candidate;
+        }
+
+        if (! str_starts_with($candidatePath, $rootPath.DIRECTORY_SEPARATOR)) {
+            throw new ArchiveIntegrityException('Archive path escapes configured root.');
+        }
+
+        return $candidatePath;
     }
 }
