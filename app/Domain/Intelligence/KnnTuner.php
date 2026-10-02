@@ -11,6 +11,7 @@ final class KnnTuner
 
     public function tune(array $rows, array $settings, float $deadline): array
     {
+        $rows = $this->knn->prepareRows($rows);
         $trainSize = $settings['train_size'];
         $maximum = min($settings['k_cap'], (int) floor(sqrt($trainSize)));
         $candidates = array_values(array_unique(array_filter([1, 3, 5, 9, 17, 33, 65, $maximum],
@@ -28,7 +29,7 @@ final class KnnTuner
                 }
                 $row = $rows[$index];
                 $cases[] = ['row' => $row, 'fold' => $fold['fold'],
-                    'neighbors' => $this->knn->neighbors($training, $row['vector'], $maximum, $row['decision_at_ms'], $row['feature_weights'] ?? [])];
+                    'neighbors' => $this->knn->neighborsPrepared($training, $row['vector'], $maximum, $row['decision_at_ms'], $row['feature_weights'] ?? [])];
             }
         }
         $reports = [];
@@ -48,13 +49,15 @@ final class KnnTuner
 
     public function evaluate(array $training, array $test, int $k, array $settings, float $deadline): array
     {
+        $training = $this->knn->prepareRows($training);
+        $test = $this->knn->prepareRows($test);
         $cases = [];
         foreach ($test as $row) {
             if (microtime(true) > $deadline) {
                 throw new RuntimeException('KNN evaluation time budget exceeded.');
             }
             $cases[] = ['row' => $row, 'fold' => 1,
-                'neighbors' => $this->knn->neighbors($training, $row['vector'], $k, $row['decision_at_ms'], $row['feature_weights'] ?? [])];
+                'neighbors' => $this->knn->neighborsPrepared($training, $row['vector'], $k, $row['decision_at_ms'], $row['feature_weights'] ?? [])];
         }
 
         return $this->score($cases, $k, $settings);

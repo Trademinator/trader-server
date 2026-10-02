@@ -8,6 +8,8 @@ use SplPriorityQueue;
 /** Bounded top-K search with normalized RMS distance and inverse-distance voting. */
 final class WeightedKnn
 {
+    private const EARLY_EXIT_EPSILON = 1e-12;
+
     public function __construct(
         public readonly float $maxDistance = 0.25,
         public readonly float $minEffective = 3,
@@ -20,55 +22,78 @@ final class WeightedKnn
         }
     }
 
+    /** Validate and flatten knowledge vectors once before repeated KNN scans. */
+    public function prepareRows(array $rows): array
+    {
+        $dimensions = null;
+        foreach ($rows as &$row) {
+            if (! isset($row['vector']) || ! is_array($row['vector']) || ! array_is_list($row['vector']) || $row['vector'] === []) {
+                throw new InvalidArgumentException('Knowledge vectors must be nonempty lists.');
+            }
+            $dimensions ??= count($row['vector']);
+            if (count($row['vector']) !== $dimensions) {
+                throw new InvalidArgumentException('Knowledge feature dimensions do not match.');
+            }
+            $row['vector'] = $this->prepareVector($row['vector'], $dimensions);
+            $rowWeights = $row['feature_weights'] ?? [];
+            if (! is_array($rowWeights)) {
+                throw new InvalidArgumentException('Knowledge feature weights must be a list.');
+            }
+            $row['feature_weights'] = $this->prepareWeights($rowWeights, $dimensions, 'Knowledge');
+        }
+        unset($row);
+
+        return $rows;
+    }
+
     public function neighbors(array $rows, array $vector, int $k, int $asOfMs, array $weights = []): array
     {
         if ($k < 1 || $vector === []) {
             throw new InvalidArgumentException('K and feature count must be positive.');
         }
-        if ($weights !== [] && count($weights) !== count($vector)) {
+        $vector = $this->prepareVector($vector);
+        $weights = $this->prepareWeights($weights, count($vector), 'Query');
+
+        return $this->neighborsPrepared($this->prepareRows($rows), $vector, $k, $asOfMs, $weights);
+    }
+
+    /** Hot path for rows and query vectors already validated as finite unit-interval floats. */
+    public function neighborsPrepared(array $rows, array $vector, int $k, int $asOfMs, array $weights = []): array
+    {
+        if ($k < 1 || $vector === []) {
+            throw new InvalidArgumentException('K and feature count must be positive.');
+        }
+        $dimensions = count($vector);
+        if ($weights !== [] && count($weights) !== $dimensions) {
             throw new InvalidArgumentException('Query feature weights do not match the vector.');
         }
+        if ($rows !== [] && count($rows[array_key_first($rows)]['vector']) !== $dimensions) {
+            throw new InvalidArgumentException('Knowledge feature dimensions do not match.');
+        }
+
         $heap = new SplPriorityQueue;
         $heap->setExtractFlags(SplPriorityQueue::EXTR_BOTH);
+        $cutoff = $this->maxDistance;
         foreach ($rows as $index => $row) {
             if ($row['decision_at_ms'] >= $asOfMs || $row['label_available_at_ms'] >= $asOfMs) {
                 continue;
             }
-            if (count($row['vector']) !== count($vector)) {
-                throw new InvalidArgumentException('Knowledge feature dimensions do not match.');
-            }
             $rowWeights = $row['feature_weights'] ?? [];
-            if ($rowWeights !== [] && count($rowWeights) !== count($vector)) {
-                throw new InvalidArgumentException('Knowledge feature weights do not match the vector.');
-            }
-            $sum = $dimensions = 0.0;
-            foreach ($vector as $i => $value) {
-                $other = $row['vector'][$i];
-                if (! is_numeric($value) || ! is_numeric($other) || ! is_finite((float) $value)
-                    || ! is_finite((float) $other) || min($value, $other) < 0 || max($value, $other) > 1) {
-                    throw new InvalidArgumentException('KNN expects finite unit-interval vectors.');
-                }
-                $pairWeights = [$weights[$i] ?? 1.0, $rowWeights[$i] ?? 1.0];
-                foreach ($pairWeights as $weight) {
-                    if (! is_numeric($weight) || ! is_finite((float) $weight) || $weight < 0 || $weight > 1) {
-                        throw new InvalidArgumentException('Feature weights must be finite unit-interval values.');
-                    }
-                }
-                $weight = min($pairWeights);
-                $sum += $weight * ($value - $other) ** 2;
-                $dimensions += $weight;
-            }
-            if ($dimensions <= 0) {
-                continue;
-            }
-            $distance = sqrt($sum / $dimensions);
-            if ($distance > $this->maxDistance) {
+            $distance = $weights === [] && $rowWeights === []
+                ? $this->unweightedDistance($vector, $row['vector'], $dimensions, $cutoff)
+                : $this->weightedDistance($vector, $row['vector'], $weights, $rowWeights, $dimensions, $cutoff);
+            if ($distance === null || $distance > $cutoff || $distance > $this->maxDistance) {
                 continue;
             }
             $heap->insert(['distance' => $distance, 'label' => $row['label'],
                 'decision_at_ms' => $row['decision_at_ms']], [$distance, $index]);
             if ($heap->count() > $k) {
                 $heap->extract();
+            }
+            if ($heap->count() === $k) {
+                $heap->top();
+                $worst = $heap->current();
+                $cutoff = min($this->maxDistance, (float) $worst['data']['distance']);
             }
         }
         $neighbors = [];
@@ -132,5 +157,81 @@ final class WeightedKnn
         return ['action' => 'hodl', 'confidence' => 0.0, 'reason' => $reason,
             'neighbors' => 0, 'effective_neighbors' => 0.0, 'similarity' => 0.0,
             'votes' => ['buy' => 0.0, 'hodl' => 0.0, 'sell' => 0.0]];
+    }
+
+    private function prepareVector(array $vector, ?int $dimensions = null): array
+    {
+        if (! array_is_list($vector) || $vector === [] || ($dimensions !== null && count($vector) !== $dimensions)) {
+            throw new InvalidArgumentException('KNN feature dimensions do not match.');
+        }
+        foreach ($vector as &$value) {
+            if (! is_numeric($value) || ! is_finite((float) $value) || $value < 0 || $value > 1) {
+                throw new InvalidArgumentException('KNN expects finite unit-interval vectors.');
+            }
+            $value = (float) $value;
+        }
+        unset($value);
+
+        return $vector;
+    }
+
+    private function prepareWeights(array $weights, int $dimensions, string $scope): array
+    {
+        if ($weights === []) {
+            return [];
+        }
+        if (! array_is_list($weights) || count($weights) !== $dimensions) {
+            throw new InvalidArgumentException($scope.' feature weights do not match the vector.');
+        }
+        foreach ($weights as &$weight) {
+            if (! is_numeric($weight) || ! is_finite((float) $weight) || $weight < 0 || $weight > 1) {
+                throw new InvalidArgumentException('Feature weights must be finite unit-interval values.');
+            }
+            $weight = (float) $weight;
+        }
+        unset($weight);
+
+        return $weights;
+    }
+
+    private function unweightedDistance(array $vector, array $other, int $dimensions, float $cutoff): ?float
+    {
+        $sum = 0.0;
+        $limit = $cutoff * $cutoff * $dimensions;
+        for ($i = 0; $i < $dimensions; $i++) {
+            $sum += ($vector[$i] - $other[$i]) ** 2;
+            if ($sum > $limit + self::EARLY_EXIT_EPSILON) {
+                return null;
+            }
+        }
+
+        return sqrt($sum / $dimensions);
+    }
+
+    private function weightedDistance(array $vector, array $other, array $weights, array $otherWeights,
+        int $dimensions, float $cutoff): ?float
+    {
+        $effectiveDimensions = 0.0;
+        for ($i = 0; $i < $dimensions; $i++) {
+            $effectiveDimensions += min($weights[$i] ?? 1.0, $otherWeights[$i] ?? 1.0);
+        }
+        if ($effectiveDimensions <= 0) {
+            return null;
+        }
+
+        $sum = 0.0;
+        $limit = $cutoff * $cutoff * $effectiveDimensions;
+        for ($i = 0; $i < $dimensions; $i++) {
+            $weight = min($weights[$i] ?? 1.0, $otherWeights[$i] ?? 1.0);
+            if ($weight <= 0) {
+                continue;
+            }
+            $sum += $weight * ($vector[$i] - $other[$i]) ** 2;
+            if ($sum > $limit + self::EARLY_EXIT_EPSILON) {
+                return null;
+            }
+        }
+
+        return sqrt($sum / $effectiveDimensions);
     }
 }
