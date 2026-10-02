@@ -100,4 +100,8 @@ Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-
     Route::post('archives/restore', [ArchiveController::class, 'restore'])->middleware(['password.confirm', 'throttle:6,1'])->name('archives.restore');
     Route::post('archives/export', [ArchiveController::class, 'export'])->middleware(['password.confirm', 'throttle:2,1'])->name('archives.export');
     Route::post('archives/import', [ArchiveController::class, 'import'])->middleware(['password.confirm', 'throttle:2,1'])->name('archives.import');
+    Route::post('archives/import/{transfer}/part', [ArchiveController::class, 'uploadImportPart'])->whereUuid('transfer')->middleware('password.confirm')->name('archives.import.part');
+    Route::post('archives/import/{transfer}/begin', [ArchiveController::class, 'beginImport'])->whereUuid('transfer')->middleware('password.confirm')->name('archives.import.begin');
+    Route::get('archives/portable/{transfer}/manifest', [ArchiveController::class, 'downloadManifest'])->whereUuid('transfer')->middleware('password.confirm')->name('archives.portable.manifest');
+    Route::get('archives/portable/{transfer}/parts/{sequence}', [ArchiveController::class, 'downloadPart'])->whereUuid('transfer')->whereNumber('sequence')->middleware('password.confirm')->name('archives.portable.part');
 });

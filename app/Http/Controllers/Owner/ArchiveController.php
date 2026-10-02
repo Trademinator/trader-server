@@ -3,20 +3,24 @@
 namespace App\Http\Controllers\Owner;
 
 use App\Domain\Archive\ArchiveCatalog;
-use App\Domain\Archive\PortablePackage;
+use App\Domain\Archive\MultipartPortableArchive;
 use App\Domain\Archive\TickerArchive;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class ArchiveController extends Controller
 {
-    public function index(ArchiveCatalog $catalog): View
+    public function index(Request $request, ArchiveCatalog $catalog, MultipartPortableArchive $portable): View
     {
-        return view('owner.archives', ['archives' => $catalog->rows(), 'root' => config('archive.root'), 'health' => $catalog->health()]);
+        return view('owner.archives', [
+            'archives' => $catalog->rows(),
+            'root' => config('archive.root'),
+            'health' => $catalog->health(),
+            'portableTransfers' => $portable->recentTransfers($request->user()),
+        ]);
     }
 
     public function verify(Request $request, TickerArchive $archive): RedirectResponse
@@ -56,22 +60,52 @@ class ArchiveController extends Controller
         return back()->with('status', 'Archive restore: '.json_encode($result, JSON_UNESCAPED_SLASHES));
     }
 
-    public function export(PortablePackage $portable): BinaryFileResponse
+    public function export(Request $request, MultipartPortableArchive $portable): RedirectResponse
     {
-        $path = storage_path('app/private/exports/trademinator-portable-'.now('UTC')->format('Ymd-His').'-'.Str::lower(Str::random(6)).'.jsonl.gz');
-        $portable->export($path, ['tickers']);
+        $transfer = $portable->startExport($request->user());
 
-        return response()->download($path, basename($path), ['Cache-Control' => 'no-store, private'])->deleteFileAfterSend(true);
+        return back()->with('status', 'Multipart portable export queued: '.$transfer.'.');
     }
 
-    public function import(Request $request, PortablePackage $portable): RedirectResponse
+    public function import(Request $request, MultipartPortableArchive $portable): RedirectResponse
     {
         $validated = $request->validate([
-            'package' => ['required', 'file', 'max:1048576'], 'validate_only' => ['nullable', 'boolean'],
+            'manifest' => ['required', 'file', 'max:'.(int) config('archive.portable_manifest_max_kb')],
+            'validate_only' => ['nullable', 'boolean'],
         ]);
-        $path = $validated['package']->getRealPath();
-        $result = $portable->import($path, (bool) ($validated['validate_only'] ?? true));
+        $transfer = $portable->startImport($request->user(), $validated['manifest'], (bool) ($validated['validate_only'] ?? true));
 
-        return back()->with('status', 'Portable import: '.json_encode($result, JSON_UNESCAPED_SLASHES));
+        return back()->with('status', 'Multipart import created: '.$transfer.'. Upload every listed part; import starts only after all parts verify.');
+    }
+
+    public function uploadImportPart(Request $request, string $transfer, MultipartPortableArchive $portable): RedirectResponse
+    {
+        $validated = $request->validate([
+            'part' => ['required', 'file', 'max:'.max(1, intdiv((int) config('archive.portable_part_max_compressed_bytes'), 1024))],
+        ]);
+        $portable->receiveImportPart($request->user(), $transfer, $validated['part']);
+
+        return back()->with('status', 'Portable part accepted for background verification.');
+    }
+
+    public function beginImport(Request $request, string $transfer, MultipartPortableArchive $portable): RedirectResponse
+    {
+        $portable->beginValidatedImport($request->user(), $transfer);
+
+        return back()->with('status', 'Verified multipart import queued.');
+    }
+
+    public function downloadManifest(Request $request, string $transfer, MultipartPortableArchive $portable): BinaryFileResponse
+    {
+        $path = $portable->manifestDownloadPath($request->user(), $transfer);
+
+        return response()->download($path, 'manifest.json', ['Cache-Control' => 'no-store, private']);
+    }
+
+    public function downloadPart(Request $request, string $transfer, int $sequence, MultipartPortableArchive $portable): BinaryFileResponse
+    {
+        $path = $portable->partDownloadPath($request->user(), $transfer, $sequence);
+
+        return response()->download($path, basename($path), ['Cache-Control' => 'no-store, private']);
     }
 }

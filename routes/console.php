@@ -1,5 +1,6 @@
 <?php
 
+use App\Jobs\PrunePortableArchives;
 use App\Jobs\TrainMarketIntelligence;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -53,3 +54,6 @@ Schedule::command('trademinator:prune-access-statistics')
 // deletes hot rows; archive pruning remains deliberately disabled.
 Schedule::command('trademinator:archive-eligible-tickers')
     ->dailyAt('04:10')->onOneServer()->withoutOverlapping(120)->runInBackground();
+
+// Multipart portable exports/imports are staged in private storage and expire automatically.
+Schedule::job(new PrunePortableArchives)->dailyAt('04:40')->onOneServer();
