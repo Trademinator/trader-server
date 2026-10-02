@@ -8,7 +8,6 @@ use App\Repositories\TickerRepository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use RuntimeException;
 
 use function Trademinator\Time\periods_to_seconds;
 
@@ -92,6 +91,7 @@ final class CandlePeriodReevaluation
                     }
                     if ($historyState === 'unavailable') {
                         $attempts[] = ['period' => $period, 'days' => $days, 'status' => 'history_unavailable'];
+                        unset($candles);
                         break;
                     }
 
@@ -99,6 +99,7 @@ final class CandlePeriodReevaluation
                         $qualityThreshold, $minimumCandles, $minimumCoverage);
                     if ($quality === null) {
                         $attempts[] = ['period' => $period, 'days' => $days, 'status' => 'quality_failed'];
+                        unset($candles);
                         // A 4h period has only 42 candles in seven days. The same
                         // 7+7 fallback also gives quality a fair minimum sample.
                         if ($windowIndex === 0) {
@@ -107,6 +108,8 @@ final class CandlePeriodReevaluation
                         break;
                     }
 
+                    $sampleFromMs = (int) $candles[0]['microtimestamp'];
+                    $sampleToMs = (int) $candles[array_key_last($candles)]['microtimestamp'];
                     $economic = $this->viability->evaluate($candles, $takerFee, $minimumActionRatio);
                     $attempts[] = [
                         'period' => $period,
@@ -119,6 +122,7 @@ final class CandlePeriodReevaluation
                         'hold' => $economic['hold'],
                     ];
                     if (! $economic['passes']) {
+                        unset($candles);
                         // First miss: extend the same candidate another seven
                         // days backward before rejecting it for a larger period.
                         if ($windowIndex === 0) {
@@ -127,6 +131,7 @@ final class CandlePeriodReevaluation
                         break;
                     }
 
+                    unset($candles);
                     $probe = $this->depth->depthProbe($period, $toMs);
                     if (! $this->exchanges->hasHistoricalData($market->symbol, $period,
                         $probe['from'], $probe['until'], $probe['limit'])) {
@@ -134,7 +139,7 @@ final class CandlePeriodReevaluation
                         break;
                     }
 
-                    return $this->accept($feed, $period, $version, $days, $candles,
+                    return $this->accept($feed, $period, $version, $days, $sampleFromMs, $sampleToMs,
                         $quality['quality'], $economic, $qualityThreshold, $minimumCoverage, $dryRun, $attempts);
                 }
             }
@@ -156,7 +161,14 @@ final class CandlePeriodReevaluation
         $candles = [];
         foreach ($this->tickers->streamHistory($exchange, $symbol, $period, $fromMs, $toMs) as $candle) {
             if ($timeframe->next((int) $candle['microtimestamp'], $period) <= $toMs) {
-                $candles[] = $candle;
+                $candles[] = [
+                    'microtimestamp' => (int) $candle['microtimestamp'],
+                    'open' => $candle['open'] ?? null,
+                    'high' => $candle['high'] ?? null,
+                    'low' => $candle['low'] ?? null,
+                    'close' => $candle['close'] ?? null,
+                    'volume' => $candle['volume'] ?? null,
+                ];
             }
         }
 
@@ -189,8 +201,8 @@ final class CandlePeriodReevaluation
         return 'pending';
     }
 
-    /** @param list<array<string, mixed>> $candles */
-    private function accept(MarketFeed $feed, string $period, int $version, int $days, array $candles,
+    private function accept(MarketFeed $feed, string $period, int $version, int $days,
+        int $sampleFromMs, int $sampleToMs,
         array $quality, array $economic, float $threshold, float $coverage, bool $dryRun, array $attempts): array
     {
         $current = $feed->selected_period;
@@ -200,13 +212,7 @@ final class CandlePeriodReevaluation
                 $attempts, $period, $days, $economic);
         }
 
-        $first = $candles[0] ?? null;
-        $last = $candles[array_key_last($candles)] ?? null;
-        if ($first === null || $last === null) {
-            throw new RuntimeException('A passing candle-period evaluation has no sample boundaries.');
-        }
-
-        DB::transaction(function () use ($feed, $period, $version, $first, $last, $quality, $economic, $threshold, $coverage): void {
+        DB::transaction(function () use ($feed, $period, $version, $sampleFromMs, $sampleToMs, $quality, $economic, $threshold, $coverage): void {
             $locked = MarketFeed::query()->whereKey($feed->market_id)->lockForUpdate()->firstOrFail();
             $locked->forceFill([
                 'selected_period' => $period,
@@ -221,8 +227,8 @@ final class CandlePeriodReevaluation
                 'exchange' => $feed->market->exchange->class,
                 'symbol' => $feed->market->symbol,
                 'period' => $period,
-                'sample_from_ms' => (int) $first['microtimestamp'],
-                'sample_to_ms' => (int) $last['microtimestamp'],
+                'sample_from_ms' => $sampleFromMs,
+                'sample_to_ms' => $sampleToMs,
                 'threshold' => $threshold,
                 'minimum_coverage' => $coverage,
                 'quality' => json_encode([...$quality, 'economic' => $economic, 'selection_version' => $version], JSON_THROW_ON_ERROR),

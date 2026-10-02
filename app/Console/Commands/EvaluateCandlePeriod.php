@@ -30,13 +30,20 @@ final class EvaluateCandlePeriod extends Command
 
         if ($outdatedOnly) {
             $query->where(fn ($query) => $query->whereNull('selected_period')->orWhere('selection_version', '<', $version))
-                ->where(fn ($query) => $query->whereNull('selection_next_attempt_at')->orWhere('selection_next_attempt_at', '<=', now()))
-                ->limit(max(1, (int) config('candle_period.scheduled_markets_per_run', 10)));
+                ->where(fn ($query) => $query->whereNull('selection_next_attempt_at')->orWhere('selection_next_attempt_at', '<=', now()));
         }
 
+        $maximumFeeds = $outdatedOnly
+            ? max(1, (int) config('candle_period.scheduled_markets_per_run', 10))
+            : null;
         $rows = [];
         $failed = false;
-        foreach ($query->orderBy('market_id')->get() as $feed) {
+        $processed = 0;
+        foreach ($query->orderBy('market_id')->lazy(5) as $feed) {
+            if ($maximumFeeds !== null && $processed >= $maximumFeeds) {
+                break;
+            }
+            $processed++;
             try {
                 $result = $evaluation->evaluate($feed, $dryRun, ! $outdatedOnly);
                 $rows[] = [
@@ -52,6 +59,10 @@ final class EvaluateCandlePeriod extends Command
                     $feed->market->exchange->class, $feed->market->symbol, $feed->selected_period ?? '-', '-',
                     'error', '-', '-', '-', $error->getMessage(),
                 ];
+            } finally {
+                $feed->unsetRelations();
+                gc_collect_cycles();
+                gc_mem_caches();
             }
         }
 
