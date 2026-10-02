@@ -32,6 +32,12 @@ it('offers readable exchange names, spot pairs and only supported periods', func
         ->assertJsonMissing(['value' => '9m']);
 });
 
+it('prefers market-specific taker fees and falls back to the trusted NDAX fee', function () {
+    expect(MarketCatalog::takerFee('0.0015', 'ndax'))->toBe(0.0015)
+        ->and(MarketCatalog::takerFee(null, 'ndax'))->toBe(0.002)
+        ->and(MarketCatalog::takerFee(null, 'kraken'))->toBeNull();
+});
+
 it('does not return market metadata to visitors', function () {
     $this->get(route('markets.options', 'kraken'))->assertRedirect(route('login'));
 });

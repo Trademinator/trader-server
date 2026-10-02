@@ -15,7 +15,7 @@ final class MarketCatalog
 {
     public const EXCHANGES_CACHE = 'trademinator:market-catalog:exchanges:v5';
 
-    public const PAIRS_CACHE_PREFIX = 'trademinator:market-catalog:spot:v5:';
+    public const PAIRS_CACHE_PREFIX = 'trademinator:market-catalog:spot:v6:';
 
     public function __construct(private readonly ExchangeRepository $repository, private readonly ExchangeMetadata $metadata) {}
 
@@ -61,7 +61,10 @@ final class MarketCatalog
     {
         $user ??= auth()->user();
         $entry = $this->metadata->assertUsable($exchange, user: $user);
-        $revision = hash('sha256', json_encode($entry, JSON_THROW_ON_ERROR));
+        $revision = hash('sha256', json_encode([
+            $entry,
+            config('exchange_fees.taker_overrides', []),
+        ], JSON_THROW_ON_ERROR));
         $key = self::PAIRS_CACHE_PREFIX.$exchange->exchange_id;
         $cached = Cache::get($key);
         if (! is_array($cached) || ($cached['revision'] ?? null) !== $revision) {
@@ -90,7 +93,7 @@ final class MarketCatalog
                             'active' => is_bool($market['active'] ?? null) ? $market['active'] : null,
                             'min_cost' => self::nonNegativeNumber($market['limits']['cost']['min'] ?? null),
                             'min_amount' => self::nonNegativeNumber($market['limits']['amount']['min'] ?? null),
-                            'taker_fee' => self::nonNegativeNumber($market['taker'] ?? null),
+                            'taker_fee' => self::takerFee($market['taker'] ?? null, $exchange->class),
                         ];
                     }
                 }
@@ -128,6 +131,24 @@ final class MarketCatalog
         }
 
         return null;
+    }
+
+    /**
+     * Prefer CCXT's market-specific taker fee. If that market omits a fee,
+     * fall back only to an operator-maintained, sourced Trademinator override.
+     * Unknown remains null; we never invent a fee for Candle Training.
+     */
+    public static function takerFee(mixed $marketFee, string $exchangeClass): ?float
+    {
+        $market = self::nonNegativeNumber($marketFee);
+        if ($market !== null) {
+            return $market;
+        }
+
+        $override = config('exchange_fees.taker_overrides.'.strtolower($exchangeClass));
+        $rate = is_array($override) ? ($override['rate'] ?? null) : $override;
+
+        return self::nonNegativeNumber($rate);
     }
 
     public static function tickSize(mixed $pricePrecision, mixed $mode): ?string
