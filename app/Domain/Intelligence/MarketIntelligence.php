@@ -28,6 +28,7 @@ final class MarketIntelligence
         private HumanGuidance $humanGuidance,
         private CandleGuidance $candleGuidance,
         private TickerRepository $tickers,
+        private SignalFreshness $freshness,
     ) {}
 
     public function build(string $exchange, string $symbol, string $period, ?string $dataset = null,
@@ -118,11 +119,8 @@ final class MarketIntelligence
         $current = $features->last();
         $timeframe = new CandleTimeframe;
         $context['decision_at_ms'] = $current->available_at_ms;
-        $staleAt = $current->available_at_ms;
-        for ($i = 0; $i < config('intelligence.max_signal_age_periods'); $i++) {
-            $staleAt = $timeframe->next($staleAt, $period);
-        }
-        if ($asOfMs >= $staleAt) {
+        $staleAt = $this->freshness->expiresAt($current->available_at_ms, $period);
+        if ($staleAt === null || $asOfMs >= $staleAt) {
             return [...WeightedKnn::abstain('stale_features'), ...$context];
         }
         if ($current->available_at_ms <= $model['available_at_ms']) {
@@ -153,6 +151,9 @@ final class MarketIntelligence
             $candle['microtimestamp'] = $feature->microtimestamp;
             $history[] = ['features' => $payload['features'], 'candle' => $candle];
         }
+        $currentCandle = $tickers[(int) $current->microtimestamp];
+        $context['reference_price'] = (string) $currentCandle['close'];
+        $context['reference_price_source'] = 'closed_candle_close';
         $vector = FeatureSchema::vector($current->payload, $model['keys']);
         if ($vector === null) {
             return [...WeightedKnn::abstain('missing_selected_features'), ...$context];

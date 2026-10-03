@@ -3,7 +3,7 @@
 namespace App\Domain\Client;
 
 use App\Domain\Intelligence\ModelStore;
-use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\Intelligence\SignalFreshness;
 use App\Models\ClientMarketSetting;
 use App\Models\MarketSignal;
 use App\Models\MarketSubscription;
@@ -13,7 +13,7 @@ final class ClientDecisionService
 {
     private const SCALE = 18;
 
-    public function __construct(private CandleTimeframe $timeframe) {}
+    public function __construct(private SignalFreshness $freshness) {}
 
     public function evaluate(MarketSubscription $subscription, array $state, string $mode = 'live'): array
     {
@@ -51,7 +51,7 @@ final class ClientDecisionService
             return [...$base, 'reason' => 'no_recorded_signal'];
         }
 
-        $signalExpiry = $this->signalExpiry($signal);
+        $signalExpiry = $this->freshness->expiresAt($signal->decision_at_ms, $signal->period);
         $base['expires_at_ms'] = min($expires, $signalExpiry ?? $expires);
         if ($signal->reason !== 'supported') {
             return [...$base, 'reason' => 'server_abstention'];
@@ -95,6 +95,24 @@ final class ClientDecisionService
                 'risk' => ['spread_bps' => (float) $spreadBps]];
         }
 
+        $referenceRaw = $signal->payload['reference_price'] ?? null;
+        if (! is_numeric($referenceRaw) || ! is_finite((float) $referenceRaw) || (float) $referenceRaw <= 0) {
+            return [...$base, 'reason' => 'signal_reference_price_missing', 'action' => $signal->action];
+        }
+        $referencePrice = $this->d($referenceRaw);
+        $executionReference = $signal->action === 'buy' ? $ask : $bid;
+        $difference = bcsub($executionReference, $referencePrice, self::SCALE);
+        if (bccomp($difference, '0', self::SCALE) < 0) {
+            $difference = bcmul($difference, '-1', self::SCALE);
+        }
+        $signalDriftBps = bcmul(bcdiv($difference, $referencePrice, self::SCALE), '10000', 8);
+        $maxSignalDriftBps = $this->d($setting->max_signal_drift_bps ?? config('client.default_max_signal_drift_bps'));
+        $marketRisk = ['spread_bps' => (float) $spreadBps, 'signal_drift_bps' => (float) $signalDriftBps,
+            'signal_reference_price' => (float) $referencePrice, 'execution_reference_price' => (float) $executionReference];
+        if (bccomp($signalDriftBps, $maxSignalDriftBps, 8) > 0) {
+            return [...$base, 'reason' => 'signal_price_drift', 'action' => $signal->action, 'risk' => $marketRisk];
+        }
+
         $feeBps = $this->d($state['taker_fee_bps']);
         if (bccomp($feeBps, $this->d($setting->max_taker_fee_bps), 8) > 0) {
             return [...$base, 'reason' => 'fee_too_high', 'action' => $signal->action];
@@ -104,14 +122,13 @@ final class ClientDecisionService
             ? $this->buySize($setting, $state, $ask, $feeBps)
             : $this->sellSize($setting, $state, $bid);
         if (! $sizing['eligible']) {
-            return [...$base, 'reason' => $sizing['reason'], 'action' => $signal->action,
-                'risk' => ['spread_bps' => (float) $spreadBps]];
+            return [...$base, 'reason' => $sizing['reason'], 'action' => $signal->action, 'risk' => $marketRisk];
         }
 
         unset($sizing['eligible'], $sizing['reason']);
 
         return [...$base, 'eligible' => true, 'reason' => 'eligible', 'action' => $signal->action,
-            'sizing' => $sizing, 'risk' => ['spread_bps' => (float) $spreadBps, 'taker_fee_bps' => (float) $feeBps]];
+            'sizing' => $sizing, 'risk' => [...$marketRisk, 'taker_fee_bps' => (float) $feeBps]];
     }
 
     private function buySize(ClientMarketSetting $setting, array $state, string $ask, string $feeBps): array
@@ -204,19 +221,6 @@ final class ClientDecisionService
         return bcmul($units, $step, self::SCALE);
     }
 
-    private function signalExpiry(MarketSignal $signal): ?int
-    {
-        if ($signal->decision_at_ms === null || ! in_array($signal->period, CandleTimeframe::SUPPORTED, true)) {
-            return null;
-        }
-        $expires = $signal->decision_at_ms;
-        for ($i = 0; $i < config('intelligence.max_signal_age_periods'); $i++) {
-            $expires = $this->timeframe->next($expires, $signal->period);
-        }
-
-        return $expires;
-    }
-
     private function isCurrentModel(MarketSubscription $subscription, MarketSignal $signal): bool
     {
         $period = $subscription->market->feed?->selected_period;
@@ -241,6 +245,8 @@ final class ClientDecisionService
             'confidence' => $signal->reason === 'supported' ? (float) ($signal->payload['confidence'] ?? 0.0) : null,
             'decision_at_ms' => $signal->decision_at_ms, 'recorded_at_ms' => $signal->recorded_at_ms,
             'regime' => $signal->payload['regime'] ?? null,
+            'reference_price' => $signal->payload['reference_price'] ?? null,
+            'reference_price_source' => $signal->payload['reference_price_source'] ?? null,
         ];
     }
 

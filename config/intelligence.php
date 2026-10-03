@@ -13,6 +13,7 @@ return [
     'max_seconds' => 480,
     'max_model_age_days' => (int) env('INTELLIGENCE_MAX_MODEL_AGE_DAYS', 14),
     'max_signal_age_periods' => (int) env('INTELLIGENCE_MAX_SIGNAL_AGE_PERIODS', 2),
+    'max_signal_age_seconds' => max(60, (int) env('INTELLIGENCE_MAX_SIGNAL_AGE_SECONDS', 86400)),
     'knn' => [
         'train_size' => 250,
         'test_size' => 100,

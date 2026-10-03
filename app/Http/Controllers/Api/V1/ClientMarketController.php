@@ -43,6 +43,8 @@ final class ClientMarketController extends Controller
                 'id' => $item->market->latestSignal->getKey(), 'action' => $item->market->latestSignal->action,
                 'reason' => $item->market->latestSignal->reason, 'recorded_at_ms' => $item->market->latestSignal->recorded_at_ms,
                 'decision_at_ms' => $item->market->latestSignal->decision_at_ms,
+                'reference_price' => $item->market->latestSignal->payload['reference_price'] ?? null,
+                'reference_price_source' => $item->market->latestSignal->payload['reference_price_source'] ?? null,
             ],
         ]]);
     }
@@ -58,6 +60,7 @@ final class ClientMarketController extends Controller
             'reserve_quote' => ['required', 'numeric', 'min:0'],
             'max_spread_bps' => ['required', 'numeric', 'gt:0', 'max:10000'],
             'max_taker_fee_bps' => ['required', 'numeric', 'min:0', 'max:10000'],
+            'max_signal_drift_bps' => ['sometimes', 'numeric', 'gt:0', 'max:10000'],
             'min_signal_confidence' => ['required', 'numeric', 'between:0,1'],
             'block_conflicting_exposure' => ['required', 'boolean'],
             'paper_initial_quote' => ['required', 'numeric', 'gt:0'],
@@ -65,6 +68,8 @@ final class ClientMarketController extends Controller
             'alert_on_execution_failure' => ['required', 'boolean'],
             'digest_frequency' => ['required', Rule::in(['off', 'daily', 'weekly'])],
         ]);
+        $data['max_signal_drift_bps'] ??= $item->clientSetting?->max_signal_drift_bps
+            ?? config('client.default_max_signal_drift_bps');
         if (! $item->active && ($data['trading_enabled'] || $data['paper_enabled'])) {
             return response()->json(['error' => ['code' => 'subscription_inactive',
                 'message' => 'Reactivate the market subscription before enabling Client or paper trading.']], 409);
@@ -111,6 +116,7 @@ final class ClientMarketController extends Controller
             'reserve_quote' => $setting?->reserve_quote ?? '0',
             'max_spread_bps' => $setting?->max_spread_bps ?? '100',
             'max_taker_fee_bps' => $setting?->max_taker_fee_bps ?? '100',
+            'max_signal_drift_bps' => $setting?->max_signal_drift_bps ?? (string) config('client.default_max_signal_drift_bps'),
             'min_signal_confidence' => $setting?->min_signal_confidence ?? '0.6',
             'block_conflicting_exposure' => (bool) ($setting?->block_conflicting_exposure ?? true),
             'paper_initial_quote' => $setting?->paper_initial_quote ?? (string) config('client.default_paper_quote'),

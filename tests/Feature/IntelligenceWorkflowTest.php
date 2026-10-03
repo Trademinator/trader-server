@@ -112,6 +112,8 @@ it('predicts from closed features while ignoring an open candle and abstains whe
 
     expect($signal['action'])->toBe('buy');
     expect($signal['decision_at_ms'])->toBe(IntelligenceFixtures::START + 245 * 60000);
+    expect($signal['reference_price_source'])->toBe('closed_candle_close');
+    expect((float) $signal['reference_price'])->toBeGreaterThan(0);
     $this->travelTo('2024-01-01 04:08:00 UTC');
     expect(app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m')['reason'])->toBe('stale_features');
 });

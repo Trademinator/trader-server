@@ -66,7 +66,8 @@ function m5PaperMarket(User $user): array
         'model_id' => $model, 'decision_at_ms' => now()->subMinutes(30)->getTimestampMs(),
         'recorded_at_ms' => now()->getTimestampMs(), 'is_change' => true,
         'action' => 'buy', 'reason' => 'supported',
-        'payload' => ['confidence' => 0.8, 'evidence_score' => 0.8],
+        'payload' => ['confidence' => 0.8, 'evidence_score' => 0.8,
+            'reference_price' => '100', 'reference_price_source' => 'closed_candle_close'],
     ]);
 
     return [$secret, $subscription, $signal];
