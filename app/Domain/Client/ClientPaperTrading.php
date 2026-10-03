@@ -12,7 +12,7 @@ final class ClientPaperTrading
 {
     private const SCALE = 18;
 
-    public function __construct(private ClientDecisionService $decisions) {}
+    public function __construct(private ClientDecisionService $decisions, private PaperExecutionModel $execution) {}
 
     public function execute(MarketSubscription $subscription, array $input): array
     {
@@ -40,18 +40,19 @@ final class ClientPaperTrading
             $bid = $this->d($input['best_bid']);
             $ask = $this->d($input['best_ask']);
             $feeBps = $this->d($input['taker_fee_bps']);
+            $feeAsset = $input['fee_asset'] ?? 'quote';
+            $slippageBps = $this->d($setting->paper_slippage_bps ?? config('client.default_paper_slippage_bps'));
             if ($account === null) {
                 $initial = $this->d($setting->paper_initial_quote ?: config('client.default_paper_quote'));
-                $feeRate = bcdiv($feeBps, '10000', self::SCALE);
-                $benchmarkCost = bcmul($ask, bcadd('1', $feeRate, self::SCALE), self::SCALE);
+                $benchmark = $this->execution->benchmark($initial, $ask, $feeBps, $slippageBps, $feeAsset);
                 $account = ClientPaperAccount::query()->create([
                     'user_id' => $subscription->user_id,
                     'market_subscription_id' => $subscription->getKey(),
                     'quote_balance' => $initial,
                     'base_balance' => '0',
                     'initial_quote_balance' => $initial,
-                    'benchmark_base_quantity' => bcdiv($initial, $benchmarkCost, self::SCALE),
-                    'benchmark_start_price' => $ask,
+                    'benchmark_base_quantity' => $benchmark['base_quantity'],
+                    'benchmark_start_price' => $benchmark['price'],
                     'peak_equity' => $initial,
                     'realized_fees_quote' => '0',
                     'started_at_ms' => (int) $input['reported_at_ms'],
@@ -76,39 +77,67 @@ final class ClientPaperTrading
             $side = null;
             $quantity = null;
             $price = null;
-            $fee = '0';
+            $feeQuote = '0';
+            $feeBase = '0';
+            $feeAmount = '0';
+            $feeQuoteEquivalent = '0';
 
             if ($signalAlreadyActed) {
                 $decision = [...$decision, 'eligible' => false, 'reason' => 'signal_already_acted'];
                 $reason = 'signal_already_acted';
             } elseif ($decision['eligible']) {
                 $side = $decision['action'];
-                $quantity = $this->d($decision['sizing']['base_amount']);
-                $price = $this->d($decision['sizing']['reference_price']);
-                $quote = $this->d($decision['sizing']['quote_amount']);
-                $feeRate = bcdiv($feeBps, '10000', self::SCALE);
-                $fee = bcmul($quote, $feeRate, self::SCALE);
-
-                if ($side === 'buy') {
-                    $total = bcadd($quote, $fee, self::SCALE);
-                    if (bccomp($this->d($account->quote_balance), $total, self::SCALE) < 0) {
+                $fill = $this->execution->fill(
+                    $side,
+                    $this->d($decision['sizing']['base_amount']),
+                    $this->d($decision['sizing']['quote_amount']),
+                    $bid,
+                    $ask,
+                    $feeBps,
+                    $slippageBps,
+                    $feeAsset,
+                    $input['amount_step'] ?? null,
+                    $input['minimum_amount'] ?? null,
+                    $input['minimum_cost'] ?? null,
+                );
+                if (! $fill['eligible']) {
+                    $decision = [...$decision, 'eligible' => false, 'reason' => $fill['reason']];
+                    $reason = $fill['reason'];
+                } else {
+                    $nextQuote = bcadd(
+                        bcsub($this->d($account->quote_balance), $fill['quote_debit'], self::SCALE),
+                        $fill['quote_credit'],
+                        self::SCALE
+                    );
+                    $nextBase = bcadd(
+                        bcsub($this->d($account->base_balance), $fill['base_debit'], self::SCALE),
+                        $fill['base_credit'],
+                        self::SCALE
+                    );
+                    if (bccomp($nextQuote, '0', self::SCALE) < 0 || bccomp($nextBase, '0', self::SCALE) < 0) {
                         $decision = [...$decision, 'eligible' => false, 'reason' => 'paper_balance_changed'];
+                        $reason = 'paper_balance_changed';
                     } else {
-                        $account->quote_balance = bcsub($this->d($account->quote_balance), $total, self::SCALE);
-                        $account->base_balance = bcadd($this->d($account->base_balance), $quantity, self::SCALE);
+                        $account->quote_balance = $nextQuote;
+                        $account->base_balance = $nextBase;
+                        $quantity = $fill['quantity'];
+                        $price = $fill['price'];
+                        $feeQuote = $fill['fee_quote'];
+                        $feeBase = $fill['fee_base'];
+                        $feeAmount = $fill['fee_amount'];
+                        $feeQuoteEquivalent = $fill['fee_quote_equivalent'];
                         $event = 'executed';
                         $reason = 'paper_fill';
                     }
-                } elseif ($side === 'sell' && bccomp($this->d($account->base_balance), $quantity, self::SCALE) >= 0) {
-                    $account->base_balance = bcsub($this->d($account->base_balance), $quantity, self::SCALE);
-                    $account->quote_balance = bcadd($this->d($account->quote_balance), bcsub($quote, $fee, self::SCALE), self::SCALE);
-                    $event = 'executed';
-                    $reason = 'paper_fill';
                 }
             }
 
             if ($event === 'executed') {
-                $account->realized_fees_quote = bcadd($this->d($account->realized_fees_quote), $fee, self::SCALE);
+                $account->realized_fees_quote = bcadd(
+                    $this->d($account->realized_fees_quote),
+                    $feeQuoteEquivalent,
+                    self::SCALE
+                );
             }
             $equity = bcadd($this->d($account->quote_balance), bcmul($this->d($account->base_balance), $bid, self::SCALE), self::SCALE);
             if (bccomp($equity, $this->d($account->peak_equity), self::SCALE) > 0) {
@@ -125,7 +154,18 @@ final class ClientPaperTrading
                 'side' => $event === 'executed' ? $side : null,
                 'quantity' => $event === 'executed' ? $quantity : null,
                 'price' => $event === 'executed' ? $price : null,
-                'fee_quote' => $event === 'executed' ? $fee : '0',
+                'fee_asset' => $event === 'executed' ? $feeAsset : null,
+                'fee_amount' => $event === 'executed' ? $feeAmount : '0',
+                'fee_quote' => $event === 'executed' ? $feeQuote : '0',
+                'fee_base' => $event === 'executed' ? $feeBase : '0',
+                'fee_quote_equivalent' => $event === 'executed' ? $feeQuoteEquivalent : '0',
+                'execution_assumptions' => [
+                    'depth_aware' => false,
+                    'slippage_model' => 'fixed_bps_from_top_of_book',
+                    'slippage_bps' => (float) $slippageBps,
+                    'fee_bps' => (float) $feeBps,
+                    'fee_asset' => $feeAsset,
+                ],
                 'decision' => $decision,
                 'paper' => $summary,
             ];
@@ -140,7 +180,7 @@ final class ClientPaperTrading
                 'side' => $event === 'executed' ? $side : null,
                 'quantity' => $event === 'executed' ? $quantity : null,
                 'price' => $event === 'executed' ? $price : null,
-                'fee_quote' => $event === 'executed' ? $fee : null,
+                'fee_quote' => $event === 'executed' ? $feeQuote : null,
                 'occurred_at_ms' => (int) $input['reported_at_ms'],
                 'recorded_at_ms' => now()->getTimestampMs(),
                 'result' => $result,
@@ -186,6 +226,7 @@ final class ClientPaperTrading
             'peak_equity_quote' => $account->peak_equity,
             'drawdown_pct' => (float) $drawdown,
             'fees_quote' => $account->realized_fees_quote,
+            'fees_quote_equivalent' => $account->realized_fees_quote,
             'benchmark' => [
                 'method' => 'passive_buy_and_hold_after_one_entry_fee',
                 'start_price' => $account->benchmark_start_price,

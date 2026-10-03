@@ -7,6 +7,7 @@ use App\Domain\Client\ClientPaperTrading;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 final class PaperTradingController extends Controller
 {
@@ -27,11 +28,13 @@ final class PaperTradingController extends Controller
             'best_bid' => ['required', 'numeric', 'gt:0'],
             'best_ask' => ['required', 'numeric', 'gt:0'],
             'taker_fee_bps' => ['required', 'numeric', 'min:0', 'max:10000'],
+            'fee_asset' => ['sometimes', Rule::in(['quote', 'base'])],
             'requested_quote' => ['nullable', 'numeric', 'gt:0'],
             'minimum_amount' => ['nullable', 'numeric', 'gt:0'],
             'minimum_cost' => ['nullable', 'numeric', 'gt:0'],
             'amount_step' => ['nullable', 'numeric', 'gt:0'],
         ]);
+        $data['fee_asset'] ??= 'quote';
         if ((float) $data['best_ask'] < (float) $data['best_bid']) {
             return response()->json(['error' => ['code' => 'invalid_order_book', 'message' => 'best_ask must be at least best_bid.']], 422);
         }

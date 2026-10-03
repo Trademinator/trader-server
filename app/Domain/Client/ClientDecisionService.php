@@ -147,7 +147,10 @@ final class ClientDecisionService
             return ['eligible' => false, 'reason' => 'quote_reserve_required'];
         }
         $feeRate = bcdiv($feeBps, '10000', self::SCALE);
-        $availableSpend = bcdiv($available, bcadd('1', $feeRate, self::SCALE), self::SCALE);
+        $feeFromQuote = ($state['fee_asset'] ?? 'quote') === 'quote';
+        $availableSpend = $feeFromQuote
+            ? bcdiv($available, bcadd('1', $feeRate, self::SCALE), self::SCALE)
+            : $available;
         $spend = $this->minDecimal($maxOrder, $availableSpend);
         if (isset($state['requested_quote'])) {
             $spend = $this->minDecimal($spend, $this->d($state['requested_quote']));
@@ -163,7 +166,7 @@ final class ClientDecisionService
         $amount = bcdiv($spend, $ask, self::SCALE);
         $amount = $this->applyStep($amount, $state['amount_step'] ?? null);
         $spend = bcmul($amount, $ask, self::SCALE);
-        $fee = bcmul($spend, $feeRate, self::SCALE);
+        $fee = $feeFromQuote ? bcmul($spend, $feeRate, self::SCALE) : '0';
         $constraint = $this->constraints($amount, $spend, $state);
         if ($constraint !== null) {
             return ['eligible' => false, 'reason' => $constraint];
