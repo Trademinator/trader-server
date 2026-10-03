@@ -7,7 +7,7 @@ use InvalidArgumentException;
 /** Public-price turning-point targets; client fees never enter server knowledge. */
 final readonly class SemanticLabels
 {
-    public const VERSION = 'm4-turning-points-v1';
+    public const VERSION = 'm4-turning-points-v2';
 
     public function __construct(
         public int $horizon = 12,
@@ -39,7 +39,7 @@ final readonly class SemanticLabels
 
         return [
             'action' => $action, 'gross_return' => $exit / $entry - 1,
-            'buy_net_return' => $exit / $entry - 1, 'sell_base_net_return' => $entry / $exit - 1,
+            'buy_price_return' => $exit / $entry - 1, 'sell_base_price_return' => $entry / $exit - 1,
             'semantic' => ['position' => $position, 'bottom' => $bottom, 'top' => $top, 'movement' => $movement],
         ];
     }
@@ -48,6 +48,7 @@ final readonly class SemanticLabels
     {
         return ['version' => self::VERSION, 'horizon' => $this->horizon, 'lookback' => $this->lookback,
             'minimum_move_bps' => $this->minimumMoveBps, 'extreme_fraction' => $this->extremeFraction,
-            'fee_bps' => 0, 'slippage_bps' => 0, 'target' => 'trailing_close_extreme_and_future_close_reversal'];
+            'cost_model' => 'none', 'fee_bps' => 0, 'slippage_bps' => 0,
+            'target' => 'trailing_close_extreme_and_future_close_reversal'];
     }
 }

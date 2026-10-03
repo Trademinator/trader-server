@@ -13,7 +13,7 @@ Artisan::command('inspire', function () {
 // Every application node may run schedule:run. The shared cache elects one;
 // the feed table's atomic claim also protects against duplicate dispatches.
 Schedule::command('trademinator:dispatch-market-feeds')
-    ->everyMinute()->onOneServer()->withoutOverlapping(1);
+    ->everyMinute()->onOneServer()->withoutOverlapping(5);
 
 Schedule::command('trademinator:backfill-ohlcv')
     ->everyMinute()->onOneServer()->withoutOverlapping(5);

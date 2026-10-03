@@ -1,8 +1,10 @@
 <?php
 
+use App\Domain\Research\BaselineBacktester;
 use App\Domain\Research\FeatureSchema;
 use App\Domain\Research\LabelDefinition;
 use App\Domain\Research\ResearchInput;
+use App\Domain\Research\SemanticLabels;
 
 it('defines buy sell and hodl with fees and slippage on both sides', function () {
     $definition = new LabelDefinition(12, 10, 5, 10);
@@ -13,6 +15,35 @@ it('defines buy sell and hodl with fees and slippage on both sides', function ()
     $factor = 0.999 ** 2 * 0.9995 / 1.0005;
     expect($definition->label(100, 110)['buy_net_return'])->toBe(1.1 * $factor - 1)
         ->and($definition->label(100, 90)['sell_base_net_return'])->toBe((100 / 90) * $factor - 1);
+});
+
+it('keeps semantic returns explicitly cost free', function () {
+    $definition = new SemanticLabels(2, 3, 10, 0.2);
+    $past = [
+        ['close' => 100],
+        ['close' => 101],
+        ['close' => 102],
+    ];
+    $future = [
+        ['close' => 100, 'open' => 100],
+        ['close' => 100.5, 'open' => 100.25],
+        ['close' => 101, 'open' => 100.5],
+    ];
+
+    $label = $definition->label($past, $future);
+
+    expect($label)->toHaveKeys(['gross_return', 'buy_price_return', 'sell_base_price_return'])
+        ->not->toHaveKeys(['buy_net_return', 'sell_base_net_return'])
+        ->and($label['buy_price_return'])->toBe($label['gross_return']);
+    expect($definition->metadata())
+        ->toMatchArray(['version' => SemanticLabels::VERSION, 'cost_model' => 'none', 'fee_bps' => 0, 'slippage_bps' => 0]);
+});
+
+it('refuses cost-free semantic knowledge in the fee-aware M3 portfolio backtester', function () {
+    $manifest = ['label_definition' => (new SemanticLabels)->metadata(), 'keys' => []];
+
+    expect(fn () => (new BaselineBacktester)->run($manifest, [], trainSize: 1, testSize: 1))
+        ->toThrow(InvalidArgumentException::class, 'fee-aware research dataset');
 });
 
 it('uses strict thresholds and never interprets flat fee-free prices as an action', function () {

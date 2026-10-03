@@ -41,10 +41,14 @@ it('freezes semantic labels and pattern outcomes only after their genuine candle
     [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
 
     expect($manifest['label_definition']['fee_bps'])->toBe(0);
+    expect($manifest['label_definition']['cost_model'])->toBe('none');
+    expect($manifest['label_definition']['version'])->toBe(SemanticLabels::VERSION);
     expect($manifest['label_counts']['buy'])->toBeGreaterThan(0);
     expect($manifest['label_counts']['sell'])->toBeGreaterThan(0);
     foreach ($rows as $row) {
-        expect($row['label_available_at_ms'])->toBeLessThanOrEqual($cutoff);
+        expect($row['label_available_at_ms'])->toBeLessThanOrEqual($cutoff)
+            ->and($row)->toHaveKeys(['gross_return', 'buy_price_return', 'sell_base_price_return'])
+            ->not->toHaveKeys(['buy_net_return', 'sell_base_net_return']);
         foreach ($row['patterns'] as $pattern) {
             expect($pattern['label_available_at_ms'])->toBeLessThanOrEqual($cutoff);
         }

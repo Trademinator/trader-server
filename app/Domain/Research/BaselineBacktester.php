@@ -12,6 +12,11 @@ final class BaselineBacktester
     public function run(array $manifest, array $rows, string $strategy = 'majority', int $trainSize = 500,
         int $testSize = 100, int $gap = 0, bool $expanding = true): array
     {
+        $labelVersion = (string) ($manifest['label_definition']['version'] ?? '');
+        if (($manifest['label_definition']['cost_model'] ?? null) === 'none'
+            || str_starts_with($labelVersion, 'm4-turning-points-')) {
+            throw new InvalidArgumentException('M3 portfolio backtesting requires a fee-aware research dataset, not cost-free M4 semantic knowledge.');
+        }
         if (! in_array($strategy, self::STRATEGIES, true)) {
             throw new InvalidArgumentException('Strategy must be majority, trend, buy, or hodl.');
         }

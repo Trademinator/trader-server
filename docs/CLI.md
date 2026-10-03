@@ -144,6 +144,7 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 - [`trademinator:knn-build`](#trademinatorknn-build) — Build and validate M4 intelligence
 - [`trademinator:signal`](#trademinatorsignal) — Explain the latest closed-candle signal
 - [`trademinator:model-info`](#trademinatormodel-info) — Verify and inspect a model
+- [`trademinator:analyze-validation-gates`](#trademinatoranalyze-validation-gates) — Calibrate Server-only model readiness thresholds
 - [`trademinator:dispatch-market-intelligence`](#trademinatordispatch-market-intelligence) — Queue weekly shared-market training
 - [`trademinator:derive-timeframe`](#trademinatorderive-timeframe) — Derive larger closed candles using the M2 pipeline
 
@@ -606,6 +607,7 @@ Active market subscriptions now have an **Intelligence** link. The page shows th
 
 - Only truly closed candles and fully matured future labels enter frozen knowledge. By default the newest closed feature is reserved for inference. Gaps reset trailing history. Missing selected features drop a row; they are never silently replaced with zeros.
 - A bottom is a close in the bottom 20% of the trailing 20 closes; a top is a close in the top 20%. BUY additionally requires a rise greater than 10 basis points by the close 12 subsequent candles later; SELL requires the corresponding fall. Other outcomes are HODL. Flat windows are HODL. These are explicit, versioned training definitions, not claims of universally valid trading rules. See `config/intelligence.php` to change future builds.
+- M4 semantic snapshots are explicitly cost-free public-market knowledge (`cost_model=none`). Their `gross_return`, `buy_price_return` and `sell_base_price_return` fields describe price movement only; they are not Client profitability estimates and contain no fees, spread or slippage. M3 fee-aware research datasets retain their separate `buy_net_return` and `sell_base_net_return` fields, and the M3 portfolio backtester rejects M4 semantic snapshots. Existing `m4-turning-points-v1` snapshots remain immutable but are rejected for new M4 training; rebuild them to obtain the v2 row contract. Existing trained models remain usable because the semantic action definition itself did not change.
 - Existing M2 features are reused in their stored order. `trend.direction` and `candle.direction` map from -1/0/1 to 0/0.5/1 at the model boundary; other features remain within 0–1. M2 artifacts are unchanged. Core is the default schema; `full` includes available CoinGecko context and may drop many rows when context history is incomplete.
 - KNN uses RMS distance on normalized vectors, a maximum distance of 0.25, inverse-distance weights, at least 3 effective neighbors and confidence at least 0.6. Effective count is `(sum(weights)^2)/sum(weights^2)`. Exact matches alone vote when present. Ties, distant evidence and insufficient effective support yield `hodl`, confidence 0 and a reason. UI displays HODL as HOLD. Confidence is agreement times similarity, **not** a calibrated profit probability.
 - Tuning uses rolling chronological folds, default 250 mature training rows and 100 test rows. Outcome endpoints must be strictly before a fold's first decision. `Kmax = min(floor(sqrt(training rows)), k_cap)`; default cap 65. Coarse candidates are refined near the best eligible value. Semantic directional precision ranks first, then confidence, coverage and stability; excessive top/bottom contradictions disqualify a candidate. Defaults require at least 50 validation rows, 5 directional predictions, 55% semantic precision, 1% directional coverage and at most 5% contradictions.
@@ -740,6 +742,40 @@ Signature: `trademinator:model-info {model}`
 ```bash
 php artisan trademinator:model-info MODEL_UUID
 ```
+
+## trademinator:analyze-validation-gates
+
+Description: Analyze Server model holdouts to calibrate directional-count and semantic-precision readiness gates
+
+Signature: `trademinator:analyze-validation-gates {--directional=5,20,30,50,75,100 : Comma-separated candidate minimum directional counts} {--precision=0.55,0.60,0.65 : Comma-separated candidate absolute semantic precision floors} {--baseline-lift=0.10 : Required Wilson lower-bound lift over the training prediction-mix baseline} {--wilson-floor=0.50 : Absolute Wilson 95% lower-bound floor} {--all-models : Include historical models instead of current heads only} {--limit=500 : Maximum models when --all-models is used} {--json : Print the complete report as JSON}`
+
+Read-only Server calibration. It never retrains, republishes, changes model readiness or reads Client balances, account fee tiers, private execution state, realized P&L or other Client-only information. By default it analyzes one current head per market so repeated historical rebuilds do not overweight a market; `--all-models` includes historical model rows up to `--limit`.
+
+For each model with a persisted final holdout, the command verifies the private model artifact and frozen source dataset, reconstructs the exact pre-holdout training chronology from the model's pattern, lead/lag, human-guidance and candle-guidance availability cutoffs, and refuses that model if the reconstructed tuning-row count differs from the stored model report. The baseline uses only the final evaluation training window: BUY and SELL label rates are weighted by the model's actual holdout BUY/SELL prediction mix. No holdout labels enter the baseline.
+
+The report shows directional sample count, exact directional correctness, semantic precision, the 95% Wilson lower confidence bound, prediction-mix baseline, directional-majority reference baseline, coverage and contradiction rate. Candidate gates preserve each model's existing minimum validation-row, coverage and contradiction requirements and additionally require:
+
+`Wilson95 >= max(wilson_floor, training_prediction_mix_baseline + baseline_lift)`.
+
+The default candidate grid is intentionally broad: directional minima `5,20,30,50,75,100` crossed with absolute semantic-precision floors `55%,60%,65%`. Use the distribution and pass counts to choose F1 readiness thresholds from actual Trademinator Server evidence rather than changing production settings first.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--directional` | `5,20,30,50,75,100` | Comma-separated positive candidate values for `min_directional_predictions`. |
+| `--precision` | `0.55,0.60,0.65` | Comma-separated candidate absolute semantic-precision floors from 0 to 1. |
+| `--baseline-lift` | `0.10` | Required Wilson lower-bound lift over the training-derived prediction-mix baseline. |
+| `--wilson-floor` | `0.50` | Absolute 95% Wilson lower-bound floor. |
+| `--all-models` | Off | Include historical model rows instead of current heads only. |
+| `--limit` | `500` | Maximum historical models when `--all-models` is enabled; integer 1–5000. |
+| `--json` | Off | Emit the complete machine-readable report instead of tables. |
+
+```bash
+php artisan trademinator:analyze-validation-gates
+php artisan trademinator:analyze-validation-gates --directional=20,30,50 --precision=0.55,0.60,0.65
+php artisan trademinator:analyze-validation-gates --all-models --limit=1000 --json
+```
+
+No scheduler, queue worker, exchange request or model-version change is added. Missing/corrupt model or dataset artifacts, models without a final holdout, and models whose final training chronology cannot be reproduced are listed as skipped instead of being assigned speculative statistics.
 
 ## trademinator:dispatch-market-intelligence
 

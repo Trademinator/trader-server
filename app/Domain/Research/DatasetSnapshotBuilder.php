@@ -169,18 +169,24 @@ final class DatasetSnapshotBuilder
                         'entry_at_ms' => $entry['microtimestamp'], 'label_available_at_ms' => $expected,
                         'vector' => $vector, 'label' => $label['action'],
                         'entry_price' => (string) $entry['open'], 'exit_price' => (string) $exit['close'],
-                        'gross_return' => $label['gross_return'], 'buy_net_return' => $label['buy_net_return'],
-                        'sell_base_net_return' => $label['sell_base_net_return'],
+                        'gross_return' => $label['gross_return'],
                         'source' => ['feature_id' => $feature->getKey(), 'history_start_ms' => $payload['history_start_ms'] ?? null,
                             'context_snapshot_id' => $payload['context_snapshot_id'] ?? null,
                             'feature_sha256' => hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR)),
                             'candle_window_sha256' => hash('sha256', json_encode($window, JSON_THROW_ON_ERROR))],
                     ];
                     if ($definition instanceof SemanticLabels) {
+                        // M4 semantic rows describe public price movement only. They
+                        // intentionally carry no Client fee, spread or slippage model.
+                        $row['buy_price_return'] = $label['buy_price_return'];
+                        $row['sell_base_price_return'] = $label['sell_base_price_return'];
                         $row['source']['semantic_history_sha256'] = hash('sha256', json_encode($past, JSON_THROW_ON_ERROR));
                         $row['semantic'] = $label['semantic'];
                         $row['candle'] = $window[0];
                         $row['patterns'] = (new PatternCatalog)->observations($patternHistory, $window, $period);
+                    } else {
+                        $row['buy_net_return'] = $label['buy_net_return'];
+                        $row['sell_base_net_return'] = $label['sell_base_net_return'];
                     }
                     $line = json_encode($row, JSON_THROW_ON_ERROR)."\n";
                     DatasetStore::write($file, $line);
