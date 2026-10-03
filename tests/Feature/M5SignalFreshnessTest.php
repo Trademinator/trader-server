@@ -119,12 +119,16 @@ it('rejects excessive drift from the signal reference price and accepts bounded 
         ->assertOk()
         ->assertJsonPath('eligible', true)
         ->assertJsonPath('reason', 'eligible')
+        ->assertJsonPath('action', 'buy')
+        ->assertJsonPath('action_meaning', 'supported_bottom_with_upward_future_move')
+        ->assertJsonPath('server_signal.action_meaning', 'supported_bottom_with_upward_future_move')
         ->assertJsonPath('server_signal.reference_price', '100')
         ->assertJsonPath('server_signal.reference_price_source', 'closed_candle_close')
         ->assertJsonPath('risk.signal_drift_bps', 50);
 
     $marketResponse = $this->withToken($secret)->getJson('/api/v1/client/markets/'.$subscription->getKey())
         ->assertOk()
+        ->assertJsonPath('market.signal.action_meaning', 'supported_bottom_with_upward_future_move')
         ->assertJsonPath('market.signal.reference_price', '100')
         ->assertJsonPath('market.signal.reference_price_source', 'closed_candle_close');
 

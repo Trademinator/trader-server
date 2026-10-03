@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Domain\Client\ClientDecisionService;
 use App\Domain\Client\ClientMarketAccess;
+use App\Domain\Intelligence\SignalSemantics;
 use App\Http\Controllers\Controller;
 use App\Models\ClientMarketSetting;
 use Illuminate\Http\JsonResponse;
@@ -41,6 +42,8 @@ final class ClientMarketController extends Controller
             'settings' => $this->settingsPayload($item->clientSetting),
             'signal' => $item->market->latestSignal === null ? null : [
                 'id' => $item->market->latestSignal->getKey(), 'action' => $item->market->latestSignal->action,
+                'action_meaning' => $item->market->latestSignal->payload['action_meaning']
+                    ?? SignalSemantics::actionMeaning($item->market->latestSignal->action, $item->market->latestSignal->reason),
                 'reason' => $item->market->latestSignal->reason, 'recorded_at_ms' => $item->market->latestSignal->recorded_at_ms,
                 'decision_at_ms' => $item->market->latestSignal->decision_at_ms,
                 'reference_price' => $item->market->latestSignal->payload['reference_price'] ?? null,

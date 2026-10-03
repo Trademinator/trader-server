@@ -84,6 +84,7 @@ final class MarketIntelligence
     public function predict(string $exchange, string $symbol, string $period, ?int $asOfMs = null): array
     {
         $result = $this->evaluate($exchange, $symbol, $period, $asOfMs);
+        $result['action_meaning'] = SignalSemantics::actionMeaning($result['action'], $result['reason']);
         app(ActionLog::class)->write('intelligence.predicted', [
             'exchange' => $exchange, 'symbol' => $symbol, 'period' => $period, 'model_id' => $result['model_id'] ?? null,
             'action' => $result['action'], 'reason' => $result['reason'], 'confidence' => $result['confidence'],

@@ -4,6 +4,7 @@ namespace App\Domain\Client;
 
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\Intelligence\SignalFreshness;
+use App\Domain\Intelligence\SignalSemantics;
 use App\Models\ClientMarketSetting;
 use App\Models\MarketSignal;
 use App\Models\MarketSubscription;
@@ -35,6 +36,7 @@ final class ClientDecisionService
             'eligible' => false,
             'reason' => 'unavailable',
             'action' => null,
+            'action_meaning' => null,
             'sizing' => null,
         ];
 
@@ -68,6 +70,7 @@ final class ClientDecisionService
         if (! in_array($signal->action, ['buy', 'sell'], true)) {
             return [...$base, 'reason' => 'unsupported_signal_action'];
         }
+        $base['action_meaning'] = SignalSemantics::actionMeaning($signal->action, $signal->reason);
 
         $confidence = (float) ($signal->payload['confidence'] ?? 0.0);
         if ($confidence + 1e-12 < (float) $setting->min_signal_confidence) {
@@ -242,6 +245,8 @@ final class ClientDecisionService
         return [
             'id' => $signal->getKey(), 'period' => $signal->period, 'model_id' => $signal->model_id,
             'action' => $signal->action, 'reason' => $signal->reason,
+            'action_meaning' => $signal->payload['action_meaning']
+                ?? SignalSemantics::actionMeaning($signal->action, $signal->reason),
             'confidence' => $signal->reason === 'supported' ? (float) ($signal->payload['confidence'] ?? 0.0) : null,
             'decision_at_ms' => $signal->decision_at_ms, 'recorded_at_ms' => $signal->recorded_at_ms,
             'regime' => $signal->payload['regime'] ?? null,

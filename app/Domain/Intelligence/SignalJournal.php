@@ -39,7 +39,8 @@ final class SignalJournal
                 && $previous->decision_at_ms === ($signal['decision_at_ms'] ?? null) && $previous->reason === $signal['reason']
                 && $previous->action === $signal['action'] && ($previous->payload['regime'] ?? null) === ($signal['regime'] ?? null)
                 && ($previous->payload['reference_price'] ?? null) === ($signal['reference_price'] ?? null)
-                && ($previous->payload['reference_price_source'] ?? null) === ($signal['reference_price_source'] ?? null)) {
+                && ($previous->payload['reference_price_source'] ?? null) === ($signal['reference_price_source'] ?? null)
+                && ($previous->payload['action_meaning'] ?? null) === ($signal['action_meaning'] ?? null)) {
                 return $previous;
             }
             // A recovery after an intervening state is a new observation, even for the same source candle.
