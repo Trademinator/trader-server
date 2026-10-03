@@ -99,6 +99,10 @@ it('coalesces successful imports into a feature rebuild followed by one fresh KN
     runBackfillTrainingStep($id);
 
     $this->assertDatabaseCount('market_features', 148);
+    $performance = json_decode(DB::table('market_history_backfills')->where('history_id', $id)
+        ->value('build_performance'), true, flags: JSON_THROW_ON_ERROR);
+    expect($performance['feature_replay']['rows_processed'])->toBeGreaterThan(0)
+        ->and($performance['feature_replay']['chunks'])->toBeGreaterThan(0);
     $this->assertDatabaseCount('intelligence_models', 0);
     $this->assertDatabaseHas('market_history_backfills', ['build_stage' => 'knn', 'build_revision' => 2]);
     $job = runBackfillTrainingStep($id);
@@ -106,6 +110,13 @@ it('coalesces successful imports into a feature rebuild followed by one fresh KN
 
     $this->assertDatabaseCount('intelligence_models', 1);
     $this->assertDatabaseCount('research_datasets', 1);
+    $report = json_decode(DB::table('intelligence_models')->value('report'), true, flags: JSON_THROW_ON_ERROR);
+    expect($report['build_performance']['total_ms'])->toBeGreaterThanOrEqual(0)
+        ->and($report['build_performance']['stages'])->toHaveKeys([
+            'dataset_ms', 'patterns_ms', 'lead_lag_ms', 'knn_tuning_ms',
+            'holdout_ms', 'human_guidance_ms', 'candle_guidance_ms', 'persistence_ms',
+        ])
+        ->and($report['build_performance']['feature_replay']['rows_processed'])->toBeGreaterThan(0);
     $this->assertDatabaseHas('intelligence_models', ['generation_key' => hash('sha256', 'history:'.$id.':2')]);
     $this->assertDatabaseHas('market_history_backfills', ['trained_revision' => 2, 'build_stage' => null, 'build_error' => null]);
     Bus::assertDispatchedTimes(RebuildBackfilledIntelligence::class, 2);

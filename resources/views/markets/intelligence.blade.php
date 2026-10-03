@@ -133,6 +133,44 @@
                 @endif
                 <p class="guide-help">K is tuned on earlier chronological folds. These later-period results come from a separate held-out block. Models retrain weekly, after successful backfill, and daily for eligible overlapping markets when lead/lag refresh is enabled.</p>
             </section>
+            @if (auth()->user()->isOwner() && isset($report['build_performance']))
+                @php
+                    $performance = $report['build_performance'];
+                    $stageLabels = [
+                        'dataset_ms' => 'Dataset construction / loading',
+                        'patterns_ms' => 'Pattern models',
+                        'lead_lag_ms' => 'Lead / lag',
+                        'knn_tuning_ms' => 'KNN tuning',
+                        'holdout_ms' => 'Holdout validation',
+                        'human_guidance_ms' => 'Human guidance',
+                        'candle_guidance_ms' => 'Candle guidance',
+                        'persistence_ms' => 'Model persistence',
+                    ];
+                @endphp
+                <section class="guide-panel">
+                    <details>
+                        <summary><strong>Build performance</strong></summary>
+                        <dl>
+                            @if (! empty($performance['started_at']))
+                                <dt>Last model build</dt><dd><x-display-time :value="$performance['started_at']" /></dd>
+                            @endif
+                            <dt>Total intelligence build</dt><dd>{{ number_format(($performance['total_ms'] ?? 0) / 1000, 2) }} s</dd>
+                            @foreach ($stageLabels as $key => $label)
+                                @if (isset($performance['stages'][$key]))
+                                    <dt>{{ $label }}</dt><dd>{{ number_format($performance['stages'][$key] / 1000, 2) }} s</dd>
+                                @endif
+                            @endforeach
+                            @if (isset($performance['feature_replay']))
+                                <dt>Feature replay</dt><dd>{{ number_format(($performance['feature_replay']['duration_ms'] ?? 0) / 1000, 2) }} s</dd>
+                                <dt>Ticker rows processed</dt><dd>{{ number_format($performance['feature_replay']['rows_processed'] ?? 0) }}</dd>
+                                <dt>Replay chunks</dt><dd>{{ number_format($performance['feature_replay']['chunks'] ?? 0) }}</dd>
+                                <dt>Started from checkpoint</dt><dd>{{ ($performance['feature_replay']['checkpoint_used'] ?? false) ? 'Yes' : 'No' }}</dd>
+                            @endif
+                        </dl>
+                        <p class="guide-help">OWNER-only diagnostics for the most recently published model. Timings are persisted in the model report and also emitted to the action/syslog stream.</p>
+                    </details>
+                </section>
+            @endif
         @endif
     </section>
 </x-layouts.app>

@@ -65,8 +65,12 @@ final class FeatureBuilder
                 ->getIterator();
             $snapshots?->rewind();
             foreach ((new FeatureEngine)->rows($candles, $period, $cutoffMs, checkpoint: $checkpoint,
-                checkpointCallback: function (array $state) use (&$latestCheckpoint): void {
+                checkpointCallback: function (array $state) use (&$latestCheckpoint, $checkpoints, $exchange, $symbol, $period): void {
                     $latestCheckpoint = $state;
+                    // FeatureEngine emits a recursive-state checkpoint every batch.
+                    // Persist each one so a later incremental build can resume near
+                    // its overlap boundary instead of replaying all stored history.
+                    $this->saveCheckpoint($checkpoints, $exchange, $symbol, $period, $state);
                 }) as $row) {
                 if (microtime(true) - $started > 540) {
                     if ($pending) {
@@ -77,7 +81,8 @@ final class FeatureBuilder
                         $this->saveCheckpoint($checkpoints, $exchange, $symbol, $period, $latestCheckpoint);
                     }
                     throw new FeatureReplayTimeout(
-                        isset($latestCheckpoint['through_ms']) ? (int) $latestCheckpoint['through_ms'] : $resumeThroughMs
+                        isset($latestCheckpoint['through_ms']) ? (int) $latestCheckpoint['through_ms'] : $resumeThroughMs,
+                        $count,
                     );
                 }
                 while ($snapshots !== null && $snapshots->valid() && $snapshots->current()->observed_at_ms <= $row['available_at_ms']) {

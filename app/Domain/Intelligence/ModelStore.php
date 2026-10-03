@@ -34,6 +34,9 @@ final class ModelStore
 
     public function save(array $artifact): array
     {
+        $persistenceStarted = hrtime(true);
+        $buildStarted = $artifact['build_performance']['started_monotonic_ns'] ?? null;
+        unset($artifact['build_performance']['started_monotonic_ns']);
         $id = (string) Str::uuid7();
         $artifact['model_id'] = $id;
         $artifact['created_at'] = now()->toIso8601String();
@@ -76,10 +79,31 @@ final class ModelStore
             throw $error;
         }
 
-        app(ActionLog::class)->write('intelligence.model_saved', [
+        $persistenceMs = (int) round((hrtime(true) - $persistenceStarted) / 1_000_000);
+        $report['build_performance']['stages']['persistence_ms'] = $persistenceMs;
+        $report['build_performance']['total_ms'] = is_int($buildStarted)
+            ? (int) round((hrtime(true) - $buildStarted) / 1_000_000)
+            : array_sum($report['build_performance']['stages'] ?? []);
+        DB::table('intelligence_models')->where('model_id', $id)->update([
+            'report' => json_encode($report, JSON_THROW_ON_ERROR),
+        ]);
+
+        $performance = $report['build_performance'] ?? [];
+        $stages = $performance['stages'] ?? [];
+        app(ActionLog::class)->write('intelligence.build.completed', [
             'model_id' => $id, 'dataset_id' => $artifact['dataset_id'], 'exchange' => $artifact['exchange'],
             'symbol' => $artifact['symbol'], 'period' => $artifact['period'], 'status' => $artifact['status'],
-            'reason' => $artifact['reason'] ?? null, 'knowledge_rows' => $artifact['knowledge_rows'] ?? 0, 'outcome' => 'completed']);
+            'reason' => $artifact['reason'] ?? null, 'knowledge_rows' => $artifact['knowledge_rows'] ?? 0,
+            'total_ms' => $performance['total_ms'] ?? 0,
+            'dataset_ms' => $stages['dataset_ms'] ?? 0, 'patterns_ms' => $stages['patterns_ms'] ?? 0,
+            'lead_lag_ms' => $stages['lead_lag_ms'] ?? 0, 'knn_tuning_ms' => $stages['knn_tuning_ms'] ?? 0,
+            'holdout_ms' => $stages['holdout_ms'] ?? 0, 'human_guidance_ms' => $stages['human_guidance_ms'] ?? 0,
+            'candle_guidance_ms' => $stages['candle_guidance_ms'] ?? 0, 'persistence_ms' => $persistenceMs,
+            'feature_replay_ms' => $performance['feature_replay']['duration_ms'] ?? 0,
+            'feature_rows' => $performance['feature_replay']['rows_processed'] ?? 0,
+            'feature_chunks' => $performance['feature_replay']['chunks'] ?? 0,
+            'outcome' => 'completed',
+        ]);
 
         return $report;
     }

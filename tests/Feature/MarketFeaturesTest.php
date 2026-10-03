@@ -62,6 +62,24 @@ it('builds idempotently without modifying source candles or leaking future snaps
         ->and($rows[39]->payload['ready'])->toBeFalse();
 });
 
+it('persists intermediate feature checkpoints for bounded incremental replay', function () {
+    $start = 1700000000000;
+    $candles = [];
+    for ($i = 0; $i < 1100; $i++) {
+        $candles[] = ['microtimestamp' => $start + $i * 60000, 'open' => '100', 'high' => '101',
+            'low' => '99', 'close' => (string) (100 + ($i % 7) / 10), 'volume' => '10'];
+    }
+    app(TickerRepository::class)->saveTickers('kraken', 'BTC/USD', '1m', $candles);
+    app(FeatureBuilder::class)->build('kraken', 'BTC/USD', '1m', $start + 1100 * 60000);
+
+    expect(DB::table('feature_checkpoints')->where('exchange', 'kraken')->where('symbol', 'BTC/USD')
+        ->where('period', '1m')->count())->toBeGreaterThanOrEqual(3);
+
+    $boundary = $start + 1096 * 60000;
+    expect(app(\App\Domain\Archive\FeatureCheckpointStore::class)->before('kraken', 'BTC/USD', '1m', $boundary))
+        ->not->toBeNull();
+});
+
 it('batches resolved subscription mappings and records receipt time without duplicate hourly samples', function () {
     config(['features.coingecko.enabled' => true, 'features.coingecko.api_key' => 'test-key']);
     createContextMarket('kraken', 'BTC/USD', 'bitcoin', 'usd');

@@ -31,8 +31,12 @@ final class MarketIntelligence
     ) {}
 
     public function build(string $exchange, string $symbol, string $period, ?string $dataset = null,
-        string $schema = 'core', ?int $fromMs = null, ?int $toMs = null, ?int $asOfMs = null, ?string $generation = null): array
+        string $schema = 'core', ?int $fromMs = null, ?int $toMs = null, ?int $asOfMs = null,
+        ?string $generation = null, array $buildPerformance = []): array
     {
+        $buildPerformance['started_at'] ??= now()->toIso8601String();
+        $buildPerformance['started_monotonic_ns'] = hrtime(true);
+        $buildPerformance['stages'] ??= [];
         $deadline = microtime(true) + config('intelligence.max_seconds');
         $lock = Cache::lock('trademinator:intelligence-build:'.ModelStore::marketKey($exchange, $symbol, $period), 720);
         if (! $lock->get()) {
@@ -42,6 +46,7 @@ final class MarketIntelligence
             if ($generation !== null && ($existing = $this->models->generation($generation)) !== null) {
                 return $existing;
             }
+            $datasetStarted = hrtime(true);
             if ($dataset !== null) {
                 $manifest = $this->datasetStore->manifest($dataset);
                 if ([$manifest['exchange'], $manifest['symbol'], $manifest['period']] !== [$exchange, $symbol, $period]) {
@@ -66,7 +71,10 @@ final class MarketIntelligence
                 $dataset = $manifest['dataset_id'];
             }
 
-            return $this->trainer->train($dataset, $deadline, $generation);
+            $buildPerformance['stages']['dataset_ms'] = (int) ($buildPerformance['stages']['dataset_ms'] ?? 0)
+                + (int) round((hrtime(true) - $datasetStarted) / 1_000_000);
+
+            return $this->trainer->train($dataset, $deadline, $generation, $buildPerformance);
         } finally {
             $lock->release();
         }

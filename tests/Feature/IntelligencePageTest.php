@@ -75,7 +75,13 @@ it('renders actual history counts and failed validation requirements for an abst
             ->assertSee('At least 50')->assertSee('Missing / failed')
             ->assertSee('Not evaluated: K selection must pass first.')
             ->assertSee('Pattern training history')->assertSee('0 out of 100')
-            ->assertSee('<progress', false)->assertSee('role="progressbar"', false);
+            ->assertSee('<progress', false)->assertSee('role="progressbar"', false)
+            ->assertDontSee('Build performance');
+
+        config(['operations.owner_uuid' => $owner->user_id]);
+        $this->actingAs($owner)->get(route('markets.intelligence', $subscription->getKey()))
+            ->assertOk()->assertSee('Build performance')->assertSee('Total intelligence build')
+            ->assertSee('KNN tuning')->assertSee('Model persistence');
     } finally {
         File::deleteDirectory($path);
     }

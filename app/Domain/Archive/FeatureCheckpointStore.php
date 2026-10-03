@@ -29,6 +29,17 @@ final class FeatureCheckpointStore
             ->where('feature_version', FeatureEngine::VERSION)->delete();
     }
 
+    /**
+     * Keep recursive state that is strictly older than the changed candle range.
+     * Any checkpoint at or after the boundary may contain state derived from
+     * changed candles and must be discarded.
+     */
+    public function deleteFrom(string $exchange, string $symbol, string $period, int $fromMs): int
+    {
+        return DB::table('feature_checkpoints')->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+            ->where('feature_version', FeatureEngine::VERSION)->where('through_ms', '>=', $fromMs)->delete();
+    }
+
     public function before(string $exchange, string $symbol, string $period, int $beforeMs): ?array
     {
         $row = DB::table('feature_checkpoints')->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)

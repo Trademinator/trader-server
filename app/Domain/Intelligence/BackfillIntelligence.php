@@ -91,6 +91,7 @@ final class BackfillIntelligence
         $failures = min(100, $row->build_failures + 1);
         $this->release($id, $token, [
             'build_stage' => 'features', 'build_revision' => null, 'build_failures' => $failures,
+            'build_performance' => null,
             'build_error' => mb_substr($error->getMessage(), 0, 1000),
         ], min(3600, 60 * (2 ** min(6, $failures - 1))));
     }

@@ -6,7 +6,7 @@ use RuntimeException;
 
 final class FeatureReplayTimeout extends RuntimeException
 {
-    public function __construct(public readonly ?int $throughMs = null)
+    public function __construct(public readonly ?int $throughMs = null, public readonly int $rowsProcessed = 0)
     {
         parent::__construct('Feature replay exceeded 540 seconds; split the remaining work into smaller queue jobs.');
     }

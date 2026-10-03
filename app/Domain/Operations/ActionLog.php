@@ -34,7 +34,13 @@ class ActionLog
         if (is_string($fields['symbol'] ?? null) && preg_match('/^[A-Z0-9_.:\/-]{1,32}$/D', $fields['symbol'])) {
             $record['symbol'] = $fields['symbol'];
         }
-        foreach (['status_code', 'exit_code', 'duration_ms', 'attempt', 'line', 'rows', 'fetched', 'repaired', 'missing_ranges', 'knowledge_rows', 'confidence', 'effective_neighbors'] as $key) {
+        foreach ([
+            'status_code', 'exit_code', 'duration_ms', 'attempt', 'line', 'rows', 'fetched', 'repaired',
+            'missing_ranges', 'knowledge_rows', 'confidence', 'effective_neighbors',
+            'total_ms', 'dataset_ms', 'patterns_ms', 'lead_lag_ms', 'knn_tuning_ms', 'holdout_ms',
+            'human_guidance_ms', 'candle_guidance_ms', 'persistence_ms',
+            'feature_replay_ms', 'feature_rows', 'feature_chunks',
+        ] as $key) {
             if (is_int($fields[$key] ?? null) || (is_float($fields[$key] ?? null) && is_finite($fields[$key]))) {
                 $record[$key] = $fields[$key];
             }

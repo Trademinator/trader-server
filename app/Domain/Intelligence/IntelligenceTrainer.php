@@ -22,13 +22,19 @@ final class IntelligenceTrainer
         private CandleGuidance $candleGuidance,
     ) {}
 
-    public function train(string $dataset, ?float $deadline = null, ?string $generation = null): array
+    public function train(string $dataset, ?float $deadline = null, ?string $generation = null, array $buildPerformance = []): array
     {
+        $buildPerformance['started_at'] ??= now()->toIso8601String();
+        $buildPerformance['started_monotonic_ns'] ??= hrtime(true);
+        $buildPerformance['stages'] ??= [];
+        $datasetLoadStarted = hrtime(true);
         $manifest = $this->datasets->manifest($dataset);
         if ($manifest['rows'] > config('intelligence.max_rows')) {
             throw new InvalidArgumentException('Dataset exceeds intelligence.max_rows; use a smaller date range.');
         }
         [$manifest, $rows] = $this->datasets->load($dataset, (int) config('intelligence.max_rows'));
+        $buildPerformance['stages']['dataset_ms'] = (int) ($buildPerformance['stages']['dataset_ms'] ?? 0)
+            + $this->elapsedMs($datasetLoadStarted);
         if ($manifest['feature_version'] !== FeatureEngine::VERSION
             || $manifest['label_definition']['version'] !== SemanticLabels::VERSION) {
             throw new InvalidArgumentException('M4 requires current features and cost-free semantic labels; build fresh knowledge.');
@@ -67,11 +73,16 @@ final class IntelligenceTrainer
             $patternSettings = config('intelligence.patterns');
             $sourceRows = count($rows);
             $patternBundle = ['models' => [], 'report' => [], 'version' => PatternCatalog::VERSION];
+            $stageStarted = hrtime(true);
             if ($patternSettings['enabled']) {
                 $patternRows = array_slice($rows, 0, (int) floor(count($rows) * 0.4));
                 $patternBundle = $this->patterns->train($patternRows, $patternSettings, $deadline);
             }
+            $buildPerformance['stages']['patterns_ms'] = $this->elapsedMs($stageStarted);
+
+            $stageStarted = hrtime(true);
             $leadLag = $this->leadLag->prepare($manifest, $rows, $deadline);
+            $buildPerformance['stages']['lead_lag_ms'] = $this->elapsedMs($stageStarted);
             $leadLagBundle = $leadLag['bundle'];
             $leadLagExcluded = 0;
             $patternKeys = $patternSettings['as_knn_features'] ? $this->patterns->featureKeys($patternBundle) : [];
@@ -102,10 +113,19 @@ final class IntelligenceTrainer
             $cutoff = $test[0]['decision_at_ms'] ?? 0;
             $training = array_values(array_filter(array_slice($rows, 0, $testStart),
                 fn (array $row): bool => $row['label_available_at_ms'] < $cutoff));
+
+            $stageStarted = hrtime(true);
             $selection = $tuner->tune($training, $settings, $deadline);
+            $buildPerformance['stages']['knn_tuning_ms'] = $this->elapsedMs($stageStarted);
+
+            $stageStarted = hrtime(true);
             $evaluation = $selection['k'] === null ? null
                 : $tuner->evaluate(array_slice($training, -$settings['train_size']), $test, $selection['k'], $settings, $deadline);
+            $buildPerformance['stages']['holdout_ms'] = $this->elapsedMs($stageStarted);
+
+            $stageStarted = hrtime(true);
             $human = $this->humanGuidance->compare($manifest, $rows, $settings, $deadline);
+            $buildPerformance['stages']['human_guidance_ms'] = $this->elapsedMs($stageStarted);
             $humanExcluded = 0;
             if ($human['bundle']['influence']) {
                 $humanExcluded = count($rows) - count($human['rows']);
@@ -116,7 +136,9 @@ final class IntelligenceTrainer
                 $test = $human['test'];
                 $cutoff = $human['cutoff'];
             }
+            $stageStarted = hrtime(true);
             $candle = $this->candleGuidance->compare($manifest, $rows, $settings, $deadline);
+            $buildPerformance['stages']['candle_guidance_ms'] = $this->elapsedMs($stageStarted);
             $candleExcluded = 0;
             if ($candle['bundle']['influence']) {
                 $candleExcluded = count($rows) - count($candle['rows']);
@@ -168,6 +190,7 @@ final class IntelligenceTrainer
                 'holdout_from_ms' => $cutoff,
                 'holdout_training_labels_available_by_ms' => max(array_column($training, 'label_available_at_ms') ?: [0]),
                 'knowledge_rows' => count($knowledge), 'knowledge' => $knowledge, 'patterns' => $patternBundle,
+                'build_performance' => $buildPerformance,
             ];
             if (microtime(true) > $deadline) {
                 throw new RuntimeException('Intelligence training time budget exceeded before publication.');
@@ -177,5 +200,10 @@ final class IntelligenceTrainer
         } finally {
             $lock->release();
         }
+    }
+
+    private function elapsedMs(int $startedNs): int
+    {
+        return (int) round((hrtime(true) - $startedNs) / 1_000_000);
     }
 }

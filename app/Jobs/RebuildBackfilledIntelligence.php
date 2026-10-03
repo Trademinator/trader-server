@@ -85,20 +85,38 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
                     ? $this->firstCandleMs($exchange, $symbol, $state->period, $cutoffMs)
                     : (int) $state->oldest_candle_ms);
 
-                // A root rebuild must not resume indicator state produced before the
-                // historical revision that triggered it. Split children keep the
-                // checkpoints created by their parent/sibling jobs.
-                if ($this->featureCutoffMs === null) {
-                    app(FeatureCheckpointStore::class)->clear($exchange, $symbol, $state->period);
+                $checkpoints = app(FeatureCheckpointStore::class);
+                if ($rootReplay) {
+                    // Recursive state strictly before the changed range is safe.
+                    // A normal older-history prepend has no earlier checkpoint and
+                    // therefore still falls back to the required full replay.
+                    $checkpoints->deleteFrom($exchange, $symbol, $state->period, $startMs);
+                    $builds->owned($this->historyId, $this->leaseToken)->update([
+                        'build_performance' => json_encode([
+                            'feature_replay' => [
+                                'duration_ms' => 0, 'rows_processed' => 0, 'chunks' => 0,
+                                'from_ms' => $startMs, 'through_ms' => $startMs,
+                                'checkpoint_used' => false,
+                            ],
+                        ], JSON_THROW_ON_ERROR),
+                        'updated_at' => now(),
+                    ]);
                 }
                 $builds->renew($this->historyId, $this->leaseToken);
 
+                $checkpointBeforeMs = $this->featureCutoffMs === null
+                    ? $startMs
+                    : ($cutoffMs === PHP_INT_MAX ? PHP_INT_MAX : $cutoffMs + 1);
+                $checkpointUsed = $checkpoints->before($exchange, $symbol, $state->period, $checkpointBeforeMs) !== null;
+                $featureStarted = hrtime(true);
                 try {
-                    $checkpointBeforeMs = $this->featureCutoffMs === null ? null
-                        : ($cutoffMs === PHP_INT_MAX ? PHP_INT_MAX : $cutoffMs + 1);
-                    $features->build($exchange, $symbol, $state->period, cutoffMs: $cutoffMs,
-                        checkpointBeforeMs: $checkpointBeforeMs);
+                    $rows = $features->build($exchange, $symbol, $state->period, cutoffMs: $cutoffMs,
+                        fromMs: $startMs, checkpointBeforeMs: $checkpointBeforeMs);
+                    $this->recordFeatureReplay($builds, $this->elapsedMs($featureStarted), $rows,
+                        $checkpointUsed, $startMs, $cutoffMs);
                 } catch (FeatureReplayTimeout $timeout) {
+                    $this->recordFeatureReplay($builds, $this->elapsedMs($featureStarted), $timeout->rowsProcessed,
+                        $checkpointUsed, $startMs, $timeout->throughMs ?? $cutoffMs);
                     $this->splitFeatureReplay($builds, $startMs, $cutoffMs, $timeout, $revision);
 
                     return;
@@ -115,9 +133,13 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
                 ]);
             } elseif ($state->build_stage === 'knn' && (int) $state->build_revision > 0) {
                 $revision = (int) $state->build_revision;
+                $performance = is_string($state->build_performance)
+                    ? json_decode($state->build_performance, true, flags: JSON_THROW_ON_ERROR)
+                    : (array) ($state->build_performance ?? []);
                 $report = $intelligence->build($exchange, $symbol, $state->period,
                     schema: $this->schema ?? (string) config('intelligence.schema'),
-                    generation: hash('sha256', 'history:'.$this->historyId.':'.$revision));
+                    generation: hash('sha256', 'history:'.$this->historyId.':'.$revision),
+                    buildPerformance: $performance);
                 $builds->release($this->historyId, $this->leaseToken, [
                     'trained_revision' => $revision, 'build_stage' => null, 'build_revision' => null,
                     'build_failures' => 0, 'build_error' => null, 'model_id' => $report['model_id'], 'last_trained_at' => now(),
@@ -166,6 +188,35 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
         }
 
         return 0;
+    }
+
+    private function recordFeatureReplay(BackfillIntelligence $builds, int $durationMs, int $rows,
+        bool $checkpointUsed, int $fromMs, int $throughMs): void
+    {
+        $state = $builds->owned($this->historyId, $this->leaseToken)->first();
+        if ($state === null) {
+            return;
+        }
+        $performance = is_string($state->build_performance)
+            ? json_decode($state->build_performance, true, flags: JSON_THROW_ON_ERROR)
+            : (array) ($state->build_performance ?? []);
+        $feature = $performance['feature_replay'] ?? [];
+        $feature['duration_ms'] = (int) ($feature['duration_ms'] ?? 0) + $durationMs;
+        $feature['rows_processed'] = (int) ($feature['rows_processed'] ?? 0) + $rows;
+        $feature['chunks'] = (int) ($feature['chunks'] ?? 0) + 1;
+        $feature['from_ms'] = min((int) ($feature['from_ms'] ?? $fromMs), $fromMs);
+        $feature['through_ms'] = max((int) ($feature['through_ms'] ?? $throughMs), $throughMs);
+        $feature['checkpoint_used'] = (bool) ($feature['checkpoint_used'] ?? false) || $checkpointUsed;
+        $performance['feature_replay'] = $feature;
+        $builds->owned($this->historyId, $this->leaseToken)->update([
+            'build_performance' => json_encode($performance, JSON_THROW_ON_ERROR),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function elapsedMs(int $startedNs): int
+    {
+        return (int) round((hrtime(true) - $startedNs) / 1_000_000);
     }
 
     public function failed(?Throwable $exception): void
