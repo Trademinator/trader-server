@@ -182,11 +182,20 @@ final class ClientDecisionService
         if (bccomp($baseBalance, '0', self::SCALE) <= 0) {
             return ['eligible' => false, 'reason' => 'no_base_balance'];
         }
+        $managedBase = array_key_exists('managed_base_balance', $state) && $state['managed_base_balance'] !== null
+            ? $this->d($state['managed_base_balance'])
+            : null;
+        if ($managedBase !== null && bccomp($managedBase, '0', self::SCALE) <= 0) {
+            return ['eligible' => false, 'reason' => 'managed_base_unavailable'];
+        }
+        $availableBase = $managedBase === null
+            ? $baseBalance
+            : $this->minDecimal($baseBalance, $managedBase);
         $maxOrder = $this->d($setting->max_order_quote);
         if (bccomp($maxOrder, '0', self::SCALE) <= 0) {
             return ['eligible' => false, 'reason' => 'max_order_quote_not_configured'];
         }
-        $amount = $this->minDecimal($baseBalance, bcdiv($maxOrder, $bid, self::SCALE));
+        $amount = $this->minDecimal($availableBase, bcdiv($maxOrder, $bid, self::SCALE));
         if (isset($state['requested_quote'])) {
             $amount = $this->minDecimal($amount, bcdiv($this->d($state['requested_quote']), $bid, self::SCALE));
         }
@@ -198,7 +207,9 @@ final class ClientDecisionService
         }
 
         return ['eligible' => true, 'reason' => 'eligible', 'base_amount' => $amount,
-            'quote_amount' => $quote, 'estimated_fee_quote' => '0', 'reference_price' => $bid];
+            'quote_amount' => $quote, 'estimated_fee_quote' => '0', 'reference_price' => $bid,
+            'wallet_base_balance' => $baseBalance, 'managed_base_balance' => $managedBase,
+            'managed_base_cap_applied' => $managedBase !== null];
     }
 
     private function constraints(string $amount, string $cost, array $state): ?string

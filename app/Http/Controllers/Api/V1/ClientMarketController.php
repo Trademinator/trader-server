@@ -95,6 +95,7 @@ final class ClientMarketController extends Controller
             'reported_at_ms' => ['required', 'integer', 'min:1'],
             'quote_balance' => ['required', 'numeric', 'min:0'],
             'base_balance' => ['required', 'numeric', 'min:0'],
+            'managed_base_balance' => ['nullable', 'numeric', 'min:0', 'lte:base_balance'],
             'position_quote' => ['nullable', 'numeric', 'min:0'],
             'best_bid' => ['required', 'numeric', 'gt:0'],
             'best_ask' => ['required', 'numeric', 'gt:0'],
