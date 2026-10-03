@@ -201,6 +201,33 @@ it('stores client execution reports idempotently and rejects changed reuse', fun
     ])->assertStatus(409);
 });
 
+it('rejects the same exchange trade id under a different idempotency key', function () {
+    $this->freezeTime();
+    $user = User::factory()->create();
+    $secret = m5Bearer($user);
+    $subscription = m5Market($user);
+    $signal = MarketSignal::query()->create([
+        'market_id' => $subscription->market_id, 'snapshot_key' => str_repeat('f', 64), 'period' => '1h',
+        'model_id' => null, 'decision_at_ms' => now()->subMinutes(30)->getTimestampMs(),
+        'recorded_at_ms' => now()->getTimestampMs(), 'is_change' => true,
+        'action' => 'buy', 'reason' => 'supported', 'payload' => ['confidence' => 0.8],
+    ]);
+    $url = '/api/v1/client/markets/'.$subscription->getKey().'/reports';
+    $fill = [
+        'signal_id' => $signal->getKey(), 'event' => 'fill', 'side' => 'buy',
+        'quantity' => 0.01, 'price' => 60000, 'fee' => 1.25, 'fee_currency' => 'USD',
+        'exchange_order_id' => 'order-123', 'exchange_trade_id' => 'trade-456',
+        'occurred_at_ms' => now()->getTimestampMs(),
+    ];
+
+    $this->withToken($secret)->postJson($url, [...$fill, 'idempotency_key' => 'fill-first-0001'])
+        ->assertCreated()->assertJsonPath('report.exchange_trade_id', 'trade-456');
+    $this->withToken($secret)->postJson($url, [...$fill, 'idempotency_key' => 'fill-second-0002'])
+        ->assertStatus(409)->assertJsonPath('error.code', 'duplicate_exchange_trade_id');
+
+    expect(ClientExecutionReport::query()->where('exchange_trade_id', 'trade-456')->count())->toBe(1);
+});
+
 it('allows only protective close reporting after a subscription becomes inactive', function () {
     $user = User::factory()->create();
     $secret = m5Bearer($user);

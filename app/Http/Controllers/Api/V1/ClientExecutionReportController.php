@@ -7,6 +7,7 @@ use App\Domain\Operations\ActionLog;
 use App\Http\Controllers\Controller;
 use App\Models\ClientExecutionReport;
 use App\Models\MarketSignal;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -69,35 +70,60 @@ final class ClientExecutionReportController extends Controller
         $canonical = $data;
         ksort($canonical);
         $hash = hash('sha256', json_encode($canonical, JSON_THROW_ON_ERROR));
-        $report = DB::transaction(function () use ($request, $item, $signal, $data, $hash): ClientExecutionReport {
-            $existing = ClientExecutionReport::query()->where('user_id', $request->user()->user_id)
-                ->where('idempotency_key', $data['idempotency_key'])->lockForUpdate()->first();
-            if ($existing !== null) {
-                abort_unless(hash_equals($existing->request_hash, $hash), 409,
-                    'This idempotency key was already used with different report data.');
+        try {
+            $report = DB::transaction(function () use ($request, $item, $signal, $data, $hash): ?ClientExecutionReport {
+                $existing = ClientExecutionReport::query()->where('user_id', $request->user()->user_id)
+                    ->where('idempotency_key', $data['idempotency_key'])->lockForUpdate()->first();
+                if ($existing !== null) {
+                    abort_unless(hash_equals($existing->request_hash, $hash), 409,
+                        'This idempotency key was already used with different report data.');
 
-                return $existing;
+                    return $existing;
+                }
+                if (($data['exchange_trade_id'] ?? null) !== null
+                    && ClientExecutionReport::query()->where('user_id', $request->user()->user_id)
+                        ->where('market_subscription_id', $item->getKey())
+                        ->where('exchange_trade_id', $data['exchange_trade_id'])->lockForUpdate()->exists()) {
+                    return null;
+                }
+
+                return ClientExecutionReport::query()->create([
+                    'user_id' => $request->user()->user_id,
+                    'market_subscription_id' => $item->getKey(),
+                    'market_signal_id' => $signal->getKey(),
+                    'idempotency_key' => $data['idempotency_key'],
+                    'request_hash' => $hash,
+                    'event' => $data['event'], 'side' => $data['side'] ?? null, 'reason' => $data['reason'] ?? null,
+                    'protective' => $data['protective'], 'quantity' => $data['quantity'] ?? null, 'price' => $data['price'] ?? null,
+                    'fee' => $data['fee'] ?? null, 'fee_currency' => $data['fee_currency'] ?? null,
+                    'exchange_order_id' => $data['exchange_order_id'] ?? null, 'exchange_trade_id' => $data['exchange_trade_id'] ?? null,
+                    'occurred_at_ms' => $data['occurred_at_ms'], 'recorded_at_ms' => now()->getTimestampMs(),
+                ]);
+            }, 3);
+        } catch (QueryException $error) {
+            if (($data['exchange_trade_id'] ?? null) === null
+                || ! $this->exchangeTradeAlreadyReported($request->user()->user_id, $item->getKey(), $data['exchange_trade_id'])) {
+                throw $error;
             }
-
-            return ClientExecutionReport::query()->create([
-                'user_id' => $request->user()->user_id,
-                'market_subscription_id' => $item->getKey(),
-                'market_signal_id' => $signal->getKey(),
-                'idempotency_key' => $data['idempotency_key'],
-                'request_hash' => $hash,
-                'event' => $data['event'], 'side' => $data['side'] ?? null, 'reason' => $data['reason'] ?? null,
-                'protective' => $data['protective'], 'quantity' => $data['quantity'] ?? null, 'price' => $data['price'] ?? null,
-                'fee' => $data['fee'] ?? null, 'fee_currency' => $data['fee_currency'] ?? null,
-                'exchange_order_id' => $data['exchange_order_id'] ?? null, 'exchange_trade_id' => $data['exchange_trade_id'] ?? null,
-                'occurred_at_ms' => $data['occurred_at_ms'], 'recorded_at_ms' => now()->getTimestampMs(),
-            ]);
-        }, 3);
+            $report = null;
+        }
+        if ($report === null) {
+            return response()->json(['error' => ['code' => 'duplicate_exchange_trade_id',
+                'message' => 'This exchange trade ID was already reported for this market subscription.']], 409);
+        }
 
         $log->write('client.execution_reported', ['subscription_id' => $item->getKey(), 'market_id' => $item->market_id,
             'action' => $data['event'], 'outcome' => in_array($data['event'], ['failed', 'rejected'], true) ? 'failed' : 'completed',
             'reason' => $data['reason'] ?? null]);
 
         return response()->json(['api_version' => 1, 'report' => $this->payload($report)], 201);
+    }
+
+    private function exchangeTradeAlreadyReported(string $userId, string $subscriptionId, string $tradeId): bool
+    {
+        return ClientExecutionReport::query()->where('user_id', $userId)
+            ->where('market_subscription_id', $subscriptionId)
+            ->where('exchange_trade_id', $tradeId)->exists();
     }
 
     private function payload(ClientExecutionReport $report): array

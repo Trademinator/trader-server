@@ -67,9 +67,9 @@ The response is an **eligibility context**, not an exchange order and not proof 
 - `failed`
 - `fill`
 
-Each report has a caller-supplied idempotency key. Reusing that key with different data is rejected. Fill reports can record partial quantity, fill price, fee, fee currency, exchange order ID and exchange trade ID.
+Each report has a caller-supplied idempotency key. Reusing that key with different data is rejected. Fill reports can record partial quantity, fill price, fee, fee currency, exchange order ID and exchange trade ID. A non-null exchange trade ID may appear only once for the same user and exact market subscription, even when a retry uses a different idempotency key; this protects the Server audit history from counting the same exchange fill twice without assuming trade IDs are globally unique across exchanges.
 
-No report means **Unknown**. Reports are scoped to their owner and market subscription. Non-protective acted/fill reports must match a supported directional Server signal. When a subscription has become inactive, new trade decisions are blocked, but explicitly marked protective exit/failure reports remain accepted so an existing position can still be closed and audited.
+Bid/ask, account fee tier, fill quantity and fill price are Client-reported execution facts. The Server validates shape, subscription/signal provenance and directional consistency, but does not replace them with the last OHLCV candle or claim independent exchange verification. No report means **Unknown**. Reports are scoped to their owner and market subscription. Non-protective acted/fill reports must match a supported directional Server signal. When a subscription has become inactive, new trade decisions are blocked, but explicitly marked protective exit/failure reports remain accepted so an existing position can still be closed and audited.
 
 ## Paper trading
 
