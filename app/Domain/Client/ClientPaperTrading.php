@@ -58,6 +58,11 @@ final class ClientPaperTrading
                 ]);
             }
 
+            $signalId = $subscription->market->latestSignal?->getKey();
+            $signalAlreadyActed = $signalId !== null
+                && ClientPaperEvent::query()->where('client_paper_account_id', $account->getKey())
+                    ->where('market_signal_id', $signalId)->where('event', 'executed')->exists();
+
             $positionQuote = bcmul($this->d($account->base_balance), $bid, self::SCALE);
             $state = [...$input,
                 'quote_balance' => $account->quote_balance,
@@ -73,7 +78,10 @@ final class ClientPaperTrading
             $price = null;
             $fee = '0';
 
-            if ($decision['eligible']) {
+            if ($signalAlreadyActed) {
+                $decision = [...$decision, 'eligible' => false, 'reason' => 'signal_already_acted'];
+                $reason = 'signal_already_acted';
+            } elseif ($decision['eligible']) {
                 $side = $decision['action'];
                 $quantity = $this->d($decision['sizing']['base_amount']);
                 $price = $this->d($decision['sizing']['reference_price']);
@@ -113,7 +121,7 @@ final class ClientPaperTrading
                 'api_version' => 1,
                 'event' => $event,
                 'reason' => $reason,
-                'signal_id' => $subscription->market->latestSignal?->getKey(),
+                'signal_id' => $signalId,
                 'side' => $event === 'executed' ? $side : null,
                 'quantity' => $event === 'executed' ? $quantity : null,
                 'price' => $event === 'executed' ? $price : null,
@@ -124,7 +132,7 @@ final class ClientPaperTrading
 
             ClientPaperEvent::query()->create([
                 'client_paper_account_id' => $account->getKey(),
-                'market_signal_id' => $subscription->market->latestSignal?->getKey(),
+                'market_signal_id' => $signalId,
                 'idempotency_key' => $input['idempotency_key'],
                 'request_hash' => $hash,
                 'event' => $event,

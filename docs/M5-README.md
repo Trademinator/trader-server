@@ -85,7 +85,7 @@ The paper account tracks:
 - observation window;
 - a passive buy-and-hold benchmark started at the same first paper observation, including one entry taker fee.
 
-Paper requests are idempotent. Skipped evaluations are also recorded, preventing a repeated request from becoming a duplicate fill after state changes.
+Paper requests remain idempotent per caller-supplied key. The Server also permits at most one **executed** paper action per immutable Server signal and paper account: after a fill, a later evaluation of that same signal with a different idempotency key is recorded as `signal_already_acted` instead of filling again. A skipped evaluation does not consume the signal, so it may be reevaluated while still current if spread or other execution conditions improve. This per-signal execution dedupe is specific to Server-owned paper trading; it does not restrict live Client order retries, partial fills or execution reports.
 
 ## Dashboard provenance
 
