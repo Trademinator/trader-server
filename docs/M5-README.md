@@ -6,7 +6,7 @@ M5 introduces the first authenticated Client contract without moving exchange cr
 
 The Client API is versioned under `/api/v1/client`. It uses bearer tokens created at **Settings → Client API keys**. New keys are opaque `tmk_…` secrets, stored only as SHA-256 digests with a short prefix for identification. The full secret is shown once. Keys can be labelled, expired and revoked independently; owner suspension/revocation invalidates all active Client keys. Existing legacy UUID API keys are migrated into the hashed key table and continue to authenticate until revoked.
 
-Every Client request re-resolves the authenticated user and the exact market subscription. A subscription is exchange + symbol specific. New decision requests fail closed when the subscription is inactive. Responses are `Cache-Control: private, no-store`, carry `X-Trademinator-API-Version: 1`, and decision responses have an explicit expiry timestamp.
+Every Client request re-resolves the authenticated user. Market-specific endpoints also resolve the exact market subscription. A subscription is exchange + symbol specific. New decision requests fail closed when the subscription is inactive. Responses are `Cache-Control: private, no-store`, carry `X-Trademinator-API-Version: 1`, and decision responses have an explicit expiry timestamp.
 
 Environment controls:
 
@@ -17,6 +17,18 @@ CLIENT_API_STATE_MAX_AGE_SECONDS=30
 CLIENT_API_MAX_KEYS=10
 CLIENT_PAPER_INITIAL_QUOTE=10000
 ```
+
+## Questionnaire risk factor
+
+`GET /api/v1/client/risk-factor` returns the authenticated user's capital-allocation
+multiplier R on demand. It uses the existing saved questionnaire; no subscription
+ID, request body or new database column is needed. No saved questionnaire returns
+exactly `0.25`. The versioned multiplicative model naturally produces values in
+`[0.01, 1]` without clipping. This endpoint does not enable trading or change the
+existing decision/paper-trading services.
+
+See [CLIENT-RISK-FACTOR.md](CLIENT-RISK-FACTOR.md) for the complete request/response
+contract, answer mappings, unknown-answer behavior and Client integration rules.
 
 ## Market settings
 

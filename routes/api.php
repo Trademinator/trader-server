@@ -2,10 +2,12 @@
 
 use App\Http\Controllers\Api\V1\ClientExecutionReportController;
 use App\Http\Controllers\Api\V1\ClientMarketController;
+use App\Http\Controllers\Api\V1\ClientRiskFactorController;
 use App\Http\Controllers\Api\V1\PaperTradingController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1/client')->middleware(['client-auth', 'throttle:120,1'])->group(function (): void {
+    Route::get('risk-factor', ClientRiskFactorController::class);
     Route::get('markets', [ClientMarketController::class, 'index']);
     Route::get('markets/{subscription}', [ClientMarketController::class, 'show'])->whereUuid('subscription');
     Route::put('markets/{subscription}/settings', [ClientMarketController::class, 'updateSettings'])->whereUuid('subscription')->middleware('throttle:30,1');
