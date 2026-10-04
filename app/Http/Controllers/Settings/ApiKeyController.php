@@ -67,6 +67,30 @@ class ApiKeyController extends Controller
         return redirect()->route('settings.api-key.edit')->with('status', 'api-key-revoked');
     }
 
+    public function destroyExpired(Request $request, ActionLog $log, ?string $key = null): RedirectResponse
+    {
+        abort_if($key !== null && ! Str::isUuid($key), 404);
+
+        // Keep both ownership and expiry in the DELETE, not just in the UI.
+        $query = ClientApiKey::query()->where('user_id', $request->user()->user_id)
+            ->whereNotNull('expires_at')->where('expires_at', '<=', now());
+        if ($key !== null) {
+            $query->whereKey($key);
+        }
+
+        $deleted = $query->delete();
+        abort_if($key !== null && $deleted === 0, 404);
+        if ($deleted > 0) {
+            $log->write('client.api_keys_expired_deleted', [
+                'subject_id' => $request->user()->user_id, 'outcome' => 'completed', 'rows' => $deleted,
+            ]);
+        }
+
+        return redirect()->route('settings.api-key.edit')
+            ->with('status', 'api-keys-expired-deleted')
+            ->with('deleted_client_api_key_count', $deleted);
+    }
+
     private function expiry(?string $value, ?string $timezone): ?CarbonImmutable
     {
         if ($value === null) {
