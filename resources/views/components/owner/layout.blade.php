@@ -7,7 +7,7 @@
             <p>Global operations and account management · Times in <x-timezone-label /></p>
         </header>
         <nav class="owner-nav" aria-label="Server administration">
-            @foreach (['overview' => 'Overview', 'users' => 'Users', 'subscriptions' => 'Subscriptions', 'intelligence' => 'Intelligence', 'access' => 'Access statistics', 'archives' => 'Archives'] as $route => $label)
+            @foreach (['overview' => 'Overview', 'users' => 'Users', 'subscriptions' => 'Subscriptions', 'intelligence' => 'Intelligence', 'events' => 'Event review', 'access' => 'Access statistics', 'archives' => 'Archives'] as $route => $label)
                 <a href="{{ route('owner.'.$route) }}" @if(request()->routeIs('owner.'.$route, 'owner.'.$route.'.*')) aria-current="page" @endif>{{ $label }}</a>
             @endforeach
         </nav>

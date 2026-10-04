@@ -26,6 +26,11 @@ Schedule::command('trademinator:evaluate-candle-period --outdated-only')
 Schedule::command('trademinator:collect-market-context')
     ->hourly()->onOneServer()->withoutOverlapping(60);
 
+// GDELT publishes a new GKG batch roughly every 15 minutes. Poll cheaply every
+// five minutes; the collector downloads a ZIP only when lastupdate.txt changes.
+Schedule::command('trademinator:collect-market-events')
+    ->everyFiveMinutes()->onOneServer()->withoutOverlapping(15)->runInBackground();
+
 Schedule::command('trademinator:dispatch-market-features')
     ->everyFiveMinutes()->onOneServer()->withoutOverlapping(5);
 

@@ -9,6 +9,7 @@ use App\Http\Controllers\Markets\SubscriptionController;
 use App\Http\Controllers\Markets\SuggestionController;
 use App\Http\Controllers\Markets\SuggestionReviewController;
 use App\Http\Controllers\Owner\ArchiveController;
+use App\Http\Controllers\Owner\MarketEventController;
 use App\Http\Controllers\Owner\ReportController;
 use App\Http\Controllers\Owner\UserController;
 use App\Http\Controllers\Settings;
@@ -92,6 +93,8 @@ Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-
     Route::get('markets/{market}', [ReportController::class, 'market'])->name('markets.show');
     Route::get('intelligence', [ReportController::class, 'intelligence'])->name('intelligence');
     Route::get('intelligence/{model}', [ReportController::class, 'model'])->name('intelligence.show');
+    Route::get('events', [MarketEventController::class, 'index'])->name('events');
+    Route::put('events/{candidate}', [MarketEventController::class, 'update'])->whereUuid('candidate')->name('events.update');
     Route::get('access', [ReportController::class, 'access'])->name('access');
     Route::get('archives', [ArchiveController::class, 'index'])->name('archives');
     Route::post('archives/archive', [ArchiveController::class, 'archive'])->middleware('throttle:6,1')->name('archives.archive');

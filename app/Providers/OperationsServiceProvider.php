@@ -10,6 +10,7 @@ use App\Domain\Operations\TrustedProxyConfiguration;
 use App\Models\CoinGeckoMarketMapping;
 use App\Models\Exchange;
 use App\Models\Market;
+use App\Models\MarketEventCandidate;
 use App\Models\MarketPreferenceProfile;
 use App\Models\MarketSubscription;
 use App\Models\User;
@@ -79,7 +80,7 @@ class OperationsServiceProvider extends ServiceProvider
         $this->observeAuthentication();
         foreach ([User::class, Exchange::class, Market::class,
             MarketSubscription::class, MarketPreferenceProfile::class,
-            CoinGeckoMarketMapping::class] as $model) {
+            CoinGeckoMarketMapping::class, MarketEventCandidate::class] as $model) {
             $model::observe(RecordObserver::class);
         }
     }
