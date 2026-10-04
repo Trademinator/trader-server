@@ -62,6 +62,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('settings/api-key', [Settings\ApiKeyController::class, 'edit'])->name('settings.api-key.edit');
     Route::post('settings/api-key', [Settings\ApiKeyController::class, 'store'])->middleware('throttle:12,1')->name('settings.api-key.store');
     Route::delete('settings/api-key/expired/{key?}', [Settings\ApiKeyController::class, 'destroyExpired'])->whereUuid('key')->middleware('throttle:30,1')->name('settings.api-key.expired.destroy');
+    Route::delete('settings/api-key/revoked/{key?}', [Settings\ApiKeyController::class, 'destroyRevoked'])->whereUuid('key')->middleware('throttle:30,1')->name('settings.api-key.revoked.destroy');
     Route::delete('settings/api-key/{key}', [Settings\ApiKeyController::class, 'destroy'])->whereUuid('key')->middleware('throttle:30,1')->name('settings.api-key.destroy');
     Route::get('settings/exchange-keys', [Settings\ExchangeCredentialController::class, 'index'])->name('settings.exchange-keys.index');
     Route::put('settings/exchange-keys/{exchange}', [Settings\ExchangeCredentialController::class, 'update'])->whereUuid('exchange')->middleware('throttle:12,1')->name('settings.exchange-keys.update');

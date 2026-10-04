@@ -2,6 +2,9 @@
     @include('markets.guide-styles')
     @include('markets.review-styles')
     <style>
+        [data-candle-training-chart] [data-history-status],
+        [data-candle-training-chart] [data-status],
+        .pair-review > .guide-error[role="alert"] li { white-space:pre-wrap; overflow-wrap:anywhere; }
         .candle-training-buy { color:#087b6b; background:#ecfdf5; }
         .candle-training-hold { color:#475569; background:#f8fafc; }
         .candle-training-sell { color:#b4233b; background:#fff1f2; }

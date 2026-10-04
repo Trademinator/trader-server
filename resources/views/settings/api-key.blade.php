@@ -25,18 +25,32 @@
             <p class="mt-6 text-sm" role="status">
                 {{ trans_choice('{0} No expired Client API keys to delete.|{1} Deleted :count expired Client API key.|[2,*] Deleted :count expired Client API keys.', (int) session('deleted_client_api_key_count', 0)) }}
             </p>
+        @elseif (session('status') === 'api-keys-revoked-deleted')
+            <p class="mt-6 text-sm" role="status">
+                {{ trans_choice('{0} No revoked Client API keys to delete.|{1} Deleted :count revoked Client API key.|[2,*] Deleted :count revoked Client API keys.', (int) session('deleted_client_api_key_count', 0)) }}
+            </p>
         @endif
 
-        @php($expiryCutoff = now())
-        @if ($keys->contains(fn ($key) => $key->expires_at !== null && $key->expires_at->lte($expiryCutoff)))
-            <div class="mt-8 flex flex-wrap items-center gap-4">
-                <x-form method="delete" action="{{ route('settings.api-key.expired.destroy') }}"
-                    :onsubmit="'return window.confirm('.\Illuminate\Support\Js::from(__('Permanently delete all your expired Client API keys? Active keys will not be changed.')).')'">
-                    <x-button>{{ __('Delete expired keys') }}</x-button>
-                </x-form>
-                <p class="guide-help">{{ __('Permanently removes expired keys only. Active keys are kept.') }}</p>
-            </div>
-        @endif
+        @php
+            $expiryCutoff = now();
+            $expiredKeyCount = $keys->filter(fn ($key) => $key->expires_at !== null && $key->expires_at->lte($expiryCutoff))->count();
+            $revokedKeyCount = $keys->filter(fn ($key) => $key->revoked_at !== null)->count();
+        @endphp
+        <div class="mt-8 flex flex-wrap items-center gap-4">
+            <x-form method="delete" action="{{ route('settings.api-key.expired.destroy') }}"
+                :onsubmit="'return window.confirm('.\Illuminate\Support\Js::from(__('Permanently delete all your expired Client API keys? Active keys will not be changed.')).')'">
+                <x-button id="delete-expired-keys" variant="danger" :disabled="$expiredKeyCount === 0" aria-describedby="api-key-cleanup-help">
+                    {{ __('Delete expired keys (:count)', ['count' => $expiredKeyCount]) }}
+                </x-button>
+            </x-form>
+            <x-form method="delete" action="{{ route('settings.api-key.revoked.destroy') }}"
+                :onsubmit="'return window.confirm('.\Illuminate\Support\Js::from(__('Permanently delete all your revoked Client API keys? Active keys will not be changed.')).')'">
+                <x-button id="delete-revoked-keys" variant="danger" :disabled="$revokedKeyCount === 0" aria-describedby="api-key-cleanup-help">
+                    {{ __('Delete revoked keys (:count)', ['count' => $revokedKeyCount]) }}
+                </x-button>
+            </x-form>
+        </div>
+        <p id="api-key-cleanup-help" class="guide-help mt-2">{{ __('Each button deletes only its matching keys. Revoked keys can be deleted even with no expiry. Buttons with a zero count are disabled. Active keys are kept.') }}</p>
 
         <div class="mt-8 w-full overflow-x-auto">
             <table class="w-full text-sm">
@@ -57,7 +71,12 @@
                                     :onsubmit="'return window.confirm('.\Illuminate\Support\Js::from(__('Permanently delete this expired Client API key?')).')'">
                                     <x-button :aria-label="__('Delete expired key: :label', ['label' => $key->label])">{{ __('Delete') }}</x-button>
                                 </x-form>
-                            @elseif (!$key->revoked_at)
+                            @elseif ($key->revoked_at !== null)
+                                <x-form method="delete" action="{{ route('settings.api-key.revoked.destroy', $key->getKey()) }}"
+                                    :onsubmit="'return window.confirm('.\Illuminate\Support\Js::from(__('Permanently delete this revoked Client API key?')).')'">
+                                    <x-button :aria-label="__('Delete revoked key: :label', ['label' => $key->label])">{{ __('Delete') }}</x-button>
+                                </x-form>
+                            @else
                                 <x-form method="delete" action="{{ route('settings.api-key.destroy', $key->getKey()) }}">
                                     <x-button>{{ __('Revoke') }}</x-button>
                                 </x-form>

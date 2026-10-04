@@ -52,7 +52,8 @@ final class CandleTraining
         }
         $snapshot = $this->snapshots->snapshotForRow($manifest, $row);
         if ($snapshot === null) {
-            throw ValidationException::withMessages(['decision_at_ms' => 'That candle no longer matches the current source history and cannot be used for training.']);
+            throw CandleTrainingRecovery::exception($trainer, $manifest, 'decision_at_ms',
+                'That candle no longer matches the current source history and cannot be used for training.');
         }
         $payload = $snapshot->verifiedPayload();
         $rowIndex = array_search($row['decision_at_ms'], array_column($rows, 'decision_at_ms'), true);
@@ -92,7 +93,7 @@ final class CandleTraining
         }
         $snapshot = $this->snapshots->snapshotForRow($manifest, $candidates[array_key_last($candidates)]);
         if ($snapshot === null) {
-            throw ValidationException::withMessages(['before_ms' => 'This history no longer matches the frozen dataset. Choose another dataset or rebuild it.']);
+            throw CandleTrainingRecovery::exception($trainer, $manifest, 'before_ms');
         }
         $series = array_slice(array_values(array_filter($snapshot->verifiedPayload()['series'],
             fn (array $candle): bool => $beforeMs > $candle['time'] * 1000
@@ -120,7 +121,7 @@ final class CandleTraining
         $row = $rows[$nextIndex];
         $snapshot = $this->snapshots->snapshotForRow($manifest, $row);
         if ($snapshot === null) {
-            throw ValidationException::withMessages(['after_ms' => 'This history no longer matches the frozen dataset. Choose another dataset or rebuild it.']);
+            throw CandleTrainingRecovery::exception($trainer, $manifest, 'after_ms');
         }
         $series = array_values(array_filter($snapshot->verifiedPayload()['series'],
             fn (array $candle): bool => $afterMs < $candle['time'] * 1000));
@@ -269,9 +270,8 @@ final class CandleTraining
         $snapshots = $this->snapshots->snapshotsForRows($manifest, array_values($snapshotRows));
         foreach ($snapshotRows as $decision => $_row) {
             if (($snapshots[$decision] ?? null) === null) {
-                throw ValidationException::withMessages([
-                    'changes' => 'A staged candle no longer matches the current source history and cannot be submitted.',
-                ]);
+                throw CandleTrainingRecovery::exception($trainer, $manifest, 'changes',
+                    'A staged candle no longer matches the current source history and cannot be submitted.');
             }
         }
 

@@ -1,6 +1,7 @@
 import { chartTimeOptions, formatTimestamp, subscribeTimeDisplay } from './time-display.js';
 import { chartData, formatPrice } from './market-review-chart.js';
 import { historyPanDirection, mergeCandleHistory } from './candlestick-history.js';
+import { candleTrainingHistoryError } from './candle-training-history-error.js';
 
 const ACTIONS = ['buy', 'hold', 'sell'];
 const LABEL_MILESTONE_TARGET = 750;
@@ -310,7 +311,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store',
                 headers: { Accept: 'application/json' }, signal: historyRequest.signal });
             if (!response.ok || response.redirected) {
-                throw new Error(response.status === 429 ? 'History limit reached. Wait a minute, then retry.' : 'History could not load. Retry or reload this page.');
+                throw new Error(await candleTrainingHistoryError(response));
             }
             const page = await response.json();
             if (!Array.isArray(page.series) || !Array.isArray(page.labels)

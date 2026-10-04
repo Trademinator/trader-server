@@ -91,6 +91,29 @@ class ApiKeyController extends Controller
             ->with('deleted_client_api_key_count', $deleted);
     }
 
+    public function destroyRevoked(Request $request, ActionLog $log, ?string $key = null): RedirectResponse
+    {
+        abort_if($key !== null && ! Str::isUuid($key), 404);
+
+        $query = ClientApiKey::query()->where('user_id', $request->user()->user_id)
+            ->whereNotNull('revoked_at');
+        if ($key !== null) {
+            $query->whereKey($key);
+        }
+
+        $deleted = $query->delete();
+        abort_if($key !== null && $deleted === 0, 404);
+        if ($deleted > 0) {
+            $log->write('client.api_keys_revoked_deleted', [
+                'subject_id' => $request->user()->user_id, 'outcome' => 'completed', 'rows' => $deleted,
+            ]);
+        }
+
+        return redirect()->route('settings.api-key.edit')
+            ->with('status', 'api-keys-revoked-deleted')
+            ->with('deleted_client_api_key_count', $deleted);
+    }
+
     private function expiry(?string $value, ?string $timezone): ?CarbonImmutable
     {
         if ($value === null) {
