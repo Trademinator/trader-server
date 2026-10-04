@@ -1,7 +1,7 @@
 <?php
 
-use App\Traits\Technical;
 use Tests\Support\TickerFixtures;
+use Trademinator\Indicators\Traits\Technical;
 
 function sliceTechnical(): object
 {

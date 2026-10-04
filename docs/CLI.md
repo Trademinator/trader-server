@@ -156,6 +156,7 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 
 - [`trademinator:build-features`](#trademinatorbuild-features) — Replay stored completed candles into versioned, causal M2 features
 - [`trademinator:collect-market-context`](#trademinatorcollect-market-context) — Collect timestamped CoinGecko context for subscribed markets
+- [`trademinator:collect-market-events`](#trademinatorcollect-market-events) — Discover GDELT GKG fork candidates for owner review
 - [`trademinator:create-indicators`](#trademinatorcreate-indicators) — Build M2 indicators and feature vectors from stored completed candles
 - [`trademinator:dispatch-market-features`](#trademinatordispatch-market-features) — Queue M2 feature builds for subscribed markets with selected candle periods
 - [`trademinator:dispatch-market-feeds`](#trademinatordispatch-market-feeds) — Queue due market feeds with at least one active subscription
@@ -166,6 +167,25 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 - [`trademinator:select-candle-period`](#trademinatorselect-candle-period) — Select the shortest sufficiently informative candle period
 - [`trademinator:evaluate-candle-period`](#trademinatorevaluate-candle-period) — Reevaluate shared automatic periods with fee-aware label density
 - [`trademinator:sync-ohlcv`](#trademinatorsync-ohlcv) — Fetch and upsert exchange candles, optionally inspect and repair missing ranges
+
+## trademinator:collect-market-events
+
+Signature: `trademinator:collect-market-events {--force : Reprocess the latest GDELT GKG batch}`
+
+Description: Discover GDELT GKG fork-related event candidates for owner review
+
+No positional arguments. `--force` is a boolean flag, off by default. The command reads the configured GDELT `lastupdate.txt`, downloads and validates the latest GKG batch when its MD5 differs from the last successfully processed batch, and classifies candidate titles. This is the GKG discovery path, not a GDELT DOC search.
+
+`--force` bypasses the unchanged-batch check and reprocesses the latest batch; it does not fetch older batches or disable source-URL deduplication. Candidate rows are inserted or refreshed by source hash, and existing owner decisions are preserved. The run uses active subscriptions to match base symbols and applies `GDELT_MINIMUM_CONFIDENCE` (default `0.45`). Machine confidence is a heuristic for owner review, not a trading instruction or a confirmed event.
+
+Requires outbound access to the configured GDELT feed, writable temporary storage for archive processing, the market-event database migration, and a shared cache supporting atomic locks. `GDELT_ENABLED=false`, an unchanged batch without `--force`, or an already-running collection causes a successful no-op. Collection errors are reported as `GDELT event discovery failed:` and return a failure exit code. The command takes a shared 900-second lock and releases it after processing.
+
+```bash
+php artisan trademinator:collect-market-events
+php artisan trademinator:collect-market-events --force
+```
+
+Scheduled every five minutes with single-server and overlap protection. Processing is performed by the command; it does not dispatch a separate queue job or alter candle indicators, feature calculations, training labels, or owner decisions.
 
 ## trademinator:evaluate-candle-period
 

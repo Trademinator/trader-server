@@ -2,9 +2,9 @@
 
 namespace App\Domain\MarketData;
 
-use App\Traits\TickerManipulation;
+use Trademinator\Indicators\Traits\TickerManipulation;
 
-/** Compatibility adapter; the shareable trait owns all OHLCV normalization. */
+/** Application adapter; the published package owns OHLCV normalization. */
 final class OhlcvNormalizer
 {
     use TickerManipulation;

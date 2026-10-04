@@ -1,6 +1,12 @@
 <?php
 
-use App\Traits\Technical;
+declare(strict_types=1);
+
+use Trademinator\BcMath\PrecisionPolicy;
+use Trademinator\Indicators\Traits\Technical;
+
+use function Trademinator\BcMath\bcabs;
+use function Trademinator\BcMath\bcdec;
 
 function f10Technical(): object
 {
@@ -45,33 +51,34 @@ function f10Calculate(object $technical, array &$rows): void
 }
 
 it('counts decimal strings exactly and optionally ignores only fractional trailing zeroes', function () {
-    $technical = f10Technical();
-
-    expect($technical->bcdec())->toBe(2)
-        ->and($technical->bcdec('100'))->toBe(2)
-        ->and($technical->bcdec('1.230000'))->toBe(6)
-        ->and($technical->bcdec('1.230000', trimTrailingZeros: true))->toBe(2)
-        ->and($technical->bcdec('0.000001230000', trimTrailingZeros: true))->toBe(8)
-        ->and($technical->bcdec('-1.2000', '0.0000456000', trimTrailingZeros: true))->toBe(7)
-        ->and($technical->bcdec('1.2300e-10'))->toBe(14)
-        ->and($technical->bcdec('1.2300e-10', trimTrailingZeros: true))->toBe(12)
-        ->and($technical->bcdec('123456789012345678901234567890.000000000000000000123000', trimTrailingZeros: true))->toBe(21)
-        ->and($technical->bcdec('0.000000000000000000000000', trimTrailingZeros: true))->toBe(2);
+    expect(bcdec([]))->toBe(0)
+        ->and(bcdec(['100']))->toBe(0)
+        ->and(bcdec(['1.230000']))->toBe(6)
+        ->and(bcdec(['1.230000'], trimTrailingZeros: true))->toBe(2)
+        ->and(bcdec(['0.000001230000'], trimTrailingZeros: true))->toBe(8)
+        ->and(bcdec(['-1.2000', '0.0000456000'], trimTrailingZeros: true))->toBe(7)
+        ->and(bcdec(['1.2300e-10']))->toBe(14)
+        ->and(bcdec(['1.2300e-10'], trimTrailingZeros: true))->toBe(12)
+        ->and(bcdec(['123456789012345678901234567890.000000000000000000123000'], trimTrailingZeros: true))->toBe(21)
+        ->and(bcdec(['0.000000000000000000000000'], trimTrailingZeros: true))->toBe(0);
 });
 
 it('rejects an invalid trailing-zero option', function () {
-    expect(fn () => f10Technical()->bcdec('1.2', trimTrailingZeros: 'yes'))
-        ->toThrow(InvalidArgumentException::class);
+    expect(fn () => bcdec(['1.2'], trimTrailingZeros: 'yes'))
+        ->toThrow(TypeError::class);
 });
 
-it('uses the retained exchange constant as a floor and caps calculation scale at 32', function () {
+it('uses the package precision policy floor and caps calculation scale at 32', function () {
     $technical = f10Technical();
+    $policy = $technical->precisionPolicy();
 
-    expect(defined('EXCHANGE_ROUND_DECIMALS'))->toBeTrue()
-        ->and($technical->technical_scale('1.23000000000000000000'))
-        ->toBe(min(32, max(EXCHANGE_ROUND_DECIMALS * 2, 6)))
-        ->and($technical->technical_scale('0.00000000000000000001'))
-        ->toBe(min(32, max(EXCHANGE_ROUND_DECIMALS * 2, 24)))
+    expect($policy)->toBeInstanceOf(PrecisionPolicy::class)
+        ->and($policy->minimumScale)->toBe(16)
+        ->and($policy->guardDigits)->toBe(4)
+        ->and($policy->maximumScale)->toBe(32)
+        ->and($policy->trimTrailingZeros)->toBeTrue()
+        ->and($technical->technical_scale('1.23000000000000000000'))->toBe(16)
+        ->and($technical->technical_scale('0.00000000000000000001'))->toBe(24)
         ->and($technical->technical_scale('0.'.str_repeat('0', 39).'1'))->toBe(32);
 });
 
@@ -170,7 +177,7 @@ it('keeps tiny-price CCI close to the unscaled mathematical result', function ()
         ];
     }
     $key = $technical->cci($rows, 3);
-    $error = $technical->bcabs(bcsub(end($rows)[$key], '100', 32));
+    $error = bcabs(bcsub(end($rows)[$key], '100', 32));
 
     // Four input guard digits leave the repeating mean deviation finite.
     // The CCI must remain near 100, not collapse to zero; this bound allows
@@ -228,8 +235,8 @@ it('does not inflate ordinary recursive scales merely by adding another candle',
     $smma = $technical->smma($rows, 4);
 
     foreach ($rows as $row) {
-        expect($technical->bcdec($row[$ema]))->toBe(16)
-            ->and($technical->bcdec($row[$smma]))->toBe(16);
+        expect(bcdec([$row[$ema]]))->toBe(16)
+            ->and(bcdec([$row[$smma]]))->toBe(16);
     }
 });
 
@@ -254,6 +261,6 @@ it('does not change the process-wide BCMath scale', function () {
     }
 });
 
-it('versions the changed feature calculations separately from m2-v3', function () {
-    expect(\App\Domain\Features\FeatureEngine::VERSION)->toBe('m2-v4');
+it('versions the changed feature calculations separately from the local-trait m2-v4', function () {
+    expect(\App\Domain\Features\FeatureEngine::VERSION)->toBe('m2-v5');
 });

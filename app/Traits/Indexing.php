@@ -2,6 +2,8 @@
 
 namespace App\Traits;
 
+use Trademinator\Indicators\Traits\TickerManipulation;
+
 trait Indexing
 {
     use TickerManipulation;

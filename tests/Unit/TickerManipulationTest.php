@@ -1,6 +1,8 @@
 <?php
 
-use App\Traits\TickerManipulation;
+use Trademinator\Indicators\Traits\TickerManipulation;
+
+use function Trademinator\BcMath\bcconv;
 
 function tickerManipulation(): object
 {
@@ -68,8 +70,8 @@ it('expands scientific notation without narrowing decimal strings through float'
     try {
         ini_set('precision', '5');
         ini_set('serialize_precision', '5');
-        expect($normalizer->bcconv('1.23456789123456789e-7'))->toBe('0.000000123456789123456789');
-        expect($normalizer->bcconv(1.25e-12))->toBe('0.00000000000125');
+        expect(bcconv('1.23456789123456789e-7'))->toBe('0.000000123456789123456789');
+        expect(bcconv(1.25e-12))->toBe('0.00000000000125');
         expect(ini_get('serialize_precision'))->toBe('5');
     } finally {
         ini_set('precision', $oldPrecision);

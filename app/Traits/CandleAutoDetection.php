@@ -2,9 +2,9 @@
 
 namespace App\Traits;
 
-if (! defined('EXCHANGE_ROUND_DECIMALS')) {
-    define('EXCHANGE_ROUND_DECIMALS', 8);
-}
+use Trademinator\Indicators\Traits\Patterns;
+
+use function Trademinator\BcMath\bcconv;
 
 /**
  * Retrospective helpers for M4 Candle Training labels.
@@ -123,9 +123,9 @@ trait CandleAutoDetection
                     continue;
                 }
                 if ($newBottomIndex === null || bccomp(
-                    $this->bcconv($tickers[$candidate]['close']),
-                    $this->bcconv($tickers[$newBottomIndex]['close']),
-                    EXCHANGE_ROUND_DECIMALS * 2
+                    bcconv($tickers[$candidate]['close']),
+                    bcconv($tickers[$newBottomIndex]['close']),
+                    $this->precisionPolicy()->minimumScale
                 ) < 0) {
                     $newBottomIndex = $candidate;
                 }
@@ -247,7 +247,7 @@ trait CandleAutoDetection
     private function candle_auto_prune_trade_actions(array &$tickers, mixed $taker_fee): array
     {
         $minimumMovement = $this->candle_auto_double_taker_fee($taker_fee);
-        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $scale = $this->precisionPolicy()->minimumScale;
         $survivorIndex = null;
 
         foreach (array_keys($tickers) as $index) {
@@ -282,8 +282,8 @@ trait CandleAutoDetection
                 continue;
             }
 
-            $survivorClose = $this->bcconv($tickers[$survivorIndex]['close']);
-            $candidateClose = $this->bcconv($tickers[$index]['close']);
+            $survivorClose = bcconv($tickers[$survivorIndex]['close']);
+            $candidateClose = bcconv($tickers[$index]['close']);
 
             if (bccomp($survivorClose, '0', $scale) <= 0) {
                 unset($tickers[$survivorIndex]['action']);
@@ -313,9 +313,9 @@ trait CandleAutoDetection
     private function candle_auto_same_action_candidate_wins(array $survivor, array $candidate, string $action): bool
     {
         $comparison = bccomp(
-            $this->bcconv($candidate['close']),
-            $this->bcconv($survivor['close']),
-            EXCHANGE_ROUND_DECIMALS * 2,
+            bcconv($candidate['close']),
+            bcconv($survivor['close']),
+            $this->precisionPolicy()->minimumScale,
         );
 
         return $action === 'buy' ? $comparison <= 0 : $comparison >= 0;
@@ -323,8 +323,8 @@ trait CandleAutoDetection
 
     private function candle_auto_double_taker_fee(mixed $taker_fee): string
     {
-        $scale = EXCHANGE_ROUND_DECIMALS * 2;
-        $fee = $this->bcconv($taker_fee);
+        $scale = $this->precisionPolicy()->minimumScale;
+        $fee = bcconv($taker_fee);
         if (bccomp($fee, '0', $scale) < 0 || bccomp($fee, '1', $scale) >= 0) {
             throw new \InvalidArgumentException('Taker fee must be a decimal fraction between zero and one.');
         }

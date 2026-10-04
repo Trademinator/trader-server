@@ -53,7 +53,9 @@ final class GdeltForkClassifier
         }));
 
         $confidence = 0.20;
-        $confidence += $genericFork ? 0.25 : 0.0;
+        // An explicit chain split is fork evidence even without the word "fork".
+        // Award the existing bonus once when either or both phrasings occur.
+        $confidence += ($genericFork || $chainSplit) ? 0.25 : 0.0;
         $confidence += ($hardFork || $chainSplit) ? 0.10 : 0.0;
         $confidence += $upgrade ? 0.25 : 0.0;
         $confidence += $snapshot ? 0.15 : 0.0;

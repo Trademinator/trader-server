@@ -2,6 +2,11 @@
 
 Complete command reference: [CLI.md](CLI.md).
 
+Current package integration: [COMPOSER-PACKAGE-MIGRATION.md](COMPOSER-PACKAGE-MIGRATION.md).
+The older installation notes below describe previous M2 releases. The package
+replacement adds two Composer requirements and uses feature version `m2-v5`;
+follow the integration document for its installation and lockfile steps.
+
 M2 converts M1's stored, completed exchange candles into versioned feature vectors for M3 datasets and M4 KNN. It does not trade, train a model, or change billing. Exchange/CCXT OHLCV remains authoritative. CoinGecko supplies optional, separately timestamped context.
 
 ## Install
@@ -61,8 +66,8 @@ Endpoints and authentication are based on the official CoinGecko API endpoints a
 
 Each feature payload contains:
 
-- `version`: `m2-v4`, identifying the batch-trait formulas, ordering and normalization. F10 removes exchange-scale truncation from true range, typical price and SMA, preserving calculation precision through ATR/ATRP and CCI. `EXCHANGE_ROUND_DECIMALS` is retained; see [F10 scale policy](F10-SCALE-TRUNCATION.md).
-- Existing `m2-v1`, `m2-v2` and `m2-v3` rows may coexist in `market_features`; M2/M3 queries select `FeatureEngine::VERSION`. Rebuilding creates `m2-v4` rows without rewriting the older contracts. Existing frozen datasets stay unchanged; build new datasets for the new version.
+- `version`: `m2-v5`, identifying the published-package implementation and precision contract. Metric definitions, periods, feature ordering and normalization remain unchanged. See [package integration](COMPOSER-PACKAGE-MIGRATION.md).
+- Existing `m2-v1` through `m2-v4` rows may coexist in `market_features`; M2/M3 queries select `FeatureEngine::VERSION`. Rebuilding creates `m2-v5` rows without rewriting older contracts or reusing old-version checkpoints. Existing frozen datasets stay unchanged; build new datasets for the new version.
 - `microtimestamp`: candle opening time in milliseconds; `available_at_ms`: candle closing time.
 - `history_start_ms`: beginning of the uninterrupted candle segment used to seed calculations.
 - `indicators`: named raw technical indicator values, with `null` during warm-up. Trait-backed decimal results are stored as decimal strings so BCMath precision is not lost before normalization.
@@ -104,7 +109,7 @@ Ratios representing fractions are clamped to `[0,1]`. `FeatureEngine::calculateS
 
 ## Timestamp indexing and ordinary indicator slices
 
-`app/Traits/TickerManipulation.php` owns naming, indexing and slicing. `Technical` uses this trait, preserving the user's separation of ticker manipulation from indicator mathematics. There are no database or Laravel dependencies inside either slicing helper.
+`Trademinator\Indicators\Traits\TickerManipulation` from `trademinator/indicators` owns naming, indexing and slicing. `Technical` uses this trait, preserving the user's separation of ticker manipulation from indicator mathematics. There are no database or Laravel dependencies inside either slicing helper.
 
 `normalize_ticker($tickers, true)` turns each CCXT OHLCV row `[milliseconds, open, high, low, close, volume]` into named decimal-string values and keys the **outer** array by integer Unix seconds. For example, timestamp `1790620264123` produces `$tickers[1790620264]['high']`, while `$tickers[1790620264]['microtimestamp']` stays `1790620264123`. `human_date` uses the trait's `YmdHis` format in UTC. Numeric inner keys are removed. With `$reindex = false`, existing outer keys are preserved.
 
@@ -117,7 +122,7 @@ Every production OHLCV request currently goes through `TickerRepository::fetch()
 ```php
 $technical = new class
 {
-    use \App\Traits\Technical;
+    use \Trademinator\Indicators\Traits\Technical;
 };
 
 $technical->normalize_ticker($tickers, true);
@@ -141,7 +146,7 @@ foreach ($technical->ticker_slide(
 
 To continue manually, calculate the full initial prefix, obtain `ticker_slice()` from that calculated prefix, append new **raw** candles using their timestamps, then call `ema()` on that array. Do not edit the retained calculated overlap; a correction to old candles requires replaying the history. A missing mature seed or insufficient window overlap raises an exception rather than emitting an approximation. `period` must cover all indicator lookbacks used by the callback, including dependencies. Parity regression coverage covers the feature-engine methods and EMA24; unrelated legacy indicators have not received a complete new mathematical audit in this update.
 
-SMA retains an exact working sum and publishes at `EXCHANGE_ROUND_DECIMALS`; EMA, Wilder averages and RSI use their explicit higher scales. Default ATR/ATRP use SMMA, while explicit SMA/EMA results have mode-qualified keys (`atrp(14,sma)`, for example) so two methods cannot overwrite each other's cached results.
+SMA retains an exact working sum. Published indicator precision follows the package `PrecisionPolicy` (minimum 16, four guard digits, maximum 32 by default), not the removed exchange constant. Default ATR/ATRP use SMMA, while explicit SMA/EMA results have mode-qualified keys (`atrp(14,sma)`, for example) so two methods cannot overwrite each other's cached results.
 
 ## Time integrity and limitations
 

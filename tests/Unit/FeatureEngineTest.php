@@ -2,8 +2,8 @@
 
 use App\Domain\Features\ContextFeatures;
 use App\Domain\Features\FeatureEngine;
-use App\Traits\Technical;
 use Tests\Support\TickerFixtures;
+use Trademinator\Indicators\Traits\Technical;
 
 function m2Candles(int $count = 80, bool $flat = false): array
 {

@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "e270d84a01053cd158d228cc83a09133",
+    "content-hash": "671492615ab01fd9e4d718ff91ac9935",
     "packages": [
         {
             "name": "amphp/amp",
@@ -8729,6 +8729,103 @@
                 "source": "https://github.com/tijsverkoyen/CssToInlineStyles/tree/v2.4.0"
             },
             "time": "2025-12-02T11:56:42+00:00"
+        },
+        {
+            "name": "trademinator/bcmath",
+            "version": "v0.1.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/Trademinator/bcmath.git",
+                "reference": "8f6ee55f8d240f9883ea31ccc4336be8a284db2e"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/Trademinator/bcmath/zipball/8f6ee55f8d240f9883ea31ccc4336be8a284db2e",
+                "reference": "8f6ee55f8d240f9883ea31ccc4336be8a284db2e",
+                "shasum": ""
+            },
+            "require": {
+                "ext-bcmath": "*",
+                "php": ">=8.2"
+            },
+            "require-dev": {
+                "phpunit/phpunit": "^11.5 || ^12.0"
+            },
+            "type": "library",
+            "autoload": {
+                "files": [
+                    "src/functions.php"
+                ],
+                "psr-4": {
+                    "Trademinator\\BcMath\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "description": "Framework-agnostic BCMath helpers and precision utilities for PHP.",
+            "keywords": [
+                "bcmath",
+                "decimal",
+                "math",
+                "precision"
+            ],
+            "support": {
+                "issues": "https://github.com/Trademinator/bcmath/issues",
+                "source": "https://github.com/Trademinator/bcmath/tree/v0.1.0"
+            },
+            "time": "2026-10-04T11:35:11+00:00"
+        },
+        {
+            "name": "trademinator/indicators",
+            "version": "v0.1.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/Trademinator/indicators.git",
+                "reference": "90521bf48a59e66ab7df3c1216898e3ac0e2a001"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/Trademinator/indicators/zipball/90521bf48a59e66ab7df3c1216898e3ac0e2a001",
+                "reference": "90521bf48a59e66ab7df3c1216898e3ac0e2a001",
+                "shasum": ""
+            },
+            "require": {
+                "ext-bcmath": "*",
+                "ext-ctype": "*",
+                "php": ">=8.2",
+                "trademinator/bcmath": "^0.1.0"
+            },
+            "suggest": {
+                "ccxt/ccxt": "Fetch exchange OHLCV candles to normalize and analyze."
+            },
+            "type": "library",
+            "autoload": {
+                "files": [
+                    "src/functions.php"
+                ],
+                "psr-4": {
+                    "Trademinator\\Indicators\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "description": "Framework-agnostic BCMath technical indicators, candlestick patterns and CCXT OHLCV normalization.",
+            "keywords": [
+                "bcmath",
+                "ccxt",
+                "indicators",
+                "ohlcv",
+                "technical-analysis"
+            ],
+            "support": {
+                "issues": "https://github.com/Trademinator/indicators/issues",
+                "source": "https://github.com/Trademinator/indicators/tree/v0.1.0"
+            },
+            "time": "2026-10-04T12:36:52+00:00"
         },
         {
             "name": "vlucas/phpdotenv",

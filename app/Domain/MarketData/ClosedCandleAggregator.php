@@ -2,14 +2,14 @@
 
 namespace App\Domain\MarketData;
 
-use App\Traits\Bc;
 use InvalidArgumentException;
+
+use function Trademinator\BcMath\bcconv;
+use function Trademinator\BcMath\bcdec;
 
 /** UTC-aligned fixed periods; missing or unfinished buckets are never synthesized. */
 final class ClosedCandleAggregator
 {
-    use Bc;
-
     public function duration(string $period): int
     {
         if (! in_array($period, CandleTimeframe::SUPPORTED, true) || ! preg_match('/^(\d+)([mhd])$/D', $period, $parts)) {
@@ -47,12 +47,12 @@ final class ClosedCandleAggregator
                 $count = 0;
             }
             foreach (['open', 'high', 'low', 'close', 'volume'] as $key) {
-                $raw[$key] = $this->bcconv($raw[$key]);
-                if (bccomp($raw[$key], '0', $this->bcdec($raw[$key])) < ($key === 'volume' ? 0 : 1)) {
+                $raw[$key] = bcconv($raw[$key]);
+                if (bccomp($raw[$key], '0', max(2, bcdec([$raw[$key]]))) < ($key === 'volume' ? 0 : 1)) {
                     throw new InvalidArgumentException('Invalid base candle bounds.');
                 }
             }
-            $scale = $this->bcdec($raw['open'], $raw['close'], $raw['high'], $raw['low']);
+            $scale = max(2, bcdec([$raw['open'], $raw['close'], $raw['high'], $raw['low']]));
             if (bccomp($raw['high'], $raw['low'], $scale) < 0
                 || bccomp($raw['high'], $raw['open'], $scale) < 0 || bccomp($raw['high'], $raw['close'], $scale) < 0
                 || bccomp($raw['low'], $raw['open'], $scale) > 0 || bccomp($raw['low'], $raw['close'], $scale) > 0) {
@@ -63,11 +63,11 @@ final class ClosedCandleAggregator
                 $bar['derived_from'] = $base;
                 $bar['derivation_version'] = 'm4-closed-utc-v1';
             } elseif ($bar !== null && $previous + $baseMs === $timestamp) {
-                $scale = $this->bcdec($bar['high'], $bar['low'], $raw['high'], $raw['low']);
+                $scale = max(2, bcdec([$bar['high'], $bar['low'], $raw['high'], $raw['low']]));
                 $bar['high'] = bccomp($raw['high'], $bar['high'], $scale) > 0 ? $raw['high'] : $bar['high'];
                 $bar['low'] = bccomp($raw['low'], $bar['low'], $scale) < 0 ? $raw['low'] : $bar['low'];
                 $bar['close'] = $raw['close'];
-                $bar['volume'] = bcadd($bar['volume'], $raw['volume'], $this->bcdec($bar['volume'], $raw['volume']));
+                $bar['volume'] = bcadd($bar['volume'], $raw['volume'], max(2, bcdec([$bar['volume'], $raw['volume']])));
             } else {
                 $bar = null;
             }

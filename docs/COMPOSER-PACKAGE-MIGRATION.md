@@ -1,0 +1,138 @@
+# Published mathematics packages — Server integration
+
+This migration replaces local implementations with the published packages. It
+preserves the metric definitions, selected periods, averaging modes, feature
+keys/order, normalization formulas and the historical candle-label pipeline.
+The packages' precision and serialization behavior is authoritative; old
+truncation artifacts are not reintroduced as a compatibility layer.
+
+## Source and dependencies
+
+Audited application source: `Trademinator/trader-server` commit
+`d3bd7924dd57fd9725e32a650be6dca8715c03cc`.
+
+| Package | Pinned release | GitHub commit |
+| --- | --- | --- |
+| `trademinator/bcmath` | `0.1.0` | `8f6ee55f8d240f9883ea31ccc4336be8a284db2e` |
+| `trademinator/indicators` | `0.1.0` | `90521bf48a59e66ab7df3c1216898e3ac0e2a001` |
+
+The exact pins make this initial integration reproducible. Updating either
+package is a separate dependency change with a regression review; Server and
+Client should use the same release and precision configuration.
+
+Package sources and contracts:
+
+- https://github.com/Trademinator/bcmath/tree/v0.1.0
+- https://github.com/Trademinator/indicators/tree/v0.1.0
+- https://github.com/Trademinator/indicators/blob/v0.1.0/docs/MIGRATION.md
+
+## Implementation
+
+The application copies of `Bc.php`, `Technical.php`, `Patterns.php`, and
+`TickerManipulation.php` are deleted from `app/Traits`. No aliases, forwarding
+traits, vendor patches, or copied indicator algorithms replace them.
+
+| Consumer | Replacement |
+| --- | --- |
+| `FeatureEngine` | `Trademinator\Indicators\Traits\Technical`; namespaced `bcdec()` |
+| `OhlcvNormalizer`, `TickerRepository`, existing `Indexing` adapter | `Trademinator\Indicators\Traits\TickerManipulation` |
+| `CandleAutoDetection` | Package `Patterns`; namespaced `bcconv()` |
+| `CandleTraining` | Retains `CandleAutoDetection`; replaces inherited BCMath helper calls with functions |
+| `ClosedCandleAggregator` | Namespaced `bcconv()` and `bcdec()`; no math trait |
+
+The existing `TickerRepository::fetch()` still invokes `normalize_ticker()`
+immediately after each CCXT `fetch_ohlcv()` response. Paging, timestamp indexing,
+closed-candle filtering, gap handling and storage behavior are not rearranged.
+
+The package exposes BCMath helpers as functions, not object methods:
+
+```php
+use function Trademinator\BcMath\bcconv;
+use function Trademinator\BcMath\bcdec;
+use function Trademinator\BcMath\bcstddev;
+
+$decimal = bcconv('1e-20');
+$places = bcdec([$decimal, '1.230000'], trimTrailingZeros: true);
+$deviation = bcstddev($values, sample: false, scale: 16);
+```
+
+`bcdec()` accepts an array and has no artificial minimum. Application validation
+and aggregation sites retain their old `max(2, ...)` floor explicitly, preserving
+such output as integer-volume totals serialized with two decimal places.
+`bcstddev()` is the package name for the old standard-deviation helper; no direct
+application call to that old method remains after the trait deletions.
+
+## Mathematics and precision
+
+EMA keeps its SMA warm-up and `2/(period+1)` recurrence. RSI keeps one Wilder
+smoothing pass. ATR/ATRP continue to default to SMMA and honor explicit SMA/EMA
+modes. CCI retains typical price and mean absolute deviation. Return, volume,
+candle geometry, feature bounding and label/economic-floor formulas are unchanged
+by the consumer patch. Training remains based on historical CLOSE prices; it does
+not acquire order-execution rules or a new ATR profitability threshold.
+
+Precision comes from the package `PrecisionPolicy`: minimum 16, four guard digits,
+maximum 32, and fractional trailing-zero trimming enabled. The two surviving
+application users of `EXCHANGE_ROUND_DECIMALS * 2` now read the policy's minimum
+scale, preserving their default scale of 16. The remaining application definition
+of that global constant is removed. The standalone packages remain independent
+of Laravel and the environment. No process-wide `bcscale()` setting is changed.
+
+The migration does not force one fixed context onto all indicators or scan future
+candles to select earlier precision. Per-instance policy/context APIs remain
+available from the package. Reusing a retained slice after changing its source,
+parameters or precision is still invalid.
+
+Package outputs may differ from the old traits in precision, formatting and
+edge-case handling. These package differences are documented upstream and are
+not hidden by rewriting the package or copying legacy formulas back into Server.
+An omitted extrema scale now appears as `auto` in generated column names, e.g.
+`max(5,high,auto)`. Tests using those names are updated. Mathematical RSI checks
+use the same independently expected values (75 and 600/11) rather than the old
+fixed-scale decimal representation.
+
+## Stored features and checkpoints
+
+`FeatureEngine::VERSION` is `m2-v5`. The feature definitions and schema are not
+redesigned: this version separates outputs and recurrence states generated by
+the published packages from the previous `m2-v4` local-trait implementation.
+Existing feature/checkpoint selection already uses `FeatureEngine::VERSION`.
+
+Old raw candles, feature rows, frozen datasets and models are not deleted or
+rewritten by this patch. Rebuild features and create compatible datasets/models
+for the new version before relying on newly generated intelligence. Do not feed
+an old manually retained checkpoint into the new calculator. Historical M2/F10
+notes describe earlier implementations; this document describes the package
+integration.
+
+No database migration, new cron entry, billing change or new trading rule is
+part of this replacement.
+
+## Install and verify
+
+This patch updates `composer.json`. A resolved Server `composer.lock` is not
+bundled: the authoring environment could not run Composer. Resolve only the two
+new requirements in a development/staging checkout and commit the resulting lock
+file with the source change:
+
+```bash
+composer update trademinator/bcmath trademinator/indicators --no-interaction
+php artisan optimize:clear
+php artisan test --filter='ComposerPackageIntegrationTest|TechnicalPrecisionTest|TechnicalIndicatorsTest|TechnicalSliceTest|TickerManipulationTest|FeatureEngineTest'
+php artisan test
+```
+
+Do not run `composer install` against the old lockfile and expect it to install
+these newly added requirements. After committing the updated lockfile, deployment
+uses the usual `composer install`; restart long-lived workers after a successful
+deployment so they load the new classes and feature version.
+
+The existing numerical, gap, warm-up and slice-invariance tests remain. The added
+`ComposerPackageIntegrationTest` checks package release provenance, absence of
+local algorithm copies, all direct consumer bindings, decimal helpers, integer
+volume serialization, CCXT normalization, tiny-price formulas, causal prefixes
+and batch/slice consistency.
+
+These application tests have not been executed in the authoring container:
+PHP 8.4 is present, but native BCMath and Composer are not. Patch construction and
+syntax validation are not substitutes for executing the application suite.

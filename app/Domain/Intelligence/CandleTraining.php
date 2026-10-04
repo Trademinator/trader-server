@@ -10,16 +10,18 @@ use App\Models\Exchange;
 use App\Models\HumanCandleLabel;
 use App\Models\HumanTrainingSnapshot;
 use App\Models\User;
-use App\Traits\Bc;
 use App\Traits\CandleAutoDetection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
+use function Trademinator\BcMath\bcconv;
+use function Trademinator\BcMath\bcdec;
+
 final class CandleTraining
 {
-    use Bc, CandleAutoDetection;
+    use CandleAutoDetection;
 
     public const ACTIONS = ['buy', 'hold', 'sell'];
 
@@ -380,9 +382,9 @@ final class CandleTraining
     /** @return list<string> */
     private function allowedActions(array $candle): array
     {
-        $open = $this->bcconv($candle['open']);
-        $close = $this->bcconv($candle['close']);
-        $direction = bccomp($close, $open, $this->bcdec($open, $close));
+        $open = bcconv($candle['open']);
+        $close = bcconv($candle['close']);
+        $direction = bccomp($close, $open, max(2, bcdec([$open, $close])));
 
         return match ($direction) {
             -1 => ['buy', 'hold'],

@@ -3,15 +3,18 @@
 namespace App\Domain\Features;
 
 use App\Domain\MarketData\CandleTimeframe;
-use App\Traits\Technical;
 use InvalidArgumentException;
+use Trademinator\Indicators\Traits\Technical;
+
+use function Trademinator\BcMath\bcdec;
 
 /** Causal, versioned features. Raw decimal OHLCV is never overwritten. */
 final class FeatureEngine
 {
     use Technical;
 
-    public const VERSION = 'm2-v4';
+    // Isolate package precision and recurrence state from the local-trait version.
+    public const VERSION = 'm2-v5';
 
     public const KEYS = [
         'trend.ema_3_12', 'trend.direction', 'return.4', 'return.12',
@@ -43,7 +46,7 @@ final class FeatureEngine
         $calculated = $this->calculatedCandles($candles, $period, $cutoffMs, $batchSize, $checkpoint, $checkpointCallback);
         $elapsedCloses = $checkpoint['elapsed_closes'] ?? [];
         $historyStart = $checkpoint['history_start_ms'] ?? null;
-        $scale = EXCHANGE_ROUND_DECIMALS * 2;
+        $scale = $this->precisionPolicy()->minimumScale;
         foreach ($calculated as $candle) {
             $timestamp = $candle['microtimestamp'];
             $count = $candle['__feature_count'];
@@ -224,7 +227,7 @@ final class FeatureEngine
             $normalized = [$row];
             $this->normalize_ticker($normalized);
             $row = $normalized[0];
-            $precision = $this->bcdec($row['low']);
+            $precision = max(2, bcdec([$row['low']]));
             if (bccomp($row['low'], '0', $precision) <= 0 || ! is_finite((float) $row['close'])) {
                 throw new InvalidArgumentException('Invalid candle price bounds.');
             }

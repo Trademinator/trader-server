@@ -9,13 +9,13 @@ use App\Domain\MarketData\ExchangeCredentials;
 use App\Domain\MarketData\TickerHistoryCache;
 use App\Domain\Operations\ActionLog;
 use App\Models\Ticker;
-use App\Traits\TickerManipulation;
 use ccxt\Exchange;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use JasonGuru\LaravelMakeRepository\Repository\BaseRepository;
+use Trademinator\Indicators\Traits\TickerManipulation;
 
 /**
  * Class TickerRepository.

@@ -1,7 +1,7 @@
 <?php
 
-use App\Traits\Patterns;
-use App\Traits\Technical;
+use Trademinator\Indicators\Traits\Patterns;
+use Trademinator\Indicators\Traits\Technical;
 
 function m0IndicatorCandles(int $count = 80): array
 {
@@ -112,8 +112,8 @@ it('honors the requested stochastic and stochastic RSI periods', function () {
     $lastPrice = end($priceCandles);
 
     expect($fastK)->toBe('%k_price(5)')
-        ->and($lastPrice)->toHaveKey('max(5,high,8)')
-        ->and($lastPrice)->toHaveKey('min(5,low,8)');
+        ->and($lastPrice)->toHaveKey('max(5,high,auto)')
+        ->and($lastPrice)->toHaveKey('min(5,low,auto)');
 
     $rsiCandles = m0IndicatorCandles();
     [$rsiFastK] = $technical->sto_rsi($rsiCandles, 5, 3, 3);
@@ -193,8 +193,10 @@ it('uses one Wilder smoothing pass for RSI instead of smoothing averages twice',
 
     $key = m0Technical()->rsi($candles, 3);
 
-    expect($candles[3][$key])->toBe('75.0000000000000019')
-        ->and($candles[4][$key])->toBe('54.5454545454545455');
+    // One Wilder pass gives 75 and 600/11. Check the mathematics rather
+    // than the old fixed-scale serialization of the repeating ratios.
+    expect(bccomp($candles[3][$key], '75', 12))->toBe(0)
+        ->and(bccomp($candles[4][$key], bcdiv('600', '11', 32), 12))->toBe(0);
 });
 
 it('uses Wilder SMMA as the default ATR average while retaining explicit SMA and EMA modes', function () {
