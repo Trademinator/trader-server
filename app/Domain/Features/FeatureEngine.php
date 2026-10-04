@@ -11,7 +11,7 @@ final class FeatureEngine
 {
     use Technical;
 
-    public const VERSION = 'm2-v3';
+    public const VERSION = 'm2-v4';
 
     public const KEYS = [
         'trend.ema_3_12', 'trend.direction', 'return.4', 'return.12',

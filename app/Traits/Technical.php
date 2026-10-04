@@ -10,6 +10,15 @@ trait Technical
 {
     use Bc, TickerManipulation;
 
+    /** F10 calculation precision; exchange/display rounding remains separate. */
+    public function technical_scale(mixed ...$values): int
+    {
+        return min(32, max(
+            EXCHANGE_ROUND_DECIMALS * 2,
+            $this->bcdec(...$values, trimTrailingZeros: true) + 4
+        ));
+    }
+
     public function normalize(&$tickers, $key = 'close', $index = 'close')
     {
         global $debug;
@@ -34,27 +43,38 @@ trait Technical
         return $normalized_key;
     }
 
-    /** True range for one candle. */
+    /** True range for one candle, without exchange-scale truncation. */
     public function technical_true_range_value(mixed $high, mixed $low, mixed $previousClose = null): string
     {
-        $scale = EXCHANGE_ROUND_DECIMALS;
-        $high = (string) $high;
-        $low = (string) $low;
-        $previousClose = $previousClose === null ? $low : (string) $previousClose;
+        $high = $this->bcconv($high);
+        $low = $this->bcconv($low);
+        $previousClose = $previousClose === null ? $low : $this->bcconv($previousClose);
+        $scale = $this->technical_scale($high, $low, $previousClose);
+        $range = bcsub($high, $low, $scale);
 
-        return $this->bcmax(
-            bcsub($high, $low, $scale),
+        // bcmax() still has its legacy scale. Compare at this calculation's
+        // scale so a tiny gap cannot be mistaken for an equal range.
+        foreach ([
             $this->bcabs(bcsub($high, $previousClose, $scale)),
-            $this->bcabs(bcsub($previousClose, $low, $scale))
-        );
+            $this->bcabs(bcsub($previousClose, $low, $scale)),
+        ] as $candidate) {
+            if (bccomp($candidate, $range, $scale) > 0) {
+                $range = $candidate;
+            }
+        }
+
+        return $range;
     }
 
-    /** Typical price for one candle. */
+    /** Typical price for one candle, retaining guard digits for CCI. */
     public function technical_typical_price_value(mixed $high, mixed $low, mixed $close): string
     {
-        $scale = EXCHANGE_ROUND_DECIMALS;
-        $sum = bcadd((string) $high, (string) $low, $scale);
-        $sum = bcadd($sum, (string) $close, $scale);
+        $high = $this->bcconv($high);
+        $low = $this->bcconv($low);
+        $close = $this->bcconv($close);
+        $scale = $this->technical_scale($high, $low, $close);
+        $sum = bcadd($high, $low, $scale);
+        $sum = bcadd($sum, $close, $scale);
 
         return bcdiv($sum, '3', $scale);
     }
@@ -124,12 +144,12 @@ trait Technical
 
             return $key;
         }
-        $scale = EXCHANGE_ROUND_DECIMALS * 2;
         $seed = $this->ticker_seed($tickers, [$key], $period);
         $count = $seed === null ? 0 : $seed['__ticker_position'] - 1;
         $previous = '0';
         $sum = '0';
-        $alpha = bcdiv('2', bcadd((string) $period, '1', $scale), $scale);
+        $alphas = [];
+        $divisor = bcadd((string) $period, '1', 0);
         foreach ($tickers as &$ticker) {
             $count++;
             if ($seed !== null && $this->ticker_cached($ticker, $key)) {
@@ -138,10 +158,17 @@ trait Technical
                 continue;
             }
             $value = $this->bcconv($ticker[$index]);
+            // Retain the recurrence state's precision without adding a fresh
+            // block of guard digits on every candle.
+            $scale = max($this->technical_scale($value), min(32, $this->bcdec(
+                $count <= $period ? $sum : $previous,
+                trimTrailingZeros: true
+            )));
             if ($count <= $period) {
                 $sum = bcadd($sum, $value, $scale);
                 $ticker[$key] = bcdiv($sum, (string) $count, $scale);
             } else {
+                $alpha = $alphas[$scale] ??= bcdiv('2', $divisor, $scale);
                 $delta = bcsub($value, $previous, $scale);
                 $ticker[$key] = bcadd($previous, bcmul($alpha, $delta, $scale), $scale);
             }
@@ -525,7 +552,7 @@ trait Technical
     }
 
     // Simple Moving Average
-    /** Rolling sum stays exact; truncate only the published SMA to its defined scale. */
+    /** Rolling sum stays exact; publish at calculation scale, not exchange scale. */
     public function sma(array &$tickers, int $period = 20, string $index = 'close'): string
     {
         if ($period < 1) {
@@ -533,8 +560,7 @@ trait Technical
         }
         $this->ticker_require_history($tickers, $period - 1);
         $key = 'sma('.$period.','.$index.')';
-        $scale = EXCHANGE_ROUND_DECIMALS;
-        $sumScale = $scale * 2;
+        $sumScale = EXCHANGE_ROUND_DECIMALS * 2;
         $buffer = [];
         $position = 0;
         $sum = '0';
@@ -548,6 +574,9 @@ trait Technical
             $position = ($position + 1) % $period;
             $sum = bcadd($sum, $value, $sumScale);
             if (! $this->ticker_cached($ticker, $key)) {
+                // Only the current window determines precision, not future rows
+                // or a high-precision value that has already left the window.
+                $scale = $this->technical_scale($sum);
                 $ticker[$key] = bcdiv($sum, (string) count($buffer), $scale);
             }
         }
@@ -766,7 +795,6 @@ trait Technical
         }
         $this->ticker_require_history($tickers, $period - 1);
         $key = "md($period, $key1, $key2)";
-        $scale = EXCHANGE_ROUND_DECIMALS * 2;
         $buffer = [];
         foreach ($tickers as &$ticker) {
             $buffer[] = $ticker[$key1];
@@ -776,6 +804,7 @@ trait Technical
             if ($this->ticker_cached($ticker, $key)) {
                 continue;
             }
+            $scale = $this->technical_scale($ticker[$key2], ...$buffer);
             $sum = '0';
             foreach ($buffer as $value) {
                 $sum = bcadd($sum, $this->bcabs(bcsub($value, $ticker[$key2], $scale)), $scale);
@@ -794,11 +823,11 @@ trait Technical
         $average = $this->sma($tickers, $period, $tp);
         $deviation = $this->md($tickers, $period, $tp, $average);
         $key = 'cci('.$period.')';
-        $scale = EXCHANGE_ROUND_DECIMALS * 2;
         foreach ($tickers as &$ticker) {
             if ($this->ticker_cached($ticker, $key)) {
                 continue;
             }
+            $scale = $this->technical_scale($ticker[$tp], $ticker[$average], $ticker[$deviation]);
             $denominator = bcmul($ticker[$deviation], '0.015', $scale);
             $ticker[$key] = bccomp($denominator, '0', $scale) === 0
                 ? '0'
@@ -1041,12 +1070,12 @@ trait Technical
         $average_function = strtolower($average_function);
         $atr = $this->atr($tickers, $period, $average_function);
         $key = 'atrp('.$period.($average_function === 'smma' ? '' : ','.$average_function).')';
-        $scale = EXCHANGE_ROUND_DECIMALS * 2;
         foreach ($tickers as &$ticker) {
             if ($this->ticker_cached($ticker, $key)) {
                 continue;
             }
             $close = $this->bcconv($ticker['close']);
+            $scale = $this->technical_scale($ticker[$atr], $close);
             if (bccomp($close, '0', $scale) === 0) {
                 $close = $this->bcpow10(-EXCHANGE_ROUND_DECIMALS, $scale);
             }
@@ -1065,7 +1094,6 @@ trait Technical
             throw new \InvalidArgumentException('SMMA period must be greater than zero.');
         }
         $key = 'smma('.$period.','.$index.')';
-        $scale = EXCHANGE_ROUND_DECIMALS * 2;
         $seed = $this->ticker_seed($tickers, [$key], $period);
         $count = $seed === null ? 0 : $seed['__ticker_position'] - 1;
         $sum = $previous = '0';
@@ -1078,6 +1106,12 @@ trait Technical
                 continue;
             }
             $value = $this->bcconv($ticker[$index]);
+            // Retain the recurrence state's precision without adding a fresh
+            // block of guard digits on every candle.
+            $scale = max($this->technical_scale($value), min(32, $this->bcdec(
+                $count <= $period ? $sum : $previous,
+                trimTrailingZeros: true
+            )));
             if ($count <= $period) {
                 $sum = bcadd($sum, $value, $scale);
                 $ticker[$key] = bcdiv($sum, (string) $count, $scale);

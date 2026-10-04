@@ -61,8 +61,8 @@ Endpoints and authentication are based on the official CoinGecko API endpoints a
 
 Each feature payload contains:
 
-- `version`: `m2-v3`, identifying the batch-trait formulas, ordering and normalization. The corrected SMA working sum now retains input precision until its published result is truncated.
-- Existing `m2-v1` and `m2-v2` rows may coexist in `market_features`; M2/M3 queries select `FeatureEngine::VERSION`. Rebuilding creates `m2-v3` rows without rewriting the older contracts. Existing frozen datasets stay unchanged; build new datasets for the new version.
+- `version`: `m2-v4`, identifying the batch-trait formulas, ordering and normalization. F10 removes exchange-scale truncation from true range, typical price and SMA, preserving calculation precision through ATR/ATRP and CCI. `EXCHANGE_ROUND_DECIMALS` is retained; see [F10 scale policy](F10-SCALE-TRUNCATION.md).
+- Existing `m2-v1`, `m2-v2` and `m2-v3` rows may coexist in `market_features`; M2/M3 queries select `FeatureEngine::VERSION`. Rebuilding creates `m2-v4` rows without rewriting the older contracts. Existing frozen datasets stay unchanged; build new datasets for the new version.
 - `microtimestamp`: candle opening time in milliseconds; `available_at_ms`: candle closing time.
 - `history_start_ms`: beginning of the uninterrupted candle segment used to seed calculations.
 - `indicators`: named raw technical indicator values, with `null` during warm-up. Trait-backed decimal results are stored as decimal strings so BCMath precision is not lost before normalization.

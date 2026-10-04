@@ -99,7 +99,7 @@ it('keeps the full precision of a running sum before publishing its SMA', functi
 
     $key = sliceTechnical()->sma($source, 2, 'signal');
 
-    expect(array_column($source, $key))->toBe(['1.00000001', '1.00000002', '1.00000002']);
+    expect(array_column($source, $key))->toBe(['1.0000000190000000', '1.0000000200000000', '1.0000000200000000']);
 });
 
 it('keeps alternate ATR averaging modes separate on the same candle array', function () {

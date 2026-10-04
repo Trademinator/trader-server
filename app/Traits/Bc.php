@@ -10,14 +10,36 @@ if (! defined('EXCHANGE_ROUND_DECIMALS')) {
 
 trait Bc
 {
+    /**
+     * Maximum decimal places, retaining the historical minimum of two.
+     * Use bcdec(...$values, trimTrailingZeros: true) to ignore fractional padding.
+     * The named option is captured by the variadic parameter, so existing
+     * single-value and multiple-value calls keep their meaning.
+     */
     public function bcdec(...$numbers): int
     {
+        $trimTrailingZeros = $numbers['trimTrailingZeros'] ?? false;
+        unset($numbers['trimTrailingZeros']);
+        if (! is_bool($trimTrailingZeros)) {
+            throw new InvalidArgumentException('bcdec trimTrailingZeros must be a boolean.');
+        }
         $dec = 2;
 
         foreach ($numbers as $number) {
-            $value = (string) $number;
-            $dot = strrchr($value, '.');
-            $dec = max($dot === false ? 0 : strlen(substr($dot, 1)), $dec);
+            // Normalized decimal strings need only a string scan. Expand
+            // exponent notation (and already-float input) only when necessary.
+            $value = is_float($number) || (is_string($number) && strpbrk($number, 'eE') !== false)
+                ? $this->bcconv($number)
+                : (string) $number;
+            $dot = strpos($value, '.');
+            if ($dot === false) {
+                continue;
+            }
+            $fraction = substr($value, $dot + 1);
+            if ($trimTrailingZeros) {
+                $fraction = rtrim($fraction, '0');
+            }
+            $dec = max(strlen($fraction), $dec);
         }
 
         return $dec;
