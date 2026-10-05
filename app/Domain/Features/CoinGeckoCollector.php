@@ -45,30 +45,42 @@ final class CoinGeckoCollector
             ])
             ->all();
 
-        $hourStart = intdiv((int) floor(microtime(true) * 1000), 3600000) * 3600000;
-        $mappings = array_values(array_filter($mappings, fn ($mapping): bool => ! DB::table('market_context_snapshots')
-            ->where('coin_id', $mapping['id'] ?? '')
-            ->where('vs_currency', strtolower($mapping['vs_currency'] ?? ''))
-            ->where('observed_at_ms', '>=', $hourStart)
-            ->exists()));
+        return $this->collectMappings($mappings);
+    }
+
+    public function fetchForMapping(CoinGeckoMarketMapping $mapping): int
+    {
+        if (! config('features.coingecko.enabled')) {
+            throw new RuntimeException('Set COINGECKO_ENABLED=true before fetching context.');
+        }
+        if (! config('features.coingecko.api_key')) {
+            throw new RuntimeException('Set COINGECKO_API_KEY before fetching context.');
+        }
+        if ($mapping->status !== 'resolved' || ! $mapping->coin_id || ! $mapping->vs_currency) {
+            throw new RuntimeException('A resolved CoinGecko mapping is required.');
+        }
+        $mapping->loadMissing('market');
+
+        return $this->collectMappings([[
+            'id' => $mapping->coin_id,
+            'vs_currency' => strtolower((string) $mapping->vs_currency),
+            'category' => $mapping->category,
+            'symbol' => $mapping->market?->symbol,
+        ]], force: true);
+    }
+
+    private function collectMappings(array $mappings, bool $force = false): int
+    {
+        $hourStart = intdiv(now()->getTimestampMs(), 3600000) * 3600000;
+        if (! $force) {
+            $mappings = array_values(array_filter($mappings, fn ($mapping): bool => ! DB::table('market_context_snapshots')
+                ->where('coin_id', $mapping['id'] ?? '')
+                ->where('vs_currency', strtolower($mapping['vs_currency'] ?? ''))
+                ->where('observed_at_ms', '>=', $hourStart)
+                ->exists()));
+        }
         if ($mappings === []) {
             return 0;
-        }
-
-        $global = $this->client->get('/global')['data'] ?? null;
-        if (! is_array($global) || ! isset($global['updated_at']) || abs(time() - (int) $global['updated_at']) > config('features.coingecko.max_age_seconds')) {
-            throw new RuntimeException('Missing or stale CoinGecko global data.');
-        }
-
-        $categories = [];
-        $categoryExpires = [];
-        if (array_filter(array_column($mappings, 'category'))) {
-            foreach ($this->client->get('/coins/categories') as $category) {
-                if (isset($category['id'], $category['updated_at']) && abs(time() - strtotime($category['updated_at'])) <= config('features.coingecko.max_age_seconds')) {
-                    $categories[$category['id']] = $category['market_cap_change_24h'] ?? null;
-                    $categoryExpires[$category['id']] = (strtotime($category['updated_at']) + config('features.coingecko.max_age_seconds')) * 1000;
-                }
-            }
         }
 
         $groups = [];
@@ -79,6 +91,22 @@ final class CoinGeckoCollector
                 throw new RuntimeException('CoinGecko mappings require a coin ID and the exact spot quote currency.');
             }
             $groups[$currency][] = $mapping['id'];
+        }
+
+        $global = $this->client->get('/global')['data'] ?? null;
+        if (! is_array($global) || ! isset($global['updated_at']) || abs(now()->getTimestamp() - (int) $global['updated_at']) > config('features.coingecko.max_age_seconds')) {
+            throw new RuntimeException('Missing or stale CoinGecko global data.');
+        }
+
+        $categories = [];
+        $categoryExpires = [];
+        if (array_filter(array_column($mappings, 'category'))) {
+            foreach ($this->client->get('/coins/categories') as $category) {
+                if (isset($category['id'], $category['updated_at']) && abs(now()->getTimestamp() - strtotime($category['updated_at'])) <= config('features.coingecko.max_age_seconds')) {
+                    $categories[$category['id']] = $category['market_cap_change_24h'] ?? null;
+                    $categoryExpires[$category['id']] = (strtotime($category['updated_at']) + config('features.coingecko.max_age_seconds')) * 1000;
+                }
+            }
         }
 
         $saved = 0;
@@ -92,23 +120,37 @@ final class CoinGeckoCollector
                     'sparkline' => 'false',
                 ]);
                 foreach ($coins as $coin) {
-                    if (! in_array($coin['id'] ?? null, $batch, true) || ! isset($coin['last_updated']) || abs(time() - strtotime($coin['last_updated'])) > config('features.coingecko.max_age_seconds')) {
+                    if (! in_array($coin['id'] ?? null, $batch, true) || ! isset($coin['last_updated']) || abs(now()->getTimestamp() - strtotime($coin['last_updated'])) > config('features.coingecko.max_age_seconds')) {
                         continue;
                     }
-                    $at = (int) floor(microtime(true) * 1000); // Availability is receipt time, never provider time.
+                    $at = now()->getTimestampMs(); // Availability is receipt time, never provider time.
                     $history = DB::table('market_context_snapshots')->where('coin_id', $coin['id'])->where('vs_currency', $currency)
-                        ->where('observed_at_ms', '<', $at)->orderByDesc('observed_at_ms')->limit(168)->get();
+                        ->where('observed_at_ms', '<', intdiv($at, 3600000) * 3600000)
+                        ->orderByDesc('observed_at_ms')->orderByDesc('snapshot_id')->lazy(168);
                     $activity = FeatureEngine::ratio($coin['total_volume'] ?? null, $coin['market_cap'] ?? null);
                     $ratios = [];
                     $priorDominance = null;
+                    $hours = [];
                     foreach ($history as $row) {
-                        $old = json_decode($row->payload, true, flags: JSON_THROW_ON_ERROR);
+                        $old = null;
+                        if ($priorDominance === null && $row->observed_at_ms <= $at - 86400000 && $row->observed_at_ms >= $at - 86400000 - 7200000) {
+                            $old = json_decode($row->payload, true, flags: JSON_THROW_ON_ERROR);
+                            $priorDominance = $old['global']['market_cap_percentage']['btc'] ?? null;
+                        }
+                        $hour = intdiv((int) $row->observed_at_ms, 3600000);
+                        if (isset($hours[$hour])) {
+                            continue;
+                        }
+                        // Forced refreshes must not create fake hourly history or
+                        // crowd the 24-hour dominance anchor out of the window.
+                        $hours[$hour] = true;
+                        $old ??= json_decode($row->payload, true, flags: JSON_THROW_ON_ERROR);
                         $r = FeatureEngine::ratio($old['coin']['total_volume'] ?? null, $old['coin']['market_cap'] ?? null);
                         if ($r !== null) {
                             $ratios[] = $r;
                         }
-                        if ($priorDominance === null && $row->observed_at_ms <= $at - 86400000 && $row->observed_at_ms >= $at - 86400000 - 7200000) {
-                            $priorDominance = $old['global']['market_cap_percentage']['btc'] ?? null;
+                        if (count($hours) >= 168) {
+                            break;
                         }
                     }
                     $deviation = null;

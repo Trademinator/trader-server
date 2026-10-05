@@ -156,6 +156,7 @@ In signatures below, `{name}` is required, `{name?}` is optional, `{--flag}` is 
 
 - [`trademinator:build-features`](#trademinatorbuild-features) — Replay stored completed candles into versioned, causal M2 features
 - [`trademinator:collect-market-context`](#trademinatorcollect-market-context) — Collect timestamped CoinGecko context for subscribed markets
+- [`trademinator:fetch-market-context`](#trademinatorfetch-market-context) — Fetch one mapped coin/quote immediately without a queue
 - [`trademinator:collect-market-events`](#trademinatorcollect-market-events) — Discover GDELT GKG fork candidates for owner review
 - [`trademinator:create-indicators`](#trademinatorcreate-indicators) — Build M2 indicators and feature vectors from stored completed candles
 - [`trademinator:dispatch-market-features`](#trademinatordispatch-market-features) — Queue M2 feature builds for subscribed markets with selected candle periods
@@ -321,6 +322,23 @@ php artisan trademinator:collect-market-context
 ```
 
 See [M2 setup](M2-README.md#coingecko-setup).
+
+## trademinator:fetch-market-context
+
+Description: Fetch fresh CoinGecko context immediately for one mapped coin/quote or exchange/pair
+
+Signature: `trademinator:fetch-market-context {--coin=} {--vs-currency=} {--exchange=} {--symbol=}`
+
+Runs the CoinGecko requests and saves the snapshot in the current CLI process. Nothing is queued. Supply exactly one complete selector: `--coin` (the CoinGecko ID, not ticker) plus `--vs-currency` (the exact quote), or `--exchange` (CCXT class) plus `--symbol` (BASE/QUOTE). All four options default to unset; incomplete or mixed selectors fail. The selected market or coin/quote must already have a resolved CoinGecko mapping; an active subscription is not required for this manual fetch. It does not resolve unrelated mappings or collect unrelated coins. Pair selection uses the mapped asset and exact quote, not an exchange listing on CoinGecko.
+
+```bash
+php artisan trademinator:fetch-market-context --exchange=bitso --symbol='ATOM/USD'
+php artisan trademinator:fetch-market-context --coin=cosmos --vs-currency=usd
+```
+
+Every invocation requests fresh context even if a snapshot exists in the current UTC hour; no `--force` option is needed. Requires `COINGECKO_ENABLED=true`, `COINGECKO_API_KEY`, and the same cache lock used by `collect-market-context`. An occupied lock, invalid selection/configuration, provider failure, or absent/stale coin data returns failure. Global and category endpoints are shared dependencies of this one coin's context. Existing snapshots remain unchanged; new snapshots use receipt time and cannot fill historical context gaps. Repeated manual refreshes count at most once per completed UTC hour in the activity history, preserving its warm-up and the 24-hour dominance lookup.
+
+Prints the selected coin/quote before fetching and the saved count after completion. A saved snapshot may still have null provider fields or context warm-up values. In particular, an uncapped asset can still lack `context.circulating_fraction`, whose current definition is circulating supply divided by maximum supply. This command does not rebuild M2 features or train KNN. It has no schedule; the existing hourly `collect-market-context` schedule is unchanged. The existing collection command also runs directly when invoked from the CLI, but targets active subscriptions and skips already-collected hours.
 
 ## trademinator:create-indicators
 
@@ -947,7 +965,7 @@ Side effects: atomically replaces one shared cached discovery snapshot after suc
 php artisan trademinator:refresh-market-discovery
 ```
 
-This is separate from `trademinator:collect-market-context`, whose subscription-driven, timestamped snapshots remain the only CoinGecko context eligible for M2 training. See [M4.2 operating notes](CRONTABS.md#m42-dashboard-recording-and-discovery).
+This is separate from `trademinator:collect-market-context` and the targeted `trademinator:fetch-market-context`, whose timestamped snapshots supply CoinGecko context eligible for M2 training. See [M4.2 operating notes](CRONTABS.md#m42-dashboard-recording-and-discovery).
 
 ## trademinator:archive-tickers
 
