@@ -55,6 +55,21 @@ it('builds ordinary intelligence with both optional human modes disabled and no 
         ->and($report['status'])->toBe('ready');
 });
 
+it('excludes disabled Trend guidance while leaving Candle guidance available', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    config(['human_training.enabled' => true, 'human_training.trend_enabled' => false,
+        'human_training.candle_enabled' => true]);
+    $manifest = IntelligenceFixtures::snapshot();
+
+    $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+
+    expect($report['human_guidance']['status'])->toBe('disabled');
+    expect($report['human_guidance']['influence'])->toBeFalse();
+    expect($report['human_keys'])->toBe([]);
+    expect($report['candle_guidance']['status'])->toBe('insufficient_candle_labels');
+    expect($report['status'])->toBe('ready');
+});
+
 it('records exact dirty ranges without consuming later revisions', function () {
     $market = recoveryMarket(User::factory()->create());
     $changes = app(HistoryChanges::class);

@@ -3,7 +3,7 @@
 return [
     'enabled' => env('HUMAN_TRAINING_ENABLED', true),
     // Both are optional enhancements, never model-readiness prerequisites.
-    'trend_enabled' => env('HUMAN_TREND_TRAINING_ENABLED', true),
+    'trend_enabled' => env('HUMAN_TREND_TRAINING_ENABLED', false),
     'candle_enabled' => env('HUMAN_CANDLE_TRAINING_ENABLED', true),
     'auxiliary_max_seconds' => 90,
     'publication_reserve_seconds' => 10,

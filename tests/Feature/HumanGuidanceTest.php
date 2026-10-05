@@ -20,7 +20,7 @@ beforeEach(function () {
         'intelligence.knn.min_train_size' => 36, 'intelligence.knn.test_size' => 12,
         'intelligence.knn.min_validation_rows' => 5, 'intelligence.knn.min_directional_predictions' => 1,
         'intelligence.patterns.enabled' => false, 'human_training.min_samples' => 20,
-        'human_training.enabled' => true]);
+        'human_training.enabled' => true, 'human_training.trend_enabled' => true]);
 });
 
 afterEach(function () {

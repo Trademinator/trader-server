@@ -23,8 +23,9 @@ that normally cache configuration should regenerate that cache after editing
 
 ## Independent, optional enhancements
 
-The existing master switch remains supported. Add the following to `.env` to
-turn off the Trend enhancement while retaining the Candle enhancement:
+Trend Training is excluded from model scoring by default; Candle Training stays
+enabled. The existing master switch remains supported. Use the following `.env`
+settings, replacing an existing `HUMAN_TREND_TRAINING_ENABLED=true` if present:
 
 ```dotenv
 HUMAN_TRAINING_ENABLED=true
@@ -32,8 +33,8 @@ HUMAN_TREND_TRAINING_ENABLED=false
 HUMAN_CANDLE_TRAINING_ENABLED=true
 ```
 
-The two new flags default to true to preserve existing installations. Either or
-both can be disabled independently. These flags control model enhancement; they
+Trend defaults to false and Candle defaults to true. Either mode can be configured
+independently. These flags control model enhancement; they
 do not erase saved reviews. The master switch retains its existing access behavior.
 The base model needs no human reviews. The 50-opinion threshold is an optional
 auxiliary fitting requirement, not a market-readiness prerequisite.
