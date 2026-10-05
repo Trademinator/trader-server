@@ -28,6 +28,7 @@ The Server collects canonical exchange candles, computes features, trains and va
 | **M5 — Decisions, paper trading and Client integration** | **Implemented** | Versioned subscription-gated Client API, hashed multi-key authentication, explicit per-market trading/paper selection, expiring risk-gated decision context, cost-aware paper evaluation, immutable idempotent execution/fill reports and dashboard provenance. The Server still does not hold exchange credentials or place orders. |
 | M6 — Commercial access | Planned | Stripe/PayPal billing, renewals, entitlements and limits through the existing market-subscription entitlement boundary. Purchasing a plan must never enable trading. |
 | **M7 — Optimizations and internal data API** | **In progress** | Performance work that preserves model/data semantics: one canonical OHLCV read gateway, bounded shared Redis history caching, SQL-visible generated metadata for JSON predicates, KNN hot-path optimization and profiling-led indicator work. |
+| **M8 — Distributed platform** | **Planned** | Scale the existing Server across configurable web, API, scheduler and worker roles, with shared state, durable artifacts, coordinated jobs and independent workload capacity. Start with one project; evaluate a separate API project only when a demonstrated boundary justifies it. |
 
 ## M7 acceptance gates — optimizations and internal data API
 
@@ -40,6 +41,31 @@ The Server collects canonical exchange candles, computes features, trains and va
 7. **Internal API review gate:** regression coverage scans application/page OHLCV consumers and rejects reintroduction of direct `Ticker::query()` payload reads. New features needing OHLCV must route through the repository gateway.
 8. **KNN hot path:** P2 validates/casts vectors once before repeated scans and uses bounded early distance rejection without changing vector values, distance semantics or model version.
 9. **Indicator optimization is profiling-led:** P1 rolling-indicator work remains deferred until measurements show it is material. Exact BCMath technical calculations remain unchanged unless a separately versioned numerical contract is approved.
+
+## M8 acceptance gates — distributed platform
+
+**Status: planned.** The initial production home is `server.trademinator.com`, serving the existing web interface and Client API together. This milestone introduces deployment roles; those controls are not implemented by this roadmap update.
+
+**Recommended initial architecture:** deploy the same Laravel project and compatible release to each node, with explicit, composable roles selecting the work that node performs. A dedicated API node can run the existing project without serving the dashboard or processing collection/training jobs. Sharing a codebase keeps authentication, subscription entitlements, questionnaire risk, signal semantics and migrations consistent while allowing different workloads to scale separately.
+
+| Proposed node role | Responsibility |
+| --- | --- |
+| Web | Dashboard, account/owner administration and human-training interfaces. |
+| API | Existing authenticated, versioned Client API and its request/reporting operations. |
+| Scheduler | Dispatch shared scheduled work with cluster-wide overlap and election locks. |
+| Worker | Drain only its configured queues; initially `default`, `history`, `intelligence` and `archive`, with independent worker capacity and resource budgets. |
+
+One machine may combine all roles; additional machines may combine any supported subset. These are deployment roles, separate from user/owner authorization roles.
+
+1. **Explicit role enforcement:** define validated, configuration-cache-safe node settings and a documented combined-node default. Enforce roles at HTTP route registration, scheduled-work entry points and worker startup, not merely by hiding navigation. Reject invalid role/queue combinations. Separate node workload selection from platform feature flags: an API node that does not train must still be able to serve enabled, validated intelligence.
+2. **Stable public endpoints:** retain `server.trademinator.com` for the current combined application. A future `api.trademinator.com` may initially reach the same deployment and later a dedicated API pool without changing API contracts. `console.trademinator.com` is optional for a future separate web interface. API-only nodes expose the intended API and health routes, with existing authentication, subscription checks, revocation, throttling and response expiry; owner/web routes remain unavailable there. Define host routing, generated URLs, session-cookie scope and a compatibility period for existing Clients before moving an endpoint.
+3. **Shared state and durable files:** use the same authoritative database, persistent queue backend, shared sessions where required, and shared atomic-lock-capable cache with consistent namespaces. Preserve the encryption key wherever existing encrypted state is consumed. Models, research datasets, cold archives and portable import/export staging must be accessible to every role that needs them through durable shared storage; the database alone is insufficient. Preserve checksums and atomic publication. Rebuild local configuration/runtime metadata per node and grant only the required storage and secret access.
+4. **Coordinated background work:** retain the cron-driven worker model in [CRONTABS.md](CRONTABS.md), including finite runs, memory budgets and retry reservations longer than job timeouts. Multiple scheduler/worker nodes must preserve database leases, unique generation keys, idempotent writes and shared locks. Keep node-local CCXT metadata refresh distinct from shared scheduler dispatch. Enforce applicable exchange/provider rate budgets across the worker pool; adding hosts must not accidentally multiply requests against a shared quota.
+5. **Independent capacity:** isolate CPU-heavy training/backfill/archive work from web/API capacity and measure queue delay separately from request latency. Review the current shared intelligence queue before promising timely signal recording under training load. An API request must not synchronously rebuild history or train a model. Unavailable dependencies, missing artifacts and stale evidence retain explicit unavailable/abstention behavior; loss of shared coordination must not silently fall back to independent local locks.
+6. **Deployment and operations:** document role-specific environment examples, crons, storage mounts, permissions, health/readiness checks and node/queue observability. Coordinate migrations once per release, compatible code/job/artifact versions, worker draining and rollback. Include the desktop-to-server cutover: stop old dispatchers, finish active work, pause writes, complete the final file sync, verify dependencies/artifacts, then enable the new roles. A host move alone must not require model retraining.
+7. **Acceptance evidence:** verify equivalent API authorization and results on combined and API-only nodes, unavailable routes/workloads on disabled roles, duplicate-safe scheduling with two nodes, worker failure/redelivery, and readable checksum-verified artifacts across nodes. Confirm adding a worker preserves rate limits and show request latency/queue-delay measurements. Update [CLI.md](CLI.md) and [CRONTABS.md](CRONTABS.md) alongside implementation changes.
+
+**Separate API project decision:** keep extraction open rather than making it a prerequisite for distribution. Revisit it when independent release cadence, dependency footprint, a stronger trust boundary or measured operating constraints justify the extra maintenance. Define ownership of authentication, entitlements, shared domain logic, database migrations and API compatibility before extracting anything; avoid copying business rules into a second project.
 
 ## M4.2 acceptance and implementation
 
