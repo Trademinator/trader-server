@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\Intelligence\ValidationGateCalibration;
 use App\Domain\Research\DatasetStore;
+use App\Helpers\Decimal;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -242,6 +243,6 @@ final class AnalyzeValidationGates extends Command
 
     private function percent(float $value): string
     {
-        return number_format($value * 100, 1).'%';
+        return Decimal::format($value * 100, 1).'%';
     }
 }

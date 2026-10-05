@@ -17,9 +17,9 @@
             <p class="guide-notice">{{ $explanation }}</p>
             <div class="review-metrics">
                 <div class="review-metric">Action<strong>{{ $signal['action'] === 'hodl' ? 'HOLD' : strtoupper($signal['action']) }}</strong></div>
-                <div class="review-metric">Confidence<strong>{{ number_format($signal['confidence'] * 100, 1) }}%</strong></div>
+                <div class="review-metric">Confidence<strong>{{ \App\Helpers\Decimal::format($signal['confidence'] * 100, 1) }}%</strong></div>
                 <div class="review-metric">Market state<strong>{{ ucwords(str_replace('_', ' ', $signal['regime'] ?? 'neutral')) }}</strong></div>
-                <div class="review-metric">Effective neighbors<strong>{{ number_format($signal['effective_neighbors'], 1) }}</strong></div>
+                <div class="review-metric">Effective neighbors<strong>{{ \App\Helpers\Decimal::format($signal['effective_neighbors'], 1) }}</strong></div>
             </div>
             @if (isset($signal['decision_at_ms']))
                 <p>Closed-candle decision time: <x-display-time :value="$signal['decision_at_ms']" unit="milliseconds" /></p>
@@ -45,17 +45,17 @@
                                 $component = $signal['scoring']['components'][$key];
                             @endphp
                             <tr><th scope="row">{{ $label }}</th><td>{{ $component['reason'] === 'supported' ? strtoupper($component['action']) : 'Abstaining' }}</td>
-                                <td>{{ implode(' / ', array_map(fn ($score) => number_format($score * 100, 1).'%', $component['scores'])) }}</td>
-                                <td>{{ number_format($signal['scoring']['configured_weights'][$key], 2) }}</td>
-                                <td>{{ number_format($signal['scoring']['effective_weights'][$key] * 100, 1) }}%</td>
+                                <td>{{ implode(' / ', array_map(fn ($score) => \App\Helpers\Decimal::format($score * 100, 1).'%', $component['scores'])) }}</td>
+                                <td>{{ \App\Helpers\Decimal::format($signal['scoring']['configured_weights'][$key], 2) }}</td>
+                                <td>{{ \App\Helpers\Decimal::format($signal['scoring']['effective_weights'][$key] * 100, 1) }}%</td>
                                 <td>{{ str_replace('_', ' ', $component['reason']) }}</td></tr>
                         @endforeach
                         </tbody>
                     </table></div>
                 @endif
-                <p>{{ number_format($report['candle_guidance']['samples'] ?? 0) }} eligible annotated candles · {{ str_replace('_', ' ', $report['candle_guidance']['status']) }}</p>
+                <p>{{ \App\Helpers\Decimal::format($report['candle_guidance']['samples'] ?? 0) }} eligible annotated candles · {{ str_replace('_', ' ', $report['candle_guidance']['status']) }}</p>
                 @if(isset($report['candle_guidance']['holdout']))
-                    <p>Human Candle held-out directional annotation agreement: {{ number_format($report['candle_guidance']['holdout']['directional_annotation_agreement'] * 100, 1) }}%.</p>
+                    <p>Human Candle held-out directional annotation agreement: {{ \App\Helpers\Decimal::format($report['candle_guidance']['holdout']['directional_annotation_agreement'] * 100, 1) }}%.</p>
                 @endif
                 <p class="guide-help">An abstaining model receives zero effective weight. Supported HOLD votes remain evidence. Human Trend is excluded. Social/news scoring is not connected; CoinGecko is context inside the automatic model. Scores are not probabilities of profit, and neighbor counts are not added across models.</p>
                 @can('train-intelligence')<a href="{{ route('human-training.index', ['exchange' => $item->market->exchange->class, 'symbol' => $item->market->symbol, 'period' => $period]) }}">Open human training</a>@endcan
@@ -74,7 +74,7 @@
                             <tr>
                                 <td>{{ ucwords(str_replace('_', ' ', $pattern['type'])) }}</td>
                                 <td><x-intelligence-progress label="Pattern candles" :value="$pattern['stage']" :target="$pattern['length']" /></td>
-                                <td>{{ $pattern['completion_probability'] === null ? 'Insufficient validated history' : number_format($pattern['completion_probability'] * 100, 1).'%' }}</td>
+                                <td>{{ $pattern['completion_probability'] === null ? 'Insufficient validated history' : \App\Helpers\Decimal::format($pattern['completion_probability'] * 100, 1).'%' }}</td>
                             </tr>
                         @endforeach
                         </tbody>
@@ -89,41 +89,41 @@
                 <dl>
                     <dt>Status</dt><dd>{{ $report['status'] === 'ready' ? 'Validated' : 'Abstaining' }}</dd>
                     <dt>Automatic selected K</dt><dd>{{ $report['k'] ?? 'No eligible value' }}</dd>
-                    <dt>Automatic knowledge rows</dt><dd>{{ number_format($report['knowledge_rows']) }} retained examples</dd>
+                    <dt>Automatic knowledge rows</dt><dd>{{ \App\Helpers\Decimal::format($report['knowledge_rows']) }} retained examples</dd>
                     @if(isset($report['candle_guidance']['knowledge_rows']))
-                        <dt>Human Candle K / knowledge rows</dt><dd>{{ $report['candle_guidance']['k'] }} / {{ number_format($report['candle_guidance']['knowledge_rows']) }}</dd>
+                        <dt>Human Candle K / knowledge rows</dt><dd>{{ $report['candle_guidance']['k'] }} / {{ \App\Helpers\Decimal::format($report['candle_guidance']['knowledge_rows']) }}</dd>
                     @endif
                     @if (isset($report['training_data']['window']))
-                        <dt>History window</dt><dd>{{ number_format($report['training_data']['window']['days']) }} days, starting <x-display-time :value="$report['training_data']['window']['from_ms']" unit="milliseconds" /></dd>
+                        <dt>History window</dt><dd>{{ \App\Helpers\Decimal::format($report['training_data']['window']['days']) }} days, starting <x-display-time :value="$report['training_data']['window']['from_ms']" unit="milliseconds" /></dd>
                     @endif
                     <dt>Training cutoff</dt><dd><x-display-time :value="$report['trained_as_of_ms']" unit="milliseconds" /></dd>
                     @if ($report['holdout'])
-                        <dt>Automatic later-period precision</dt><dd>{{ number_format($report['holdout']['semantic_precision'] * 100, 1) }}%</dd>
-                        <dt>Directional coverage</dt><dd>{{ number_format($report['holdout']['coverage'] * 100, 1) }}%</dd>
-                        <dt>Top/bottom contradictions</dt><dd>{{ number_format($report['holdout']['contradiction_rate'] * 100, 1) }}%</dd>
+                        <dt>Automatic later-period precision</dt><dd>{{ \App\Helpers\Decimal::format($report['holdout']['semantic_precision'] * 100, 1) }}%</dd>
+                        <dt>Directional coverage</dt><dd>{{ \App\Helpers\Decimal::format($report['holdout']['coverage'] * 100, 1) }}%</dd>
+                        <dt>Top/bottom contradictions</dt><dd>{{ \App\Helpers\Decimal::format($report['holdout']['contradiction_rate'] * 100, 1) }}%</dd>
                     @endif
                 </dl>
                 <p class="guide-help">New builds retain every eligible example within the configured history window. The validation minimum does not cap the knowledge pool.</p>
                 @if ($progress['source'])
-                    <p>Dataset schema: <strong>{{ $progress['source']['schema'] }}</strong>. Labeled source rows: <strong>{{ isset($progress['source']['source_rows']) ? number_format($progress['source']['source_rows']) : 'Not recorded' }}</strong>.</p>
+                    <p>Dataset schema: <strong>{{ $progress['source']['schema'] }}</strong>. Labeled source rows: <strong>{{ isset($progress['source']['source_rows']) ? \App\Helpers\Decimal::format($progress['source']['source_rows']) : 'Not recorded' }}</strong>.</p>
                     @if (isset($progress['source']['usable_rows']))
                         <x-intelligence-progress label="Usable KNN history at last training" :value="$progress['source']['usable_rows']" :target="$progress['minimum']" native />
                     @else
                         <p>Usable history after pattern exclusions was not recorded by this older model. Rebuild once to see the exact count.</p>
                     @endif
                     @if (($progress['source']['pattern_excluded_rows'] ?? 0) > 0)
-                        <p>{{ number_format($progress['source']['pattern_excluded_rows']) }} earlier rows were excluded to keep pattern predictions chronological.</p>
+                        <p>{{ \App\Helpers\Decimal::format($progress['source']['pattern_excluded_rows']) }} earlier rows were excluded to keep pattern predictions chronological.</p>
                     @endif
                     @if (($progress['source']['lead_lag_excluded_rows'] ?? 0) > 0)
-                        <p>{{ number_format($progress['source']['lead_lag_excluded_rows']) }} earlier rows were excluded so lead/lag evidence was validated before every downstream training decision.</p>
+                        <p>{{ \App\Helpers\Decimal::format($progress['source']['lead_lag_excluded_rows']) }} earlier rows were excluded so lead/lag evidence was validated before every downstream training decision.</p>
                     @endif
-                    <p class="guide-help">With these model settings, {{ number_format($progress['minimum']) }} contiguous, complete, usable rows permit the minimum validation sample; {{ number_format($progress['full_fold_minimum']) }} permit a full tuning block. These estimates include label purging and the separate 20% holdout. Validation must still pass.</p>
+                    <p class="guide-help">With these model settings, {{ \App\Helpers\Decimal::format($progress['minimum']) }} contiguous, complete, usable rows permit the minimum validation sample; {{ \App\Helpers\Decimal::format($progress['full_fold_minimum']) }} permit a full tuning block. These estimates include label purging and the separate 20% holdout. Validation must still pass.</p>
                     @if (array_sum($progress['source']['skipped'] ?? []) > 0)
                         <details><summary>Rows excluded from the last dataset</summary>
                             <ul class="intelligence-issues">
                                 @foreach ($progress['source']['skipped'] as $reason => $count)
                                     @if ($count > 0)
-                                        <li>{{ ucwords(str_replace('_', ' ', $reason)) }}: {{ number_format($count) }}</li>
+                                        <li>{{ ucwords(str_replace('_', ' ', $reason)) }}: {{ \App\Helpers\Decimal::format($count) }}</li>
                                     @endif
                                 @endforeach
                             </ul>
@@ -179,16 +179,16 @@
                             @if (! empty($performance['started_at']))
                                 <dt>Last model build</dt><dd><x-display-time :value="$performance['started_at']" /></dd>
                             @endif
-                            <dt>Total intelligence build</dt><dd>{{ number_format(($performance['total_ms'] ?? 0) / 1000, 2) }} s</dd>
+                            <dt>Total intelligence build</dt><dd>{{ \App\Helpers\Decimal::format(($performance['total_ms'] ?? 0) / 1000, 2) }} s</dd>
                             @foreach ($stageLabels as $key => $label)
                                 @if (isset($performance['stages'][$key]))
-                                    <dt>{{ $label }}</dt><dd>{{ number_format($performance['stages'][$key] / 1000, 2) }} s</dd>
+                                    <dt>{{ $label }}</dt><dd>{{ \App\Helpers\Decimal::format($performance['stages'][$key] / 1000, 2) }} s</dd>
                                 @endif
                             @endforeach
                             @if (isset($performance['feature_replay']))
-                                <dt>Feature replay</dt><dd>{{ number_format(($performance['feature_replay']['duration_ms'] ?? 0) / 1000, 2) }} s</dd>
-                                <dt>Ticker rows processed</dt><dd>{{ number_format($performance['feature_replay']['rows_processed'] ?? 0) }}</dd>
-                                <dt>Replay chunks</dt><dd>{{ number_format($performance['feature_replay']['chunks'] ?? 0) }}</dd>
+                                <dt>Feature replay</dt><dd>{{ \App\Helpers\Decimal::format(($performance['feature_replay']['duration_ms'] ?? 0) / 1000, 2) }} s</dd>
+                                <dt>Ticker rows processed</dt><dd>{{ \App\Helpers\Decimal::format($performance['feature_replay']['rows_processed'] ?? 0) }}</dd>
+                                <dt>Replay chunks</dt><dd>{{ \App\Helpers\Decimal::format($performance['feature_replay']['chunks'] ?? 0) }}</dd>
                                 <dt>Started from checkpoint</dt><dd>{{ ($performance['feature_replay']['checkpoint_used'] ?? false) ? 'Yes' : 'No' }}</dd>
                             @endif
                         </dl>

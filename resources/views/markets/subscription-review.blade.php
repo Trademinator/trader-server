@@ -6,7 +6,7 @@
             if ($value === null) { return 'Unknown'; }
             if ((float) $value === 0.0) { return '0'; }
             $decimals = min(18, max(1, 8 - (int) floor(log10(abs((float) $value)))));
-            return rtrim(rtrim(number_format((float) $value, $decimals, '.', ','), '0'), '.');
+            return rtrim(rtrim(\App\Helpers\Decimal::format($value, $decimals, '.', ','), '0'), '.');
         };
     @endphp
     <section class="pair-guide pair-review">

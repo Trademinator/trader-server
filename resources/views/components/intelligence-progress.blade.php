@@ -7,10 +7,10 @@
 <div class="intelligence-progress">
     <div class="intelligence-progress-label">
         <span>{{ $label }}</span>
-        <strong>{{ number_format($value, $decimals) }}{{ $suffix }} out of {{ number_format($target, $decimals) }}{{ $suffix }}</strong>
+        <strong>{{ \App\Helpers\Decimal::format($value, $decimals) }}{{ $suffix }} out of {{ \App\Helpers\Decimal::format($target, $decimals) }}{{ $suffix }}</strong>
     </div>
     @if ($native)
-        <progress class="intelligence-native-progress" value="{{ $bounded }}" max="{{ $maximum }}" aria-label="{{ $label }}">{{ number_format($percent, 1) }}%</progress>
+        <progress class="intelligence-native-progress" value="{{ $bounded }}" max="{{ $maximum }}" aria-label="{{ $label }}">{{ \App\Helpers\Decimal::format($percent, 1) }}%</progress>
     @else
         <div class="progress" role="progressbar" aria-label="{{ $label }}" aria-valuenow="{{ $bounded }}" aria-valuemin="0" aria-valuemax="{{ $maximum }}">
             <div class="progress-bar {{ $value >= $target ? 'bg-success' : '' }}" style="width: {{ $percent }}%"></div>

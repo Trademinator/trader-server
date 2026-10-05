@@ -49,13 +49,13 @@
                 <td>{{ $transfer->status }} @if($transfer->error)<small>{{ $transfer->error }}</small>@endif</td>
                 <td>
                     @if($transfer->direction === 'export')
-                        {{ number_format($transfer->completed_parts) }} parts built
+                        {{ \App\Helpers\Decimal::format($transfer->completed_parts) }} parts built
                     @else
-                        {{ number_format($transfer->verified_parts) }} / {{ number_format($transfer->expected_parts) }} verified
-                        @if($transfer->status === 'importing' || $transfer->status === 'completed') · {{ number_format($transfer->completed_parts) }} imported @endif
+                        {{ \App\Helpers\Decimal::format($transfer->verified_parts) }} / {{ \App\Helpers\Decimal::format($transfer->expected_parts) }} verified
+                        @if($transfer->status === 'importing' || $transfer->status === 'completed') · {{ \App\Helpers\Decimal::format($transfer->completed_parts) }} imported @endif
                     @endif
                 </td>
-                <td>{{ number_format($transfer->total_rows) }}</td>
+                <td>{{ \App\Helpers\Decimal::format($transfer->total_rows) }}</td>
                 <td>
                     @if($transfer->direction === 'export' && $transfer->status === 'ready')
                         <a href="{{ route('owner.archives.portable.manifest', $transfer->portable_archive_transfer_id) }}">manifest.json</a>
@@ -99,7 +99,7 @@
                 <td>{{ $item->logical_type }}</td>
                 <td>{{ $item->exchange }} {{ $item->symbol }} {{ $item->period }}</td>
                 <td><x-display-time :value="$item->range_start_ms" unit="milliseconds" /> → <x-display-time :value="$item->range_end_ms" unit="milliseconds" /></td>
-                <td>{{ number_format($item->row_count) }}</td>
+                <td>{{ \App\Helpers\Decimal::format($item->row_count) }}</td>
                 <td>{{ $item->verification_state }} @if($item->verification_error)<small>{{ $item->verification_error }}</small>@endif</td>
                 <td><code>{{ $item->path }}</code></td>
                 <td><form method="POST" action="{{ route('owner.archives.restore') }}">@csrf<input type="hidden" name="manifest" value="{{ $item->path }}"><input name="from_ms" inputmode="numeric" placeholder="from ms"><input name="to_ms" inputmode="numeric" placeholder="to ms"><label><input type="checkbox" name="validate_only" value="1" checked> validate</label><button type="submit">Run</button></form></td>

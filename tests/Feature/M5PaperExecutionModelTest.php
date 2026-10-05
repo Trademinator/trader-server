@@ -3,6 +3,7 @@
 use App\Domain\Intelligence\ModelStore;
 use App\Models\ClientApiKey;
 use App\Models\ClientMarketSetting;
+use App\Models\ClientPaperEvent;
 use App\Models\Exchange;
 use App\Models\Market;
 use App\Models\MarketFeed;
@@ -23,7 +24,7 @@ function f8Bearer(User $user): string
     return $secret;
 }
 
-function f8PaperMarket(User $user, float $slippageBps): array
+function f8PaperMarket(User $user, float $slippageBps, string $referencePrice = '100'): array
 {
     $exchange = Exchange::query()->create(['name' => 'Kraken', 'class' => 'kraken', 'config' => '{}']);
     $market = Market::query()->create([
@@ -67,7 +68,7 @@ function f8PaperMarket(User $user, float $slippageBps): array
         'action' => 'buy', 'reason' => 'supported',
         'payload' => [
             'confidence' => 0.8, 'evidence_score' => 0.8,
-            'reference_price' => '100', 'reference_price_source' => 'closed_candle_close',
+            'reference_price' => $referencePrice, 'reference_price_source' => 'closed_candle_close',
             'action_meaning' => 'supported_bottom_with_upward_future_move',
         ],
     ]);
@@ -107,4 +108,56 @@ it('applies configured paper slippage and base-asset fees through the API', func
         ->getJson('/api/v1/client/markets/'.$subscription->getKey())
         ->assertOk();
     expect((float) $settings->json('market.settings.paper_slippage_bps'))->toBe(100.0);
+});
+
+it('preserves JSON decimal prices throughout paper sizing execution and balances', function () {
+    $this->freezeTime();
+    $user = User::factory()->create();
+    [$secret, $subscription] = f8PaperMarket($user, 0, '0.1');
+
+    $this->withToken($secret)->postJson('/api/v1/client/markets/'.$subscription->getKey().'/paper', [
+        'idempotency_key' => 'paper-f11-decimals',
+        'reported_at_ms' => now()->getTimestampMs(),
+        'best_bid' => 0.1,
+        'best_ask' => 0.1,
+        'taker_fee_bps' => 0,
+        'amount_step' => 0.1,
+    ])->assertOk()
+        ->assertJsonPath('event', 'executed')
+        ->assertJsonPath('price', '0.100000000000000000')
+        ->assertJsonPath('quantity', '1000.000000000000000000')
+        ->assertJsonPath('decision.sizing.quote_amount', '100.000000000000000000')
+        ->assertJsonPath('paper.quote_balance', '900.000000000000000000')
+        ->assertJsonPath('paper.base_balance', '1000.000000000000000000');
+
+    $this->assertDatabaseHas('client_paper_accounts', [
+        'market_subscription_id' => $subscription->getKey(),
+        'quote_balance' => '900.000000000000000000',
+        'base_balance' => '1000.000000000000000000',
+    ]);
+    $event = ClientPaperEvent::query()->sole();
+    expect($event->result['price'])->toBe('0.100000000000000000');
+    expect($event->result['quantity'])->toBe('1000.000000000000000000');
+});
+
+it('preserves the last decimal place in remaining position capacity', function () {
+    $this->freezeTime();
+    $user = User::factory()->create();
+    [$secret, $subscription] = f8PaperMarket($user, 0, '1');
+    $subscription->clientSetting->update([
+        'trading_enabled' => true, 'max_order_quote' => '1', 'max_position_quote' => '1',
+    ]);
+
+    $this->withToken($secret)->postJson('/api/v1/client/markets/'.$subscription->getKey().'/decision', [
+        'reported_at_ms' => now()->getTimestampMs(),
+        'best_bid' => '1',
+        'best_ask' => '1',
+        'taker_fee_bps' => 0,
+        'quote_balance' => '1',
+        'base_balance' => '0',
+        'position_quote' => '0.900000000000000001',
+    ])->assertOk()
+        ->assertJsonPath('eligible', true)
+        ->assertJsonPath('sizing.quote_amount', '0.099999999999999999')
+        ->assertJsonPath('sizing.base_amount', '0.099999999999999999');
 });

@@ -1,5 +1,6 @@
 <?php
 
+use App\Helpers\Decimal;
 use Trademinator\Indicators\Traits\Patterns;
 use Trademinator\Indicators\Traits\Technical;
 
@@ -16,11 +17,11 @@ function m0IndicatorCandles(int $count = 80): array
 
         $candles[] = [
             'microtimestamp' => 1_700_000_000_000 + ($i * 60_000),
-            'open' => number_format($open, 8, '.', ''),
-            'high' => number_format($high, 8, '.', ''),
-            'low' => number_format($low, 8, '.', ''),
-            'close' => number_format($close, 8, '.', ''),
-            'volume' => number_format(10 + ($i % 11), 8, '.', ''),
+            'open' => Decimal::format($open, 8, '.', ''),
+            'high' => Decimal::format($high, 8, '.', ''),
+            'low' => Decimal::format($low, 8, '.', ''),
+            'close' => Decimal::format($close, 8, '.', ''),
+            'volume' => Decimal::format(10 + ($i % 11), 8, '.', ''),
         ];
     }
 

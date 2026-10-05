@@ -1,9 +1,9 @@
 <x-owner.layout title="Server overview">
     <div class="owner-grid">
-        <div class="owner-stat"><span>Registered users</span><strong>{{ number_format($users->total) }}</strong><span>{{ $users->verified }} verified · {{ $users->suspended }} suspended</span></div>
-        <div class="owner-stat"><span>Active subscriptions</span><strong>{{ number_format($subscriptions) }}</strong><span>Across all accounts</span></div>
-        <div class="owner-stat"><span>Overdue feeds</span><strong>{{ number_format($overdue) }}</strong><span>More than 15 minutes past their next pull</span></div>
-        <div class="owner-stat"><span>Requests today</span><strong>{{ number_format($traffic->total) }}</strong><span>{{ number_format($traffic->errors) }} server errors</span></div>
+        <div class="owner-stat"><span>Registered users</span><strong>{{ \App\Helpers\Decimal::format($users->total) }}</strong><span>{{ $users->verified }} verified · {{ $users->suspended }} suspended</span></div>
+        <div class="owner-stat"><span>Active subscriptions</span><strong>{{ \App\Helpers\Decimal::format($subscriptions) }}</strong><span>Across all accounts</span></div>
+        <div class="owner-stat"><span>Overdue feeds</span><strong>{{ \App\Helpers\Decimal::format($overdue) }}</strong><span>More than 15 minutes past their next pull</span></div>
+        <div class="owner-stat"><span>Requests today</span><strong>{{ \App\Helpers\Decimal::format($traffic->total) }}</strong><span>{{ \App\Helpers\Decimal::format($traffic->errors) }} server errors</span></div>
     </div>
     <section class="owner-panel">
         <h2>Latest activity</h2>

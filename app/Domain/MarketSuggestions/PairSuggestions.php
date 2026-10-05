@@ -3,6 +3,7 @@
 namespace App\Domain\MarketSuggestions;
 
 use App\Domain\MarketData\MarketCatalog;
+use App\Helpers\Decimal;
 use App\Models\CoinGeckoMarketMapping;
 use App\Models\Exchange;
 use App\Models\Market;
@@ -189,14 +190,14 @@ final class PairSuggestions
 
                 continue;
             }
-            $cautions[] = $minCost !== null ? 'Indicative minimum order: '.rtrim(rtrim(sprintf('%.8F', $minCost), '0'), '.').' '.$quote.'. Exact balance and exchange limits still need checking.'
+            $cautions[] = $minCost !== null ? 'Indicative minimum order: '.rtrim(rtrim(Decimal::format($minCost, 8, '.', ''), '0'), '.').' '.$quote.'. Exact balance and exchange limits still need checking.'
                 : 'Minimum order value is unknown.';
             if ($quote !== $answers['reference_currency']) {
                 $cautions[] = 'Your allocation range is in '.$answers['reference_currency'].'; affordability in '.$quote.' has not been verified.';
             }
             $fee = $candidate['taker_fee'] ?? null;
             $cautions[] = $fee === null ? 'Trading fees, spread and slippage are unknown.'
-                : 'Published taker fee: '.number_format($fee * 100, 3).'% per side (about '.number_format($fee * 200, 3).'% for two trades). Your fee tier, spread and slippage may differ.';
+                : 'Published taker fee: '.Decimal::format($fee * 100, 3).'% per side (about '.Decimal::format($fee * 200, 3).'% for two trades). Your fee tier, spread and slippage may differ.';
             if (($candidate['active'] ?? null) !== true) {
                 $cautions[] = 'The exchange did not explicitly confirm that this market is active.';
             }

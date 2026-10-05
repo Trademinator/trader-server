@@ -8,7 +8,7 @@
     @forelse ($results['items'] ?? [] as $item)
         <article class="dashboard-market"><div class="flex flex-wrap justify-between gap-2"><h3>{{ $item['symbol'] }}</h3><span class="guide-badge">{{ $item['explore'] ? 'Explore only' : 'Matches preference screens' }}</span></div>
             <ul class="list-disc pl-5 mt-3">@foreach ($item['reasons'] as $reason)<li>{{ $reason }}</li>@endforeach</ul>
-            @if ($item['activity'])<p class="guide-notice mt-3">24h volume / market cap: {{ number_format($item['activity']['activity_ratio'] * 100, 1) }}% · 24h price change: {{ $item['activity']['change_24h'] === null ? 'Unknown' : number_format($item['activity']['change_24h'], 2).'%' }}.</p><p class="guide-help">CoinGecko · <x-display-time :value="$item['activity_observed_at_ms']" unit="milliseconds" precision="minutes" /></p>
+            @if ($item['activity'])<p class="guide-notice mt-3">24h volume / market cap: {{ \App\Helpers\Decimal::format($item['activity']['activity_ratio'] * 100, 1) }}% · 24h price change: {{ $item['activity']['change_24h'] === null ? 'Unknown' : \App\Helpers\Decimal::format($item['activity']['change_24h'], 2).'%' }}.</p><p class="guide-help">CoinGecko · <x-display-time :value="$item['activity_observed_at_ms']" unit="milliseconds" precision="minutes" /></p>
             @else<p class="guide-help">Current activity context is unavailable for this asset. Preference screens still apply.</p>@endif
             <p class="mt-3">{{ $item['evidence']['message'] }}</p>
             <p class="guide-help">{{ $item['evidence']['known'] ? 'Stored price evidence is available. Model readiness is checked separately after subscribing.' : 'Following this market can start collection; usable intelligence may take time.' }}</p>

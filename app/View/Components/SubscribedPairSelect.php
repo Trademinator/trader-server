@@ -3,6 +3,7 @@
 namespace App\View\Components;
 
 use App\Domain\MarketData\SubscribedPairOptions;
+use App\Helpers\Decimal;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
@@ -129,7 +130,7 @@ final class SubscribedPairSelect extends FormControl
         }
         $parts = [$exchange, $pair, $period];
         if (isset($dataset['rows']) && is_numeric($dataset['rows'])) {
-            $parts[] = number_format((int) $dataset['rows']).' samples';
+            $parts[] = Decimal::format((int) $dataset['rows']).' samples';
             if ($this->showDatasetVersions) {
                 $parts[] = substr($id, 0, 8);
             }

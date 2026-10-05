@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Domain\MarketData\CandlePeriodReevaluation;
+use App\Helpers\Decimal;
 use App\Models\MarketFeed;
 use Illuminate\Console\Command;
 use Throwable;
@@ -82,6 +83,6 @@ final class EvaluateCandlePeriod extends Command
 
     private function percent(mixed $ratio): string
     {
-        return is_numeric($ratio) ? number_format((float) $ratio * 100, 2).'%' : '-';
+        return is_numeric($ratio) ? Decimal::format((float) $ratio * 100, 2).'%' : '-';
     }
 }

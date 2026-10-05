@@ -5,6 +5,7 @@ namespace App\Domain\Client;
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\Intelligence\SignalFreshness;
 use App\Domain\Intelligence\SignalSemantics;
+use App\Helpers\Decimal;
 use App\Models\ClientMarketSetting;
 use App\Models\MarketSignal;
 use App\Models\MarketSubscription;
@@ -158,7 +159,7 @@ final class ClientDecisionService
         }
         if ($setting->max_position_quote !== null) {
             $remaining = bcsub($this->d($setting->max_position_quote), $this->d($state['position_quote'] ?? '0'), self::SCALE);
-            $spend = $this->minDecimal($spend, max(0.0, (float) $remaining));
+            $spend = $this->minDecimal($spend, bccomp($remaining, '0', self::SCALE) > 0 ? $remaining : '0');
         }
         if (bccomp($spend, '0', self::SCALE) <= 0) {
             return ['eligible' => false, 'reason' => 'position_or_balance_limit'];
@@ -286,10 +287,6 @@ final class ClientDecisionService
 
     private function d(mixed $value): string
     {
-        if (is_string($value) && preg_match('/^-?\d+(?:\.\d+)?$/D', $value)) {
-            return $value;
-        }
-
-        return number_format((float) $value, self::SCALE, '.', '');
+        return Decimal::normalize($value);
     }
 }

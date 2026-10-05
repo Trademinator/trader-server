@@ -10,7 +10,7 @@
             <section class="guide-panel">
                 <p class="review-eyebrow">Existing workflow</p>
                 <h2>Trend Training</h2>
-                <p>Assess what you expect over the dataset horizon from a frozen historical snapshot. You have submitted {{ number_format($completed) }} trend labels.</p>
+                <p>Assess what you expect over the dataset horizon from a frozen historical snapshot. You have submitted {{ \App\Helpers\Decimal::format($completed) }} trend labels.</p>
                 @if($pending)
                     <a class="guide-button" href="{{ route('human-training.show', $pending->review_id) }}">Continue Trend Training</a>
                 @else
@@ -30,7 +30,7 @@
             <section class="guide-panel">
                 <p class="review-eyebrow">Per-candle actions</p>
                 <h2>Candle Training</h2>
-                <p>Click individual candles and mark the action you would have taken there. You currently have {{ number_format($candleCompleted) }} saved candle labels.</p>
+                <p>Click individual candles and mark the action you would have taken there. You currently have {{ \App\Helpers\Decimal::format($candleCompleted) }} saved candle labels.</p>
                 @if($datasets === [])
                     <p>No current semantic training dataset is ready yet. Subscribed pairs remain listed below in green with the reason they cannot be selected.</p>
                 @endif
@@ -52,10 +52,10 @@
         </section>
         @if($statistics !== null)
             <section class="guide-panel"><h2>Trainer agreement</h2>
-                <p>Trend Training: latest {{ number_format($statistics['snapshots']) }} reviewed snapshots by candle time (maximum 1,000): {{ $statistics['shared'] }} reviewed by multiple trainers; {{ $statistics['disputed'] }} with differing labels.</p>
-                <p>Candle Training: {{ number_format($statistics['candle_labels']) }} current BUY/HOLD/SELL labels across authorized trainers.</p>
+                <p>Trend Training: latest {{ \App\Helpers\Decimal::format($statistics['snapshots']) }} reviewed snapshots by candle time (maximum 1,000): {{ $statistics['shared'] }} reviewed by multiple trainers; {{ $statistics['disputed'] }} with differing labels.</p>
+                <p>Candle Training: {{ \App\Helpers\Decimal::format($statistics['candle_labels']) }} current BUY/HOLD/SELL labels across authorized trainers.</p>
                 <div class="review-table-wrap"><table><thead><tr><th>Trainer UUID</th><th>Trend labels</th><th>Trend agreement with peers</th></tr></thead><tbody>
-                    @forelse($statistics['trainers'] as $id => $trainer)<tr><td><code>{{ $id }}</code></td><td>{{ $trainer['labels'] }}</td><td>{{ $trainer['peer_comparisons'] ? number_format(100 * $trainer['peer_agreements'] / $trainer['peer_comparisons'], 1).'% ('.$trainer['peer_comparisons'].' comparisons)' : 'Awaiting independent reviews' }}</td></tr>
+                    @forelse($statistics['trainers'] as $id => $trainer)<tr><td><code>{{ $id }}</code></td><td>{{ $trainer['labels'] }}</td><td>{{ $trainer['peer_comparisons'] ? \App\Helpers\Decimal::format(100 * $trainer['peer_agreements'] / $trainer['peer_comparisons'], 1).'% ('.$trainer['peer_comparisons'].' comparisons)' : 'Awaiting independent reviews' }}</td></tr>
                     @empty<tr><td colspan="3">No submitted trend labels yet.</td></tr>@endforelse
                 </tbody></table></div>
                 <p class="guide-help">Trainer confidence does not increase voting weight. Ties and insufficient agreement are excluded from training. Candle-action consensus uses the same trainer authorization and agreement gates.</p>

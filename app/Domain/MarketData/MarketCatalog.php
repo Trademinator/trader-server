@@ -2,6 +2,7 @@
 
 namespace App\Domain\MarketData;
 
+use App\Helpers\Decimal;
 use App\Models\Exchange;
 use App\Models\Market;
 use App\Models\User;
@@ -171,7 +172,7 @@ final class MarketCatalog
         if ($mode !== \ccxt\TICK_SIZE || (float) $pricePrecision <= 0 || ! is_finite((float) $pricePrecision)) {
             return null;
         }
-        $normalized = rtrim(rtrim(sprintf('%.18F', (float) $pricePrecision), '0'), '.');
+        $normalized = rtrim(rtrim(Decimal::format($pricePrecision, 18, '.', ''), '0'), '.');
 
         return preg_match('/^\d{1,12}(?:\.\d{1,18})?$/D', $normalized) && (float) $normalized > 0
             ? $normalized : null;

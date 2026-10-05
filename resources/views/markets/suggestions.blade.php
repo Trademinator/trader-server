@@ -26,7 +26,7 @@
                         <ul>@foreach ($item['reasons'] as $reason)<li>{{ $reason }}</li>@endforeach</ul>
                         @if ($item['evidence']['known'])
                             <p><strong>Historical evidence:</strong> {{ $item['evidence']['candles'] }} completed {{ $item['evidence']['period'] }} candles, <x-display-time :value="$item['evidence']['from']" precision="minutes" />–<x-display-time :value="$item['evidence']['through']" precision="minutes" />, measured in {{ $item['risk_currency'] }}.</p>
-                            <p>Largest close-to-close decline from a prior peak: {{ number_format($item['evidence']['drawdown'] * 100, 1) }}%. Largest absolute move over the chosen holding window: {{ number_format($item['evidence']['largest_move'] * 100, 1) }}%.</p>
+                            <p>Largest close-to-close decline from a prior peak: {{ \App\Helpers\Decimal::format($item['evidence']['drawdown'] * 100, 1) }}%. Largest absolute move over the chosen holding window: {{ \App\Helpers\Decimal::format($item['evidence']['largest_move'] * 100, 1) }}%.</p>
                             <p class="guide-help">These describe this sample only. They omit extremes between closes and do not limit future losses. Candle volume is not a measure of order-book depth.</p>
                         @endif
                         <details><summary>What to check before trading</summary><ul>@foreach ($item['cautions'] as $caution)<li>{{ $caution }}</li>@endforeach</ul></details>

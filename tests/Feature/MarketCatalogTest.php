@@ -51,3 +51,11 @@ it('interprets CCXT price precision without confusing it with minimum price or a
         ->and(MarketCatalog::tickSize(2, \ccxt\DECIMAL_PLACES))->toBe('0.01')
         ->and(MarketCatalog::tickSize(8, \ccxt\SIGNIFICANT_DIGITS))->toBeNull();
 });
+
+it('preserves decimal and scientific tick sizes without binary digits', function (int|float|string $precision, string $expected) {
+    expect(MarketCatalog::tickSize($precision, \ccxt\TICK_SIZE))->toBe($expected);
+})->with([
+    'float tenth' => [0.1, '0.1'],
+    'float scientific notation' => [3e-8, '0.00000003'],
+    'exact scientific string' => ['1.23456789012345678e-1', '0.123456789012345678'],
+]);

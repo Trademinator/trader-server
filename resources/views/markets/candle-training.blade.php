@@ -132,13 +132,13 @@
                     <div><strong>A</strong><br><span data-measure-a>Click a candle</span></div>
                     <div><strong>B</strong><br><span data-measure-b>Click a second candle</span></div>
                     <div><strong>Price move</strong><span data-measure-move data-measure-direction="flat">—</span><small>close-to-close · A → B</small></div>
-                    <div><strong>Fee comparison</strong><br><span data-measure-fee>{{ $state['taker_fee'] === null ? 'Published exchange taker fee unavailable.' : 'Published taker fee '.number_format($state['taker_fee'] * 100, 3).'% per side.' }}</span></div>
+                    <div><strong>Fee comparison</strong><br><span data-measure-fee>{{ $state['taker_fee'] === null ? 'Published exchange taker fee unavailable.' : 'Published taker fee '.\App\Helpers\Decimal::format($state['taker_fee'] * 100, 3).'% per side.' }}</span></div>
                 </div>
                 <div class="guide-notice candle-training-fee-note" data-current-exchange-fees>
                     @if($state['taker_fee'] !== null)
                         <strong>Current published exchange fee:</strong>
-                        taker {{ number_format($state['taker_fee'] * 100, 4) }}% per side ·
-                        approximately {{ number_format($state['taker_fee'] * 200, 4) }}% round trip.
+                        taker {{ \App\Helpers\Decimal::format($state['taker_fee'] * 100, 4) }}% per side ·
+                        approximately {{ \App\Helpers\Decimal::format($state['taker_fee'] * 200, 4) }}% round trip.
                         <span class="candle-training-fee-detail">Auto-label profitability filtering uses the round-trip taker fee as its economic floor. Spread, slippage, conversions and account-specific fee discounts are not included.</span>
                     @else
                         <strong>Current published exchange fee:</strong> unavailable.
@@ -192,10 +192,10 @@
 
         <div class="guide-grid">
             <section class="guide-panel"><h2>Indicators and context</h2><p class="guide-help">Features for the initial candle at <x-display-time :value="$state['payload']['microtimestamp']" unit="milliseconds" />. Each chart label stores the features from the candle you label.</p>
-                <dl>@foreach($state['payload']['features'] as $key => $value)<dt>{{ $key }}</dt><dd>{{ is_numeric($value) ? number_format($value, 5) : 'Unavailable' }}</dd>@endforeach</dl>
+                <dl>@foreach($state['payload']['features'] as $key => $value)<dt>{{ $key }}</dt><dd>{{ is_numeric($value) ? \App\Helpers\Decimal::format($value, 5) : 'Unavailable' }}</dd>@endforeach</dl>
             </section>
             <section class="guide-panel"><h2>Partial patterns</h2>
-                @forelse($state['payload']['patterns'] as $pattern)<p><strong>{{ ucwords(str_replace('_', ' ', $pattern['type'])) }}</strong><br>Stage {{ $pattern['stage'] }}/{{ $pattern['length'] }} · {{ number_format(100 * $pattern['progress']) }}% complete · similarity {{ number_format(100 * $pattern['similarity']) }}%</p>
+                @forelse($state['payload']['patterns'] as $pattern)<p><strong>{{ ucwords(str_replace('_', ' ', $pattern['type'])) }}</strong><br>Stage {{ $pattern['stage'] }}/{{ $pattern['length'] }} · {{ \App\Helpers\Decimal::format(100 * $pattern['progress']) }}% complete · similarity {{ \App\Helpers\Decimal::format(100 * $pattern['similarity']) }}%</p>
                 @empty<p>No supported partial pattern in this snapshot.</p>@endforelse
                 <p class="guide-help">Patterns for the initial candle at <x-display-time :value="$state['payload']['microtimestamp']" unit="milliseconds" />. Pattern outcomes stay hidden.</p>
             </section>

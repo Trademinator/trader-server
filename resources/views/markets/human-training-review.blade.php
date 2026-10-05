@@ -41,10 +41,10 @@
         </section>
         <div class="guide-grid">
             <section class="guide-panel"><h2>Indicators and context</h2><p class="guide-help">Frozen features from the selected dataset. Missing context is not filled with current information.</p>
-                <dl>@foreach($snapshot['features'] as $key => $value)<dt>{{ $key }}</dt><dd>{{ is_numeric($value) ? number_format($value, 5) : 'Unavailable' }}</dd>@endforeach</dl>
+                <dl>@foreach($snapshot['features'] as $key => $value)<dt>{{ $key }}</dt><dd>{{ is_numeric($value) ? \App\Helpers\Decimal::format($value, 5) : 'Unavailable' }}</dd>@endforeach</dl>
             </section>
             <section class="guide-panel"><h2>Partial patterns</h2>
-                @forelse($snapshot['patterns'] as $pattern)<p><strong>{{ ucwords(str_replace('_', ' ', $pattern['type'])) }}</strong><br>Stage {{ $pattern['stage'] }}/{{ $pattern['length'] }} · {{ number_format(100 * $pattern['progress']) }}% complete · similarity {{ number_format(100 * $pattern['similarity']) }}%</p>
+                @forelse($snapshot['patterns'] as $pattern)<p><strong>{{ ucwords(str_replace('_', ' ', $pattern['type'])) }}</strong><br>Stage {{ $pattern['stage'] }}/{{ $pattern['length'] }} · {{ \App\Helpers\Decimal::format(100 * $pattern['progress']) }}% complete · similarity {{ \App\Helpers\Decimal::format(100 * $pattern['similarity']) }}%</p>
                 @empty<p>No supported partial pattern in this snapshot.</p>@endforelse
                 <p class="guide-help">Pattern outcomes and later prices remain hidden.</p>
             </section>

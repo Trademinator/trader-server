@@ -2,6 +2,7 @@
 
 namespace App\Domain\Client;
 
+use App\Helpers\Decimal;
 use App\Models\ClientPaperAccount;
 use App\Models\ClientPaperEvent;
 use App\Models\MarketSubscription;
@@ -247,10 +248,6 @@ final class ClientPaperTrading
 
     private function d(mixed $value): string
     {
-        if (is_string($value) && preg_match('/^-?\d+(?:\.\d+)?$/D', $value)) {
-            return $value;
-        }
-
-        return number_format((float) $value, self::SCALE, '.', '');
+        return Decimal::normalize($value);
     }
 }

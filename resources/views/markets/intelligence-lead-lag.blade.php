@@ -42,14 +42,14 @@
             <x-intelligence-progress label="Overlapping return observations" :value="$evidence['samples']" :target="$evidence['minimum_samples']" native />
             @if (isset($evidence['evaluation']))
                 <dl>
-                    <dt>Tested delay</dt><dd>{{ $evidence['selected'] }} candles · {{ number_format($evidence['lag_ms'] / 60000, 1) }} minutes · {{ $evidence['direction'] }} direction</dd>
+                    <dt>Tested delay</dt><dd>{{ $evidence['selected'] }} candles · {{ \App\Helpers\Decimal::format($evidence['lag_ms'] / 60000, 1) }} minutes · {{ $evidence['direction'] }} direction</dd>
                     <dt>Leader session</dt><dd>{{ $evidence['session'] === 'all' ? 'All hours' : $evidence['session'] }} · {{ $evidence['context']['timezone'] }} ({{ $evidence['context']['timezone_source'] }})</dd>
-                    <dt>Later-period observations</dt><dd>{{ $evidence['evaluation']['rows'] }} · {{ number_format($evidence['evaluation']['effective_rows'], 1) }} effective</dd>
-                    <dt>Improvement over local / prior baseline</dt><dd>{{ number_format($evidence['evaluation']['skill'] * 100, 1) }}%</dd>
-                    <dt>Evidence strength</dt><dd>{{ number_format($evidence['strength'] * 100, 1) }}%</dd>
+                    <dt>Later-period observations</dt><dd>{{ $evidence['evaluation']['rows'] }} · {{ \App\Helpers\Decimal::format($evidence['evaluation']['effective_rows'], 1) }} effective</dd>
+                    <dt>Improvement over local / prior baseline</dt><dd>{{ \App\Helpers\Decimal::format($evidence['evaluation']['skill'] * 100, 1) }}%</dd>
+                    <dt>Evidence strength</dt><dd>{{ \App\Helpers\Decimal::format($evidence['strength'] * 100, 1) }}%</dd>
                 </dl>
                 @if (isset($signal['lead_lag'][$leader]))
-                    <p>Current use: {{ ucwords(str_replace('_', ' ', $signal['lead_lag'][$leader]['reason'])) }}. Influence: {{ number_format($signal['lead_lag'][$leader]['influence'] * 100, 1) }}%.</p>
+                    <p>Current use: {{ ucwords(str_replace('_', ' ', $signal['lead_lag'][$leader]['reason'])) }}. Influence: {{ \App\Helpers\Decimal::format($signal['lead_lag'][$leader]['influence'] * 100, 1) }}%.</p>
                 @else
                     <p class="guide-help">No current influence is being reported while the main signal is unavailable or abstaining.</p>
                 @endif

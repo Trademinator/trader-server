@@ -36,3 +36,24 @@ it('reserves base for a sell fee when the fee asset is base', function () {
     expect((float) $fill['fee_base'])->toBeGreaterThan(0.0);
     expect((float) $fill['fee_quote'])->toBe(0.0);
 });
+
+it('keeps every affordable amount step when the exchange supplies a float', function () {
+    $fill = (new PaperExecutionModel)->fill(
+        'buy', '1', '1', '1', '1', '0', '0', 'quote', 0.1
+    );
+
+    expect($fill['quantity'])->toBe('1.000000000000000000');
+    expect($fill['quote_debit'])->toBe('1.000000000000000000');
+});
+
+it('accepts a fill exactly at an exchange minimum supplied as a float', function (?float $minimumAmount, ?float $minimumCost) {
+    $fill = (new PaperExecutionModel)->fill(
+        'buy', '0.1', '0.1', '1', '1', '0', '0', 'quote', null, $minimumAmount, $minimumCost
+    );
+
+    expect($fill['eligible'])->toBeTrue();
+    expect($fill['quantity'])->toBe('0.100000000000000000');
+})->with([
+    'minimum amount' => [0.1, null],
+    'minimum cost' => [null, 0.1],
+]);

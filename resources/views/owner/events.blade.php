@@ -30,7 +30,7 @@
                         <td><x-display-time :value="$item->source_seen_at" fallback="Unknown" /><small>Stored <x-display-time :value="$item->created_at" /></small></td>
                         <td>
                             <span class="owner-badge">{{ strtoupper($type) }}</span>
-                            <small>Classifier confidence {{ number_format((float) $item->machine_confidence * 100, 0) }}%</small>
+                            <small>Classifier confidence {{ \App\Helpers\Decimal::format((float) $item->machine_confidence * 100, 0) }}%</small>
                             @if ($symbols !== [])<small>Matched subscribed symbols: {{ implode(', ', $symbols) }}</small>@endif
                         </td>
                         <td>

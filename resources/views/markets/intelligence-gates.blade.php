@@ -20,8 +20,8 @@
                         <span aria-hidden="true">?</span>
                     </button>
                 </th>
-                <td>{{ number_format($gate['value'] * ($gate['percent'] ? 100 : 1), $gate['percent'] ? 1 : 0) }}{{ $gate['percent'] ? '%' : '' }}</td>
-                <td>{{ $gate['maximum'] ? 'At most' : 'At least' }} {{ number_format($gate['target'] * ($gate['percent'] ? 100 : 1), $gate['percent'] ? 1 : 0) }}{{ $gate['percent'] ? '%' : '' }}</td>
+                <td>{{ \App\Helpers\Decimal::format($gate['value'] * ($gate['percent'] ? 100 : 1), $gate['percent'] ? 1 : 0) }}{{ $gate['percent'] ? '%' : '' }}</td>
+                <td>{{ $gate['maximum'] ? 'At most' : 'At least' }} {{ \App\Helpers\Decimal::format($gate['target'] * ($gate['percent'] ? 100 : 1), $gate['percent'] ? 1 : 0) }}{{ $gate['percent'] ? '%' : '' }}</td>
                 <td>{{ $gate['passed'] ? 'Passed' : 'Missing / failed' }}</td>
             </tr>
         @endforeach

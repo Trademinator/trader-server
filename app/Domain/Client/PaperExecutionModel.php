@@ -2,6 +2,7 @@
 
 namespace App\Domain\Client;
 
+use App\Helpers\Decimal;
 use InvalidArgumentException;
 
 final class PaperExecutionModel
@@ -155,10 +156,6 @@ final class PaperExecutionModel
 
     private function d(mixed $value): string
     {
-        if (is_string($value) && preg_match('/^-?\d+(?:\.\d+)?$/D', $value)) {
-            return $value;
-        }
-
-        return number_format((float) $value, self::SCALE, '.', '');
+        return Decimal::normalize($value);
     }
 }

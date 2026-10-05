@@ -24,7 +24,7 @@
                     if ($value === null) { return 'Unknown'; }
                     if ((float) $value === 0.0) { return '0'; }
                     $decimals = min(18, max(1, 8 - (int) floor(log10(abs((float) $value)))));
-                    return rtrim(rtrim(number_format((float) $value, $decimals, '.', ','), '0'), '.');
+                    return rtrim(rtrim(\App\Helpers\Decimal::format($value, $decimals, '.', ','), '0'), '.');
                 };
                 $rank = array_search($item['symbol'], array_column($results['items'], 'symbol'), true) + 1;
             @endphp
@@ -86,11 +86,11 @@
                 <h2 id="risk-heading">Historical risk screen</h2>
                 <p>Screened at <x-display-time :value="$results['generated_at']" precision="minutes" />. Chart refreshes do not rewrite this explanation. <a data-no-instant href="{{ $reviewUrl }}">Recalculate the full review</a> to update it.</p>
                 <div class="review-metrics">
-                    <div class="review-metric">Largest peak-to-close decline<strong>{{ $evidence['known'] ? number_format($evidence['drawdown'] * 100, 2).'%' : 'Unknown' }}</strong><span class="guide-help">Across the whole sample</span></div>
-                    <div class="review-metric">Largest holding-window move<strong>{{ $evidence['known'] ? number_format($evidence['largest_move'] * 100, 2).'%' : 'Unknown' }}</strong><span class="guide-help">Absolute change, either direction</span></div>
-                    <div class="review-metric">Your historical swing threshold<strong>{{ number_format($item['risk_limit'] * 100, 1) }}%</strong><span class="guide-help">A screening limit, not a loss guarantee</span></div>
+                    <div class="review-metric">Largest peak-to-close decline<strong>{{ $evidence['known'] ? \App\Helpers\Decimal::format($evidence['drawdown'] * 100, 2).'%' : 'Unknown' }}</strong><span class="guide-help">Across the whole sample</span></div>
+                    <div class="review-metric">Largest holding-window move<strong>{{ $evidence['known'] ? \App\Helpers\Decimal::format($evidence['largest_move'] * 100, 2).'%' : 'Unknown' }}</strong><span class="guide-help">Absolute change, either direction</span></div>
+                    <div class="review-metric">Your historical swing threshold<strong>{{ \App\Helpers\Decimal::format($item['risk_limit'] * 100, 1) }}%</strong><span class="guide-help">A screening limit, not a loss guarantee</span></div>
                 </div>
-                <p>{{ $evidence['message'] }} @if ($evidence['known']) Both price-swing measurements are at or below the threshold. {{ number_format($evidence['zero_volume_fraction'] * 100, 1) }}% of sampled candles have zero volume (maximum allowed: 10%). @endif</p>
+                <p>{{ $evidence['message'] }} @if ($evidence['known']) Both price-swing measurements are at or below the threshold. {{ \App\Helpers\Decimal::format($evidence['zero_volume_fraction'] * 100, 1) }}% of sampled candles have zero volume (maximum allowed: 10%). @endif</p>
                 @if (! $evidence['known'])<p class="guide-notice">Unknown does not mean low risk. The chart can show a short, stale or incomplete sample even when it cannot support the risk screen.</p>@endif
                 <details open><summary>Technical method and units</summary>
                     <p>Your “{{ $choices['horizon'][$answers['horizon']] }}” horizon maps to {{ $evidence['window_hours'] }} hours. The window is rounded up to whole candle intervals@if ($evidence['window_candles']): {{ $evidence['window_candles'] }} × {{ $evidence['period'] }} = {{ $number($evidence['effective_window_hours']) }} hours@endif.</p>
@@ -110,8 +110,8 @@
                     <h2 id="cost-heading">Costs and order constraints</h2>
                     <dl>
                         <dt>Price increment</dt><dd>{{ $market['tick_size'] }} {{ $item['quote'] }}</dd>
-                        <dt>Published taker fee</dt><dd>{{ $market['taker_fee'] === null ? 'Unknown' : number_format($market['taker_fee'] * 100, 3).'% per side' }}</dd>
-                        <dt>Two taker trades</dt><dd>{{ $market['taker_fee'] === null ? 'Unknown' : 'About '.number_format($market['taker_fee'] * 200, 3).'%' }} · excludes spread, slippage and conversions</dd>
+                        <dt>Published taker fee</dt><dd>{{ $market['taker_fee'] === null ? 'Unknown' : \App\Helpers\Decimal::format($market['taker_fee'] * 100, 3).'% per side' }}</dd>
+                        <dt>Two taker trades</dt><dd>{{ $market['taker_fee'] === null ? 'Unknown' : 'About '.\App\Helpers\Decimal::format($market['taker_fee'] * 200, 3).'%' }} · excludes spread, slippage and conversions</dd>
                         <dt>Minimum quantity</dt><dd>{{ $number($market['min_amount']) }} {{ $item['base'] }}</dd>
                         <dt>Minimum order value</dt><dd>{{ $number($market['min_cost']) }} {{ $item['quote'] }}</dd>
                         <dt>Indicative minimum</dt><dd>{{ $number($market['indicative_min_cost']) }} {{ $item['quote'] }}</dd>
