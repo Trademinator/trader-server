@@ -4,6 +4,7 @@ namespace App\Domain\Intelligence;
 
 use App\Domain\Features\FeatureEngine;
 use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\Research\DatasetRows;
 use App\Domain\Research\DatasetStore;
 use App\Domain\Research\SemanticLabels;
 use App\Models\HumanTrainingReview;
@@ -93,11 +94,11 @@ final class HumanTraining
             if ($pending !== null) {
                 return $pending;
             }
-            [$manifest, $rows] = $this->datasets->load($dataset);
+            [$manifest, $rows] = $this->datasets->open($dataset);
             if ($manifest['feature_version'] !== FeatureEngine::VERSION
                 || ($manifest['label_definition']['version'] ?? null) !== SemanticLabels::VERSION
                 || $manifest['as_of_ms'] > now()->getTimestampMs()
-                || $rows === []) {
+                || count($rows) === 0) {
                 throw ValidationException::withMessages(['dataset' => 'Choose a current semantic dataset built from closed candles.']);
             }
             $candidate = $this->candidateSnapshot($trainer, $manifest, $rows, 'reviews');
@@ -121,7 +122,7 @@ final class HumanTraining
      *
      * @return array{row: array, snapshot: HumanTrainingSnapshot}|null
      */
-    public function candidateSnapshot(User $trainer, array $manifest, array $rows, string $relation,
+    public function candidateSnapshot(User $trainer, array $manifest, array|DatasetRows $rows, string $relation,
         bool $allowReviewed = false): ?array
     {
         Gate::forUser($trainer)->authorize('train-intelligence');
@@ -134,6 +135,9 @@ final class HumanTraining
             throw new InvalidArgumentException('Candidate selection exceeds the dataset bound.');
         }
         $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
+        if ($rows instanceof DatasetRows) {
+            return $this->indexedCandidate($trainer, $manifest, $rows, $table, $marketKey, $allowReviewed);
+        }
         $seen = [];
         $decisions = array_values(array_unique(array_map('intval', array_column($rows, 'decision_at_ms'))));
         foreach (array_chunk($decisions, 500) as $chunk) {
@@ -154,6 +158,40 @@ final class HumanTraining
             fn (HumanTrainingSnapshot $snapshot): bool => DB::table($table)
                 ->where('snapshot_id', $snapshot->snapshot_id)->where('trainer_id', $trainer->user_id)->exists(),
             (int) config('human_training.candidate_attempts'), $allowReviewed);
+    }
+
+    /** Sample compact row identities and stream recorded timestamps before hydrating any charts. */
+    private function indexedCandidate(User $trainer, array $manifest, DatasetRows $rows, string $table,
+        string $marketKey, bool $allowReviewed): ?array
+    {
+        if (count($rows) === 0) {
+            return null;
+        }
+        $recorded = DB::table('human_training_snapshots as snapshots')
+            ->select('snapshots.decision_at_ms')->distinct()
+            ->where('snapshots.market_key', $marketKey)->where('snapshots.version', self::VERSION)
+            ->whereBetween('snapshots.decision_at_ms', [$rows->at(0)['decision_at_ms'], $rows->at(count($rows) - 1)['decision_at_ms']])
+            ->whereExists(fn ($query) => $query->selectRaw('1')->from($table.' as opinions')
+                ->whereColumn('opinions.snapshot_id', 'snapshots.snapshot_id')
+                ->where('opinions.trainer_id', $trainer->user_id))
+            ->lazyById(500, 'snapshots.decision_at_ms', 'decision_at_ms')->getIterator();
+        $isRecorded = function (array $row) use ($recorded): bool {
+            while ($recorded->valid() && (int) $recorded->current()->decision_at_ms < $row['decision_at_ms']) {
+                $recorded->next();
+            }
+
+            return $recorded->valid() && (int) $recorded->current()->decision_at_ms === $row['decision_at_ms'];
+        };
+        $candidate = (new TrainingCandidateSelector)->select($rows->metadata(), $isRecorded,
+            fn (array $row): ?HumanTrainingSnapshot => $this->snapshotForRow($manifest, $rows->at($row['index'])),
+            fn (HumanTrainingSnapshot $snapshot): bool => DB::table($table)
+                ->where('snapshot_id', $snapshot->snapshot_id)->where('trainer_id', $trainer->user_id)->exists(),
+            (int) config('human_training.candidate_attempts'), $allowReviewed);
+        if ($candidate !== null) {
+            $candidate['row'] = $rows->at($candidate['row']['index']);
+        }
+
+        return $candidate;
     }
 
     public function snapshotForRow(array $manifest, array $row): ?HumanTrainingSnapshot

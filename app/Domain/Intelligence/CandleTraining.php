@@ -4,6 +4,7 @@ namespace App\Domain\Intelligence;
 
 use App\Domain\Features\FeatureEngine;
 use App\Domain\MarketData\MarketCatalog;
+use App\Domain\Research\DatasetRows;
 use App\Domain\Research\DatasetStore;
 use App\Domain\Research\SemanticLabels;
 use App\Models\Exchange;
@@ -68,7 +69,7 @@ final class CandleTraining
             $row = $candidate['row'];
             $snapshot = $candidate['snapshot'];
         } else {
-            $row = collect($rows)->firstWhere('decision_at_ms', $decisionAtMs);
+            $row = $rows->findDecision($decisionAtMs);
             if ($row === null) {
                 throw ValidationException::withMessages(['decision_at_ms' => 'Choose a candle contained in this dataset.']);
             }
@@ -79,9 +80,10 @@ final class CandleTraining
                 'That candle no longer matches the current source history and cannot be used for training.');
         }
         $payload = $snapshot->verifiedPayload();
-        $rowIndex = array_search($row['decision_at_ms'], array_column($rows, 'decision_at_ms'), true);
+        $rowIndex = $rows->indexOfDecision($row['decision_at_ms']);
+        $first = $rows->at(0);
         $payload['series'] = array_values(array_filter($payload['series'],
-            fn (array $candle): bool => $rows[0]['microtimestamp'] <= $candle['time'] * 1000));
+            fn (array $candle): bool => $first['microtimestamp'] <= $candle['time'] * 1000));
         $chart = $this->chartData($trainer, $manifest, $rows, $payload['series']);
         $label = HumanCandleLabel::query()->where('snapshot_id', $snapshot->snapshot_id)
             ->where('trainer_id', $trainer->user_id)->first();
@@ -89,15 +91,15 @@ final class CandleTraining
         return ['manifest' => $manifest, 'snapshot' => $snapshot, 'payload' => $payload,
             'label' => $label, 'review_required' => $label === null && ($payload['revision']['requires_review'] ?? false), 'visible_labels' => $chart['labels'], 'decisions' => $chart['decisions'],
             'allowed_actions' => $chart['allowed_actions'],
-            'earliest_time' => intdiv($rows[0]['microtimestamp'], 1000),
-            'earliest_window_decision_at_ms' => $rows[min(count($rows) - 1,
-                max(0, (int) config('human_training.chart_candles') - 1))]['decision_at_ms'],
-            'latest_decision_at_ms' => $rows[array_key_last($rows)]['decision_at_ms'],
-            'has_more' => $payload['series'][0]['time'] * 1000 > $rows[0]['microtimestamp'],
+            'earliest_time' => intdiv($first['microtimestamp'], 1000),
+            'earliest_window_decision_at_ms' => $rows->at(min(count($rows) - 1,
+                max(0, (int) config('human_training.chart_candles') - 1)))['decision_at_ms'],
+            'latest_decision_at_ms' => $rows->at(count($rows) - 1)['decision_at_ms'],
+            'has_more' => $payload['series'][0]['time'] * 1000 > $first['microtimestamp'],
             'label_stats' => $this->labelStats($trainer, $manifest),
             'taker_fee' => $this->takerFee($manifest),
-            'previous_decision_at_ms' => is_int($rowIndex) && $rowIndex > 0 ? $rows[max(0, $rowIndex - self::PAGE_SIZE)]['decision_at_ms'] : null,
-            'next_decision_at_ms' => is_int($rowIndex) && $rowIndex + 1 < count($rows) ? $rows[min(count($rows) - 1, $rowIndex + self::PAGE_SIZE)]['decision_at_ms'] : null];
+            'previous_decision_at_ms' => is_int($rowIndex) && $rowIndex > 0 ? $rows->at(max(0, $rowIndex - self::PAGE_SIZE))['decision_at_ms'] : null,
+            'next_decision_at_ms' => is_int($rowIndex) && $rowIndex + 1 < count($rows) ? $rows->at(min(count($rows) - 1, $rowIndex + self::PAGE_SIZE))['decision_at_ms'] : null];
     }
 
     /** A bounded page of older candles, with only this trainer's compatible labels. */
@@ -105,25 +107,25 @@ final class CandleTraining
     {
         Gate::forUser($trainer)->authorize('train-intelligence');
         [$manifest, $rows] = $this->load($dataset);
-        $replay = collect($rows)->firstWhere('decision_at_ms', $decisionAtMs);
+        $replay = $rows->findDecision($decisionAtMs);
         if ($replay === null || $beforeMs > $replay['microtimestamp']) {
             throw ValidationException::withMessages(['before_ms' => 'Choose history before the current replay candle.']);
         }
-        $candidates = array_values(array_filter($rows,
-            fn (array $row): bool => $row['microtimestamp'] < $beforeMs && $row['decision_at_ms'] <= $decisionAtMs));
-        if ($candidates === []) {
+        $candidate = $rows->before($beforeMs, $decisionAtMs);
+        if ($candidate === null) {
             return ['series' => [], 'labels' => [], 'decisions' => [], 'allowed_actions' => [], 'has_more' => false];
         }
-        $snapshot = $this->snapshots->snapshotForRow($manifest, $candidates[array_key_last($candidates)]);
+        $snapshot = $this->snapshots->snapshotForRow($manifest, $candidate);
         if ($snapshot === null) {
             throw CandleTrainingRecovery::exception($trainer, $manifest, 'before_ms');
         }
+        $first = $rows->at(0);
         $series = array_slice(array_values(array_filter($snapshot->verifiedPayload()['series'],
             fn (array $candle): bool => $beforeMs > $candle['time'] * 1000
-                && $rows[0]['microtimestamp'] <= $candle['time'] * 1000)), -self::PAGE_SIZE);
+                && $first['microtimestamp'] <= $candle['time'] * 1000)), -self::PAGE_SIZE);
 
         return ['series' => $series, ...$this->chartData($trainer, $manifest, $rows, $series),
-            'has_more' => $series !== [] && $series[0]['time'] * 1000 > $rows[0]['microtimestamp']];
+            'has_more' => $series !== [] && $series[0]['time'] * 1000 > $first['microtimestamp']];
     }
 
     /** Advance only within the immutable dataset selected when the page opened. */
@@ -131,17 +133,17 @@ final class CandleTraining
     {
         Gate::forUser($trainer)->authorize('train-intelligence');
         [$manifest, $rows] = $this->load($dataset);
-        $replayIndex = array_search($decisionAtMs, array_column($rows, 'decision_at_ms'), true);
-        if ($replayIndex === false || $rows[$replayIndex]['microtimestamp'] !== $afterMs) {
+        $replayIndex = $rows->indexOfDecision($decisionAtMs);
+        if ($replayIndex === null || $rows->at($replayIndex)['microtimestamp'] !== $afterMs) {
             throw ValidationException::withMessages(['after_ms' => 'Continue from the last loaded replay candle.']);
         }
-        if ($replayIndex === array_key_last($rows)) {
+        if ($replayIndex === count($rows) - 1) {
             return ['series' => [], 'labels' => [], 'decisions' => [], 'allowed_actions' => [],
                 'decision_at_ms' => $decisionAtMs, 'has_more' => false];
         }
         $pageSize = min(self::PAGE_SIZE, max(1, (int) config('human_training.chart_candles')));
         $nextIndex = min(count($rows) - 1, $replayIndex + $pageSize);
-        $row = $rows[$nextIndex];
+        $row = $rows->at($nextIndex);
         $snapshot = $this->snapshots->snapshotForRow($manifest, $row);
         if ($snapshot === null) {
             throw CandleTrainingRecovery::exception($trainer, $manifest, 'after_ms');
@@ -152,9 +154,9 @@ final class CandleTraining
         return ['series' => $series, ...$this->chartData($trainer, $manifest, $rows, $series),
             'decision_at_ms' => $row['decision_at_ms'],
             'has_more' => $nextIndex < count($rows) - 1,
-            'previous_decision_at_ms' => $rows[max(0, $nextIndex - self::PAGE_SIZE)]['decision_at_ms'],
+            'previous_decision_at_ms' => $rows->at(max(0, $nextIndex - self::PAGE_SIZE))['decision_at_ms'],
             'next_decision_at_ms' => $nextIndex < count($rows) - 1
-                ? $rows[min(count($rows) - 1, $nextIndex + self::PAGE_SIZE)]['decision_at_ms'] : null];
+                ? $rows->at(min(count($rows) - 1, $nextIndex + self::PAGE_SIZE))['decision_at_ms'] : null];
     }
 
     public function save(User $trainer, string $dataset, int $decisionAtMs, string $action): HumanCandleLabel
@@ -230,7 +232,7 @@ final class CandleTraining
 
         // Keep the full algorithm context, but verify only one chronological
         // page per request. Snapshot UUIDs reflect review order, not candle time.
-        $rowBatch = array_slice($rows, $offset, self::AUTO_LABEL_BATCH_SIZE);
+        $rowBatch = $rows->slice($offset, self::AUTO_LABEL_BATCH_SIZE);
         $tickers = array_slice($tickers, $offset, count($rowBatch));
         $processed = $offset + count($rowBatch);
         $existing = collect();
@@ -282,12 +284,11 @@ final class CandleTraining
             throw ValidationException::withMessages(['changes' => 'Too many candle-label changes were submitted at once.']);
         }
 
-        $rowsByDecision = array_column($rows, null, 'decision_at_ms');
         $prepared = [];
         foreach ($changes as $change) {
             $decision = (int) ($change['decision_at_ms'] ?? 0);
             $action = $change['action'] ?? null;
-            $row = $rowsByDecision[$decision] ?? null;
+            $row = $rows->findDecision($decision);
             if ($row === null || ($action !== null && ! in_array($action, self::ACTIONS, true))) {
                 throw ValidationException::withMessages(['changes' => 'A staged candle label no longer belongs to this frozen dataset.']);
             }
@@ -364,12 +365,12 @@ final class CandleTraining
         return ['saved' => $saved, 'deleted_all' => $deleteAll, 'stats' => $this->labelStats($trainer, $manifest)];
     }
 
-    private function chartData(User $trainer, array $manifest, array $rows, array $series): array
+    private function chartData(User $trainer, array $manifest, DatasetRows $rows, array $series): array
     {
         $decisions = [];
         $allowedActions = [];
         $visibleTimes = array_flip(array_column($series, 'time'));
-        $available = array_column($rows, null, 'microtimestamp');
+        $available = $rows->forTimestamps(array_map(fn (array $candle): int => $candle['time'] * 1000, $series));
         foreach ($series as $candle) {
             $allowedActions[(string) $candle['time']] = $this->allowedActions($candle);
             $microtimestamp = $candle['time'] * 1000;
@@ -386,7 +387,7 @@ final class CandleTraining
             ->whereHas('candleLabels', fn ($query) => $query->where('trainer_id', $trainer->user_id))
             ->with(['candleLabels' => fn ($query) => $query->where('trainer_id', $trainer->user_id)])
             ->orderBy('decision_at_ms')->get();
-        $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $visibleLabels, $rows);
+        $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $visibleLabels, array_values($available));
         $visibleLabels = $visibleLabels->filter(fn (HumanTrainingSnapshot $snapshot): bool => isset($compatible[$snapshot->snapshot_id]))
             ->map(function (HumanTrainingSnapshot $item) use ($available, $manifest, $visibleTimes): ?array {
                 $label = $item->candleLabels->first();
@@ -428,11 +429,11 @@ final class CandleTraining
 
     private function load(string $dataset): array
     {
-        [$manifest, $rows] = $this->datasets->load($dataset);
+        [$manifest, $rows] = $this->datasets->open($dataset);
         if (($manifest['feature_version'] ?? null) !== FeatureEngine::VERSION
             || ($manifest['label_definition']['version'] ?? null) !== SemanticLabels::VERSION
             || ($manifest['as_of_ms'] ?? PHP_INT_MAX) > now()->getTimestampMs()
-            || $rows === []) {
+            || count($rows) === 0) {
             throw ValidationException::withMessages(['dataset' => 'Choose a current semantic dataset built from closed candles.']);
         }
 
@@ -440,7 +441,7 @@ final class CandleTraining
     }
 
     /** @return array{row: array, snapshot: HumanTrainingSnapshot} */
-    private function unseenSnapshot(User $trainer, array $manifest, array $rows): array
+    private function unseenSnapshot(User $trainer, array $manifest, DatasetRows $rows): array
     {
         $candidate = $this->snapshots->candidateSnapshot($trainer, $manifest, $rows, 'candleLabels', allowReviewed: true);
         if ($candidate !== null) {

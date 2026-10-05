@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use RuntimeException;
+use Throwable;
 
 final class DatasetStore
 {
@@ -41,6 +42,18 @@ final class DatasetStore
 
     public function load(string $id, ?int $maxRows = null): array
     {
+        return $this->read($id, $maxRows, indexed: false);
+    }
+
+    /** @return array{array, DatasetRows} */
+    public function open(string $id, ?int $maxRows = null): array
+    {
+        return $this->read($id, $maxRows, indexed: true);
+    }
+
+    /** Verify the complete artifact before exposing either rows or their disk index. */
+    private function read(string $id, ?int $maxRows, bool $indexed): array
+    {
         $manifest = $this->manifest($id);
         $semantic = ($manifest['label_definition']['version'] ?? null) === SemanticLabels::VERSION;
         $limit = min($semantic ? PHP_INT_MAX : (int) config('research.max_rows'), $maxRows ?? PHP_INT_MAX);
@@ -53,8 +66,17 @@ final class DatasetStore
         }
         $hash = hash_init('sha256');
         $rows = [];
+        $index = null;
+        $count = 0;
+        $offset = 0;
         $previous = null;
         try {
+            if ($indexed) {
+                $index = @tmpfile();
+                if ($index === false) {
+                    throw new RuntimeException('Could not create the temporary dataset index.');
+                }
+            }
             while (($line = fgets($file)) !== false) {
                 hash_update($hash, $line);
                 $row = json_decode($line, true, flags: JSON_THROW_ON_ERROR);
@@ -64,20 +86,34 @@ final class DatasetStore
                     throw new RuntimeException('Invalid dataset row contract.');
                 }
                 $previous = $row['decision_at_ms'];
-                $rows[] = $row;
-                if (count($rows) > $limit) {
+                if ($indexed) {
+                    self::write($index, DatasetRows::indexEntry($offset, $row, $line));
+                } else {
+                    $rows[] = $row;
+                }
+                $offset += strlen($line);
+                $count++;
+                if ($count > $limit) {
                     throw new RuntimeException('Dataset exceeds research.max_rows.');
                 }
             }
             if (! feof($file)) {
                 throw new RuntimeException('Failed reading dataset rows.');
             }
-        } finally {
+            if (! hash_equals($manifest['rows_sha256'], hash_final($hash)) || $count !== $manifest['rows']) {
+                throw new RuntimeException('Dataset checksum or row count mismatch.');
+            }
+            if ($indexed) {
+                return [$manifest, new DatasetRows($file, $index, $count)];
+            }
+        } catch (Throwable $exception) {
             fclose($file);
+            if (is_resource($index)) {
+                fclose($index);
+            }
+            throw $exception;
         }
-        if (! hash_equals($manifest['rows_sha256'], hash_final($hash)) || count($rows) !== $manifest['rows']) {
-            throw new RuntimeException('Dataset checksum or row count mismatch.');
-        }
+        fclose($file);
 
         return [$manifest, $rows];
     }
