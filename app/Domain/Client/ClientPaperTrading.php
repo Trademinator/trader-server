@@ -2,10 +2,13 @@
 
 namespace App\Domain\Client;
 
+use App\Domain\MarketData\CandleTimeframe;
 use App\Helpers\Decimal;
 use App\Models\ClientPaperAccount;
 use App\Models\ClientPaperEvent;
+use App\Models\MarketSignal;
 use App\Models\MarketSubscription;
+use App\Repositories\TickerRepository;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
@@ -13,7 +16,12 @@ final class ClientPaperTrading
 {
     private const SCALE = 18;
 
-    public function __construct(private ClientDecisionService $decisions, private PaperExecutionModel $execution) {}
+    public function __construct(
+        private ClientDecisionService $decisions,
+        private PaperExecutionModel $execution,
+        private TickerRepository $tickers,
+        private CandleTimeframe $timeframe,
+    ) {}
 
     public function execute(MarketSubscription $subscription, array $input): array
     {
@@ -144,13 +152,12 @@ final class ClientPaperTrading
                     self::SCALE
                 );
             }
-            $equity = bcadd($this->d($account->quote_balance), bcmul($this->d($account->base_balance), $bid, self::SCALE), self::SCALE);
-            if (bccomp($equity, $this->d($account->peak_equity), self::SCALE) > 0) {
-                $account->peak_equity = $equity;
-            }
+            $valuation = $this->recordValuation($account, [
+                'price' => $bid, 'source' => 'client_bid', 'observed_at_ms' => (int) $input['reported_at_ms'],
+            ]);
             $account->save();
 
-            $summary = $this->summary($account, $bid);
+            $summary = $this->summary($account, $valuation);
             $result = [
                 'api_version' => 1,
                 'event' => $event,
@@ -197,27 +204,144 @@ final class ClientPaperTrading
 
     public function current(MarketSubscription $subscription, ?string $bid = null): ?array
     {
-        $account = ClientPaperAccount::query()->where('user_id', $subscription->user_id)
-            ->where('market_subscription_id', $subscription->getKey())->first();
-        if ($account === null) {
+        return DB::transaction(function () use ($subscription, $bid): ?array {
+            $account = ClientPaperAccount::query()->where('user_id', $subscription->user_id)
+                ->where('market_subscription_id', $subscription->getKey())->lockForUpdate()->first();
+            if ($account === null) {
+                return null;
+            }
+
+            $valuation = $bid === null ? $this->marketValuation($subscription, $this->savedValuation($account)) : [
+                'price' => $this->d($bid), 'source' => 'client_bid', 'observed_at_ms' => now()->getTimestampMs(),
+            ];
+            if ($valuation !== null) {
+                $valuation = $this->recordValuation($account, $valuation);
+                if ($account->isDirty()) {
+                    $account->save();
+                }
+            }
+
+            return $this->summary($account, $valuation);
+        }, 3);
+    }
+
+    /**
+     * @param  array{price: string, source: string, observed_at_ms: int}|null  $valuation
+     * @return array{price: string, source: string, observed_at_ms: int}|null
+     */
+    private function marketValuation(MarketSubscription $subscription, ?array $valuation): ?array
+    {
+        $subscription->loadMissing('market.exchange', 'market.feed');
+        $market = $subscription->market;
+        $period = $market->feed?->selected_period;
+        if (! in_array($period, CandleTimeframe::SUPPORTED, true)) {
+            return $valuation;
+        }
+
+        $now = now()->getTimestampMs();
+        $signal = MarketSignal::query()->where('market_id', $market->getKey())->where('period', $period)
+            ->where('decision_at_ms', '>', 0)->where('decision_at_ms', '<=', $now)
+            ->where('recorded_at_ms', '<=', $now)
+            ->orderByDesc('recorded_at_ms')->orderByDesc('market_signal_id')->first();
+        $price = $this->usablePrice($signal?->payload['reference_price'] ?? null);
+        if ($price !== null && ($valuation === null || $signal->decision_at_ms > $valuation['observed_at_ms'])) {
+            $valuation = ['price' => $price, 'source' => 'signal_reference_price', 'observed_at_ms' => $signal->decision_at_ms];
+        }
+
+        $exchange = $market->exchange->class;
+        $timestamps = $this->tickers->pageTimestamps($exchange, $market->symbol, $period, 'latest', null, $now, 2);
+        $latest = $this->tickers->latestTimestamp($exchange, $market->symbol, $period);
+        if ($latest !== null) {
+            $timestamps[] = $latest;
+        }
+        $timestamps = array_unique($timestamps);
+        rsort($timestamps, SORT_NUMERIC);
+
+        foreach ($timestamps as $timestamp) {
+            $closedAt = $this->timeframe->next($timestamp, $period);
+            if ($timestamp < 0 || $closedAt > $now) {
+                continue;
+            }
+            if ($valuation !== null && ($closedAt < $valuation['observed_at_ms']
+                || ($closedAt === $valuation['observed_at_ms'] && $valuation['source'] === 'client_bid'))) {
+                break;
+            }
+            foreach ($this->tickers->streamHistory($exchange, $market->symbol, $period, $timestamp, $timestamp) as $candle) {
+                $price = $this->usablePrice($candle['close'] ?? null);
+                if ($price !== null) {
+                    return ['price' => $price, 'source' => 'closed_candle_close', 'observed_at_ms' => $closedAt];
+                }
+            }
+        }
+
+        return $valuation;
+    }
+
+    private function usablePrice(mixed $value): ?string
+    {
+        if (! is_numeric($value) || ! is_finite((float) $value)) {
             return null;
         }
 
-        return $this->summary($account, $bid === null ? $account->benchmark_start_price : $this->d($bid));
+        $price = $this->d($value);
+
+        return bccomp($price, '0', self::SCALE) > 0 ? $price : null;
     }
 
-    private function summary(ClientPaperAccount $account, string $bid): array
+    private function equity(ClientPaperAccount $account, string $price): string
     {
-        $equity = bcadd($this->d($account->quote_balance), bcmul($this->d($account->base_balance), $bid, self::SCALE), self::SCALE);
+        return bcadd($this->d($account->quote_balance), bcmul($this->d($account->base_balance), $price, self::SCALE), self::SCALE);
+    }
+
+    /** @return array{price: string, source: string, observed_at_ms: int}|null */
+    private function savedValuation(ClientPaperAccount $account): ?array
+    {
+        $price = $this->usablePrice($account->valuation_price);
+        $observedAt = $account->valuation_at_ms;
+        if ($price === null || $observedAt === null || $observedAt <= 0 || $observedAt > now()->getTimestampMs()
+            || $account->valuation_source === null) {
+            return null;
+        }
+
+        return ['price' => $price, 'source' => $account->valuation_source, 'observed_at_ms' => $observedAt];
+    }
+
+    /**
+     * @param  array{price: string, source: string, observed_at_ms: int}  $valuation
+     * @return array{price: string, source: string, observed_at_ms: int}
+     */
+    private function recordValuation(ClientPaperAccount $account, array $valuation): array
+    {
+        $saved = $this->savedValuation($account);
+        if ($saved !== null && $saved['observed_at_ms'] > $valuation['observed_at_ms']) {
+            $valuation = $saved;
+        }
+        $account->valuation_price = $valuation['price'];
+        $account->valuation_source = $valuation['source'];
+        $account->valuation_at_ms = $valuation['observed_at_ms'];
+
+        $equity = $this->equity($account, $valuation['price']);
+        if (bccomp($equity, $this->d($account->peak_equity), self::SCALE) > 0) {
+            $account->peak_equity = $equity;
+        }
+
+        return $valuation;
+    }
+
+    /** @param array{price: string, source: string, observed_at_ms: int}|null $valuation */
+    private function summary(ClientPaperAccount $account, ?array $valuation): array
+    {
+        $price = $valuation['price'] ?? null;
+        $equity = $price === null ? null : $this->equity($account, $price);
         $initial = $this->d($account->initial_quote_balance);
-        $benchmark = bcmul($this->d($account->benchmark_base_quantity), $bid, self::SCALE);
+        $benchmark = $price === null ? null : bcmul($this->d($account->benchmark_base_quantity), $price, self::SCALE);
         $peak = $this->d($account->peak_equity);
-        $drawdown = bccomp($peak, '0', self::SCALE) > 0
-            ? bcmul(bcdiv(bcsub($peak, $equity, self::SCALE), $peak, self::SCALE), '100', 8) : '0';
-        $return = bccomp($initial, '0', self::SCALE) > 0
-            ? bcmul(bcdiv(bcsub($equity, $initial, self::SCALE), $initial, self::SCALE), '100', 8) : '0';
-        $benchmarkReturn = bccomp($initial, '0', self::SCALE) > 0
-            ? bcmul(bcdiv(bcsub($benchmark, $initial, self::SCALE), $initial, self::SCALE), '100', 8) : '0';
+        $drawdown = $equity === null ? null : (bccomp($peak, '0', self::SCALE) > 0
+            ? bcmul(bcdiv(bcsub($peak, $equity, self::SCALE), $peak, self::SCALE), '100', 8) : '0');
+        $return = $equity === null ? null : (bccomp($initial, '0', self::SCALE) > 0
+            ? bcmul(bcdiv(bcsub($equity, $initial, self::SCALE), $initial, self::SCALE), '100', 8) : '0');
+        $benchmarkReturn = $benchmark === null ? null : (bccomp($initial, '0', self::SCALE) > 0
+            ? bcmul(bcdiv(bcsub($benchmark, $initial, self::SCALE), $initial, self::SCALE), '100', 8) : '0');
         $events = $account->events()->count();
         $fills = $account->events()->where('event', 'executed')->count();
 
@@ -227,16 +351,22 @@ final class ClientPaperTrading
             'base_balance' => $account->base_balance,
             'equity_quote' => $equity,
             'initial_quote_balance' => $account->initial_quote_balance,
-            'return_pct' => (float) $return,
+            'return_pct' => $return === null ? null : (float) $return,
             'peak_equity_quote' => $account->peak_equity,
-            'drawdown_pct' => (float) $drawdown,
+            'drawdown_pct' => $drawdown === null ? null : (float) $drawdown,
+            'valuation' => [
+                'price' => $price,
+                'source' => $valuation['source'] ?? 'unavailable',
+                'observed_at_ms' => $valuation['observed_at_ms'] ?? null,
+                'age_seconds' => $valuation === null ? null : max(0, intdiv(now()->getTimestampMs() - $valuation['observed_at_ms'], 1000)),
+            ],
             'fees_quote' => $account->realized_fees_quote,
             'fees_quote_equivalent' => $account->realized_fees_quote,
             'benchmark' => [
                 'method' => 'passive_buy_and_hold_after_one_entry_fee',
                 'start_price' => $account->benchmark_start_price,
                 'equity_quote' => $benchmark,
-                'return_pct' => (float) $benchmarkReturn,
+                'return_pct' => $benchmarkReturn === null ? null : (float) $benchmarkReturn,
             ],
             'sample_size' => ['evaluations' => $events, 'fills' => $fills],
             'window' => ['started_at_ms' => $account->started_at_ms, 'as_of_ms' => now()->getTimestampMs()],

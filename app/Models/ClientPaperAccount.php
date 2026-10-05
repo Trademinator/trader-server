@@ -20,11 +20,12 @@ class ClientPaperAccount extends Model
     protected $fillable = [
         'user_id', 'market_subscription_id', 'quote_balance', 'base_balance', 'initial_quote_balance',
         'benchmark_base_quantity', 'benchmark_start_price', 'peak_equity', 'realized_fees_quote', 'started_at_ms',
+        'valuation_price', 'valuation_source', 'valuation_at_ms',
     ];
 
     protected function casts(): array
     {
-        return ['started_at_ms' => 'integer'];
+        return ['started_at_ms' => 'integer', 'valuation_at_ms' => 'integer'];
     }
 
     public function subscription(): BelongsTo
