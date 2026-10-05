@@ -33,7 +33,7 @@ final class IntelligenceReadiness
             'issues' => [], 'tuning' => null, 'holdout' => null, 'next_training' => $this->nextTraining(),
             'queue' => config('intelligence.queue'), 'source' => $this->source($report), 'schema' => null, 'full_schema' => null,
             'evidence_evaluated' => in_array($signal['reason'], ['supported', 'no_similar_history',
-                'insufficient_effective_neighbors', 'tied_votes', 'weak_consensus'], true),
+                'insufficient_effective_neighbors', 'tied_votes', 'weak_consensus', 'tied_model_scores', 'weak_model_consensus'], true),
             'action' => $this->action($signal['reason']),
             'pattern_minimum' => $report['pattern_settings']['min_samples'] ?? config('intelligence.patterns.min_samples'),
         ];
@@ -269,7 +269,8 @@ final class IntelligenceReadiness
             'missing_features', 'stale_features', 'missing_selected_features', 'source_feature_mismatch' => 'Check collection and rebuild the selected M2 features. Then rebuild the model if needed.',
             'no_post_training_candle' => 'Wait for the next genuinely closed candle and its feature build.',
             'awaiting_recording' => 'A validated model is available. Wait for the next signal recording and intelligence queue run; an older observation is not a current signal.',
-            'no_similar_history', 'insufficient_effective_neighbors', 'tied_votes', 'weak_consensus' => 'The model is available but this market state lacks sufficient evidence. More time does not guarantee a directional signal.',
+            'no_similar_history', 'insufficient_effective_neighbors', 'tied_votes', 'weak_consensus',
+            'tied_model_scores', 'weak_model_consensus' => 'The model is available but this market state lacks sufficient evidence. More time does not guarantee a directional signal.',
             'supported' => 'The model passed validation and evaluated the current candle. HOLD can also be a supported model decision.',
             default => 'Check the intelligence worker logs, failed jobs and shared model storage, then rebuild the model.',
         };

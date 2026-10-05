@@ -81,8 +81,9 @@ final class ValidationGateCalibration
             'exchange' => $artifact['exchange'] ?? null,
             'symbol' => $artifact['symbol'] ?? null,
             'period' => $artifact['period'] ?? null,
-            'status' => $artifact['status'] ?? null,
-            'reason' => $artifact['reason'] ?? null,
+            'status' => $artifact['automatic']['status'] ?? $artifact['status'] ?? null,
+            'reason' => $artifact['automatic']['reason'] ?? $artifact['reason'] ?? null,
+            'scoring_component' => isset($artifact['ensemble']) ? 'automatic' : 'legacy_model',
             'validation_version' => $artifact['validation_version'] ?? null,
             'holdout_from_ms' => $artifact['holdout_from_ms'] ?? null,
             'evaluated' => $evaluated,
@@ -192,7 +193,8 @@ final class ValidationGateCalibration
         }
 
         $candleFrom = null;
-        if (($artifact['candle_guidance']['influence'] ?? false) === true) {
+        if (($artifact['candle_guidance']['influence'] ?? false) === true
+            && ($artifact['candle_guidance']['mode'] ?? null) !== 'independent_knn') {
             $candleFrom = $artifact['candle_guidance']['downstream_from_ms'] ?? null;
             if (! is_int($candleFrom)) {
                 throw new RuntimeException('Candle-guidance downstream cutoff is invalid.');

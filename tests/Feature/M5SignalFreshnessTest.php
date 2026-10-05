@@ -1,5 +1,6 @@
 <?php
 
+use App\Domain\Intelligence\KnnEnsemble;
 use App\Domain\Intelligence\ModelStore;
 use App\Models\ClientApiKey;
 use App\Models\ClientMarketSetting;
@@ -23,7 +24,7 @@ function f6Bearer(User $user): string
     return $secret;
 }
 
-function f6Market(User $user, string $period, int $decisionAtMs, string $referencePrice = '100'): array
+function f6Market(User $user, string $period, int $decisionAtMs, string $referencePrice = '100', array $extraPayload = []): array
 {
     $exchange = Exchange::query()->create(['name' => 'Kraken', 'class' => 'kraken', 'config' => '{}']);
     $market = Market::query()->create([
@@ -64,7 +65,7 @@ function f6Market(User $user, string $period, int $decisionAtMs, string $referen
         'recorded_at_ms' => now()->getTimestampMs(), 'is_change' => true,
         'action' => 'buy', 'reason' => 'supported',
         'payload' => ['confidence' => 0.8, 'evidence_score' => 0.8,
-            'reference_price' => $referencePrice, 'reference_price_source' => 'closed_candle_close'],
+            'reference_price' => $referencePrice, 'reference_price_source' => 'closed_candle_close', ...$extraPayload],
     ]);
 
     return [f6Bearer($user), $subscription, $signal];
@@ -97,6 +98,26 @@ it('caps coarse-period signals at the wall clock maximum', function () {
         ->assertOk()
         ->assertJsonPath('eligible', false)
         ->assertJsonPath('reason', 'stale_signal');
+});
+
+it('returns the saved independent model scores in decision and market payloads', function () {
+    $this->freezeTime();
+    $user = User::factory()->create();
+    $prediction = ['action' => 'buy', 'reason' => 'supported', 'confidence' => 1.0,
+        'votes' => ['buy' => 1.0, 'hodl' => 0.0, 'sell' => 0.0],
+        'similarity' => 1.0, 'neighbors' => 9, 'effective_neighbors' => 9.0];
+    $result = app(KnnEnsemble::class)->combine($prediction, $prediction, config('intelligence.ensemble'));
+    [$secret, $subscription] = f6Market($user, '1h', now()->subMinutes(30)->getTimestampMs(), extraPayload: ['scoring' => $result['scoring']]);
+
+    $this->withToken($secret)->postJson('/api/v1/client/markets/'.$subscription->getKey().'/decision', f6DecisionState(100))
+        ->assertOk()->assertJsonPath('eligible', true)
+        ->assertJsonPath('action_meaning', 'supported_buy_by_weighted_models')
+        ->assertJsonPath('server_signal.scoring', json_decode(json_encode($result['scoring']), true))
+        ->assertJsonMissingPath('server_signal.scoring.knowledge');
+    $this->withToken($secret)->getJson('/api/v1/client/markets/'.$subscription->getKey())
+        ->assertOk()->assertJsonPath('market.signal.scoring.components.human_candle.action', 'buy')
+        ->assertJsonPath('market.signal.scoring.effective_weights.human_candle', 0.6)
+        ->assertJsonPath('market.signal.action_meaning', 'supported_buy_by_weighted_models');
 });
 
 it('rejects excessive drift from the signal reference price and accepts bounded drift', function () {

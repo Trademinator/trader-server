@@ -2,7 +2,7 @@
 
 return [
     'enabled' => env('HUMAN_TRAINING_ENABLED', true),
-    // Both are optional enhancements, never model-readiness prerequisites.
+    // Trend annotations remain available for research, but never enter live scoring.
     'trend_enabled' => env('HUMAN_TREND_TRAINING_ENABLED', false),
     'candle_enabled' => env('HUMAN_CANDLE_TRAINING_ENABLED', true),
     'auxiliary_max_seconds' => 90,
@@ -21,5 +21,10 @@ return [
     // Compared against natural frequencies on chronological tuning data only.
     'candle_target_weights' => ['buy' => 0.25, 'hold' => 0.50, 'sell' => 0.25],
     'candle_k' => 9,
+    // Independent validation against human candle actions, not automatic labels.
+    'candle_validation' => [
+        'min_validation_rows' => 10,
+        'min_directional_predictions' => 3,
+    ],
     'candle_min_precision_gain' => 0.02,
 ];

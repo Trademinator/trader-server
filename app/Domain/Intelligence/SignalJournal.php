@@ -40,7 +40,8 @@ final class SignalJournal
                 && $previous->action === $signal['action'] && ($previous->payload['regime'] ?? null) === ($signal['regime'] ?? null)
                 && ($previous->payload['reference_price'] ?? null) === ($signal['reference_price'] ?? null)
                 && ($previous->payload['reference_price_source'] ?? null) === ($signal['reference_price_source'] ?? null)
-                && ($previous->payload['action_meaning'] ?? null) === ($signal['action_meaning'] ?? null)) {
+                && ($previous->payload['action_meaning'] ?? null) === ($signal['action_meaning'] ?? null)
+                && ($previous->payload['scoring'] ?? null) == ($signal['scoring'] ?? null)) {
                 return $previous;
             }
             // A recovery after an intervening state is a new observation, even for the same source candle.
@@ -82,6 +83,9 @@ final class SignalJournal
             'no_similar_history' => 'No historical examples are close enough to the current market state.',
             'insufficient_effective_neighbors' => 'Too few effectively weighted examples support a decision.',
             'tied_votes' => 'The strongest historical votes are tied.',
+            'tied_model_scores' => 'The combined model scores are tied.',
+            'weak_model_consensus' => 'The combined model scores do not agree strongly enough.',
+            'no_supported_models', 'no_weighted_model' => 'No enabled model has sufficient evidence for scoring.',
             'weak_consensus' => 'The historical examples do not agree strongly enough.',
             default => 'The model is currently unavailable. No directional signal is being issued.',
         };

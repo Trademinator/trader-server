@@ -70,7 +70,8 @@ final class ClientDecisionService
         if (! in_array($signal->action, ['buy', 'sell'], true)) {
             return [...$base, 'reason' => 'unsupported_signal_action'];
         }
-        $base['action_meaning'] = SignalSemantics::actionMeaning($signal->action, $signal->reason);
+        $base['action_meaning'] = $signal->payload['action_meaning']
+            ?? SignalSemantics::actionMeaning($signal->action, $signal->reason, $signal->payload['scoring'] ?? null);
 
         $confidence = (float) ($signal->payload['confidence'] ?? 0.0);
         if ($confidence + 1e-12 < (float) $setting->min_signal_confidence) {
@@ -260,12 +261,13 @@ final class ClientDecisionService
             'id' => $signal->getKey(), 'period' => $signal->period, 'model_id' => $signal->model_id,
             'action' => $signal->action, 'reason' => $signal->reason,
             'action_meaning' => $signal->payload['action_meaning']
-                ?? SignalSemantics::actionMeaning($signal->action, $signal->reason),
+                ?? SignalSemantics::actionMeaning($signal->action, $signal->reason, $signal->payload['scoring'] ?? null),
             'confidence' => $signal->reason === 'supported' ? (float) ($signal->payload['confidence'] ?? 0.0) : null,
             'decision_at_ms' => $signal->decision_at_ms, 'recorded_at_ms' => $signal->recorded_at_ms,
             'regime' => $signal->payload['regime'] ?? null,
             'reference_price' => $signal->payload['reference_price'] ?? null,
             'reference_price_source' => $signal->payload['reference_price_source'] ?? null,
+            'scoring' => $signal->payload['scoring'] ?? null,
         ];
     }
 

@@ -95,3 +95,13 @@ it('uses all eligible pre-holdout rows for models with an age window', function 
     expect($analysis['evaluation_training_rows'])->toBe(8)
         ->and($analysis['training_class_counts'])->toBe(['buy' => 3, 'hodl' => 3, 'sell' => 2]);
 });
+
+it('keeps independent human training out of automatic calibration chronology', function () {
+    $artifact = calibrationArtifact();
+    $artifact['ensemble'] = ['version' => 'two-knn-v1'];
+    $artifact['automatic'] = ['status' => 'abstaining', 'reason' => 'holdout_failed'];
+    $baseline = (new ValidationGateCalibration)->analyze($artifact, calibrationRows());
+    $artifact['candle_guidance'] = ['influence' => true, 'mode' => 'independent_knn'];
+    expect((new ValidationGateCalibration)->analyze($artifact, calibrationRows()))->toBe($baseline);
+    expect($baseline['status'])->toBe('abstaining')->and($baseline['scoring_component'])->toBe('automatic');
+});

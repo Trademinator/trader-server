@@ -43,11 +43,13 @@ final class ClientMarketController extends Controller
             'signal' => $item->market->latestSignal === null ? null : [
                 'id' => $item->market->latestSignal->getKey(), 'action' => $item->market->latestSignal->action,
                 'action_meaning' => $item->market->latestSignal->payload['action_meaning']
-                    ?? SignalSemantics::actionMeaning($item->market->latestSignal->action, $item->market->latestSignal->reason),
+                    ?? SignalSemantics::actionMeaning($item->market->latestSignal->action, $item->market->latestSignal->reason,
+                        $item->market->latestSignal->payload['scoring'] ?? null),
                 'reason' => $item->market->latestSignal->reason, 'recorded_at_ms' => $item->market->latestSignal->recorded_at_ms,
                 'decision_at_ms' => $item->market->latestSignal->decision_at_ms,
                 'reference_price' => $item->market->latestSignal->payload['reference_price'] ?? null,
                 'reference_price_source' => $item->market->latestSignal->payload['reference_price_source'] ?? null,
+                'scoring' => $item->market->latestSignal->payload['scoring'] ?? null,
             ],
         ]]);
     }

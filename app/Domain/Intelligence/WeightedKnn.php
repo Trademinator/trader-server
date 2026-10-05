@@ -104,8 +104,14 @@ final class WeightedKnn
         return array_reverse($neighbors);
     }
 
-    public function vote(array $neighbors, int $k): array
+    public function vote(array $neighbors, int $k, array $classWeights = []): array
     {
+        foreach ($classWeights as $label => $weight) {
+            if (! in_array($label, ['buy', 'hodl', 'sell'], true) || ! is_numeric($weight)
+                || ! is_finite((float) $weight) || $weight < 0) {
+                throw new InvalidArgumentException('Invalid KNN class weight.');
+            }
+        }
         $neighbors = array_slice($neighbors, 0, $k);
         if ($neighbors === []) {
             return self::abstain('no_similar_history');
@@ -120,11 +126,14 @@ final class WeightedKnn
             if (! array_key_exists($neighbor['label'], $votes)) {
                 throw new InvalidArgumentException('Unknown knowledge label.');
             }
-            $weight = 1 / max(1e-9, $neighbor['distance']);
+            $weight = ($classWeights[$neighbor['label']] ?? 1.0) / max(1e-9, $neighbor['distance']);
             $votes[$neighbor['label']] += $weight;
             $weightSum += $weight;
             $squaredSum += $weight ** 2;
             $similaritySum += $weight * (1 - $neighbor['distance']);
+        }
+        if ($weightSum <= 0) {
+            return self::abstain('no_weighted_evidence');
         }
         $effective = $weightSum ** 2 / $squaredSum;
         $probabilities = array_map(fn (float $vote): float => $vote / $weightSum, $votes);

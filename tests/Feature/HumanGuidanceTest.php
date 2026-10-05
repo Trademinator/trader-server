@@ -43,7 +43,7 @@ function humanGuidanceOpinion(array $manifest, array $row, User $trainer, ?strin
     return $snapshot;
 }
 
-it('compares all three models and preserves machine intelligence when human features do not improve it', function () {
+it('excludes trend reviews from production scoring even when the legacy trend flag is enabled', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     $trainer = User::factory()->create();
     config(['operations.owner_uuid' => strtoupper($trainer->user_id)]);
@@ -55,15 +55,13 @@ it('compares all three models and preserves machine intelligence when human feat
     }
     $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
     $human = $report['human_guidance'];
-    expect($human['samples'])->toBe(94);
+    expect($human['samples'])->toBe(0);
+    expect($human['reason'])->toBe('excluded_from_scoring');
     expect($human['influence'])->toBeFalse();
     expect($human)->not->toHaveKey('estimator');
     expect($report['selection'])->toBe($baseline['selection']);
     expect($report['holdout'])->toBe($baseline['holdout']);
     expect($report['human_keys'])->toBe([]);
-    expect($human['training_outcomes_available_by_ms'])->toBeLessThan($human['downstream_from_ms']);
-    expect($human['comparison']['human_only']['production_eligible'])->toBeFalse();
-    expect($human['comparison']['combined']['holdout']['evaluated'])->toBe($human['comparison']['machine_only']['holdout']['evaluated']);
     expect(app(DatasetStore::class)->manifest($manifest['dataset_id'])['rows_sha256'])->toBe($manifest['rows_sha256']);
 });
 
@@ -116,7 +114,7 @@ it('rejects promotion without meaningful improvement or with reduced coverage or
 })->with([[[], true], [['eligible' => false], false], [['semantic_precision' => 0.61], false],
     [['coverage' => 0.19], false], [['contradiction_rate' => 0.03], false]]);
 
-it('publishes improved combined intelligence and blocks inference before the human reviews existed', function () {
+it('keeps even a validated legacy trend classifier out of published knowledge and inference', function () {
     $this->travelTo('2024-01-01 09:00:00 UTC');
     config(['human_training.k' => 1, 'intelligence.knn.min_train_size' => 18,
         'intelligence.knn.min_effective_neighbors' => 1.0, 'intelligence.knn.max_distance' => 1.0]);
@@ -142,20 +140,18 @@ it('publishes improved combined intelligence and blocks inference before the hum
     file_put_contents($path.'/rows.jsonl', $bytes);
     file_put_contents($path.'/manifest.json', json_encode($manifest));
     DB::table('research_datasets')->where('dataset_id', $manifest['dataset_id'])->update(['manifest' => json_encode($manifest)]);
+    $legacy = app(HumanGuidance::class)->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle'];
+    expect($legacy['status'])->toBe('validated');
     $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
-    expect($report['human_guidance']['status'])->toBe('validated');
-    expect($report['human_guidance'])->not->toHaveKey('estimator');
-    expect($report['human_keys'])->toHaveCount(5);
+    expect($report['human_guidance']['reason'])->toBe('excluded_from_scoring');
+    expect($report['human_keys'])->toBe([]);
     $artifact = app(ModelStore::class)->load($report['model_id']);
-    expect($artifact['human_guidance'])->toHaveKey('estimator');
-    expect($artifact['available_at_ms'])->toBe(now()->getTimestampMs());
+    expect($artifact['human_guidance'])->not->toHaveKey('estimator');
+    expect($artifact['available_at_ms'])->toBeLessThan(now()->getTimestampMs());
+    expect($artifact['knowledge'])->toHaveCount(500);
     foreach ($artifact['knowledge'] as $row) {
-        expect($row['vector'])->toHaveCount(7);
-        expect($row['decision_at_ms'])->toBeGreaterThan($artifact['human_guidance']['training_outcomes_available_by_ms']);
+        expect($row['vector'])->toHaveCount(2);
     }
-    IntelligenceFixtures::feature(538, 0.499);
-    IntelligenceFixtures::feature(539, 0.499);
-    expect(app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m')['reason'])->toBe('no_post_training_candle');
     $this->travelTo('2024-01-01 09:02:00 UTC');
     IntelligenceFixtures::feature(540, 0.499);
     IntelligenceFixtures::feature(541, 0.499);
@@ -166,10 +162,11 @@ it('publishes improved combined intelligence and blocks inference before the hum
         DB::table('market_features')->where('feature_id', $feature->feature_id)->update(['payload' => json_encode($payload)]);
     }
     $prediction = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
-    expect($prediction['human_guidance']['status'])->toBe('validated');
-    expect($prediction['action'])->toBe('buy');
+    expect($prediction['scoring']['human_trend'])->toBe(['status' => 'excluded', 'weight' => 0.0]);
     config(['human_training.enabled' => false]);
-    expect(app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m')['reason'])->toBe('human_guidance_unavailable');
+    $disabled = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+    expect($disabled['action'])->toBe($prediction['action']);
+    expect($disabled['reason'])->toBe($prediction['reason']);
 
     config(['human_training.enabled' => true]);
     for ($i = 440; $i < count($rows); $i++) {
@@ -181,7 +178,7 @@ it('publishes improved combined intelligence and blocks inference before the hum
     file_put_contents($path.'/manifest.json', json_encode($manifest));
     DB::table('research_datasets')->where('dataset_id', $manifest['dataset_id'])->update(['manifest' => json_encode($manifest)]);
     $rejected = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
-    expect($rejected['human_guidance']['status'])->toBe('holdout_did_not_improve');
+    expect($rejected['human_guidance']['reason'])->toBe('excluded_from_scoring');
     expect($rejected['human_keys'])->toBe([]);
-    expect($rejected['human_guidance']['comparison']['combined']['selection'])->toBe($report['human_guidance']['comparison']['combined']['selection']);
+    expect($rejected['selection'])->toBe($report['selection']);
 });

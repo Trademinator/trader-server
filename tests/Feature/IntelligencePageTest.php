@@ -64,10 +64,13 @@ it('renders actual history counts and failed validation requirements for an abst
     try {
         $manifest = IntelligenceFixtures::snapshot(227);
         app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+        IntelligenceFixtures::feature(249, 0.0);
 
         $response = $this->actingAs($owner)->get(route('markets.intelligence', $subscription->getKey()));
 
         $response->assertOk()->assertSee('227 retained examples')
+            ->assertSee('Two-KNN scoring')->assertSee('Human Trend is excluded')
+            ->assertSee('Automatic KNN')->assertSee('Human Candle KNN')->assertSee('Effective weight')
             ->assertSee('227 out of 380')->assertSee('K selection requirements')
             ->assertSee(route('human-training.index', [
                 'exchange' => $exchange->class, 'symbol' => $market->symbol, 'period' => '1m',

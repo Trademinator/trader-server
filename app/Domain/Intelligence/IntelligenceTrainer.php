@@ -11,15 +11,14 @@ use RuntimeException;
 
 final class IntelligenceTrainer
 {
-    public const VERSION = 'm4.1-age-window-v3';
+    public const VERSION = 'm5-two-knn-v1';
 
     public function __construct(
         private DatasetStore $datasets,
         private ModelStore $models,
         private PatternTrainer $patterns,
         private LeadLagIntelligence $leadLag,
-        private HumanGuidance $humanGuidance,
-        private CandleGuidance $candleGuidance,
+        private HumanCandleKnn $candleKnn,
     ) {}
 
     public function train(string $dataset, ?float $deadline = null, ?string $generation = null, array $buildPerformance = []): array
@@ -49,6 +48,7 @@ final class IntelligenceTrainer
         $rows = $rowAudit['rows'];
         unset($rowAudit['rows']);
         $settings = config('intelligence.knn');
+        $ensemble = KnnEnsemble::settings(config('intelligence.ensemble'));
         $deadline ??= microtime(true) + config('intelligence.max_seconds');
         $lock = Cache::lock('trademinator:intelligence:'.ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']), 720);
         if (! $lock->get()) {
@@ -126,41 +126,21 @@ final class IntelligenceTrainer
                 : $tuner->evaluate($training, $test, $selection['k'], $settings, $deadline);
             $buildPerformance['stages']['holdout_ms'] = $this->elapsedMs($stageStarted);
 
+            $human = ['version' => HumanGuidance::VERSION, 'status' => 'disabled',
+                'reason' => 'excluded_from_scoring', 'influence' => false, 'keys' => [], 'samples' => 0];
+            $buildPerformance['stages']['human_guidance_ms'] = 0;
             $stageStarted = hrtime(true);
-            $human = OptionalGuidance::compare('trend', HumanGuidance::VERSION, $deadline,
-                fn (float $auxiliaryDeadline): array => $this->humanGuidance->compare($manifest, $rows, $settings, $auxiliaryDeadline));
-            $buildPerformance['stages']['human_guidance_ms'] = $this->elapsedMs($stageStarted);
-            $humanExcluded = 0;
-            if ($human['bundle']['influence']) {
-                $humanExcluded = count($rows) - count($human['rows']);
-                $rows = $human['rows'];
-                $selection = $human['selection'];
-                $evaluation = $human['holdout'];
-                $training = $human['training'];
-                $test = $human['test'];
-                $cutoff = $human['cutoff'];
-            }
-            $stageStarted = hrtime(true);
-            $candle = OptionalGuidance::compare('candle', CandleGuidance::VERSION, $deadline,
-                fn (float $auxiliaryDeadline): array => $this->candleGuidance->compare($manifest, $rows, $settings, $auxiliaryDeadline));
+            $candle = OptionalGuidance::compare('candle', HumanCandleKnn::VERSION, $deadline,
+                fn (float $auxiliaryDeadline): array => $this->candleKnn->train($manifest, $settings, $auxiliaryDeadline));
             $buildPerformance['stages']['candle_guidance_ms'] = $this->elapsedMs($stageStarted);
-            $candleExcluded = 0;
-            if ($candle['bundle']['influence']) {
-                $candleExcluded = count($rows) - count($candle['rows']);
-                $rows = $candle['rows'];
-                $selection = $candle['selection'];
-                $evaluation = $candle['holdout'];
-                $training = $candle['training'];
-                $test = $candle['test'];
-                $cutoff = $candle['cutoff'];
-            }
-            $ready = $selection['k'] !== null && ($evaluation['eligible'] ?? false);
+            $candle['bundle']['mode'] = 'independent_knn';
+            $automaticReady = $selection['k'] !== null && ($evaluation['eligible'] ?? false);
+            $automaticReason = $automaticReady ? 'validated' : ($selection['k'] === null ? 'no_eligible_k' : 'holdout_failed');
+            $ready = ($automaticReady && $ensemble['weights']['automatic'] > 0)
+                || ($candle['bundle']['influence'] && $ensemble['weights']['human_candle'] > 0);
             $availableAt = max(array_column($rows, 'label_available_at_ms') ?: [0]);
-            if ($human['bundle']['influence']) {
-                $availableAt = max($availableAt, $human['bundle']['reviews_submitted_by_ms']);
-            }
             if ($candle['bundle']['influence']) {
-                $availableAt = max($availableAt, $candle['bundle']['labels_updated_by_ms']);
+                $availableAt = max($availableAt, $candle['bundle']['available_at_ms']);
             }
             $knowledge = array_map(fn (array $row): array => [
                 'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
@@ -172,14 +152,17 @@ final class IntelligenceTrainer
                 'period' => $manifest['period'], 'feature_version' => FeatureEngine::VERSION,
                 'normalization' => NormalizedVector::VERSION, 'keys' => $manifest['keys'],
                 'lead_lag' => $leadLagBundle, 'lead_lag_keys' => $leadLagBundle['keys'],
-                'human_guidance' => $human['bundle'], 'human_keys' => $human['bundle']['keys'],
-                'candle_guidance' => $candle['bundle'], 'candle_keys' => $candle['bundle']['keys'],
+                'human_guidance' => $human, 'human_keys' => [],
+                'candle_guidance' => $candle['bundle'], 'candle_keys' => [],
+                'ensemble' => $ensemble,
+                'automatic' => ['status' => $automaticReady ? 'ready' : 'abstaining', 'reason' => $automaticReason,
+                    'validation_target' => 'future_semantic_outcomes'],
                 'regime_settings' => ['super_confidence' => 0.8, 'super_effective_neighbors' => 6.0],
                 'pattern_keys' => $patternKeys, 'label_definition' => $manifest['label_definition'],
                 'trained_as_of_ms' => $manifest['as_of_ms'], 'available_at_ms' => $availableAt,
                 'source_rows_sha256' => $manifest['rows_sha256'],
                 'status' => $ready ? 'ready' : 'abstaining',
-                'reason' => $ready ? 'validated' : ($selection['k'] === null ? 'no_eligible_k' : 'holdout_failed'),
+                'reason' => $ready ? 'validated' : ($automaticReady ? 'no_weighted_model' : $automaticReason),
                 'k' => $selection['k'], 'settings' => $settings,
                 'pattern_settings' => $patternSettings,
                 'training_data' => [
@@ -187,8 +170,8 @@ final class IntelligenceTrainer
                     'deduplication' => $rowAudit,
                     'schema' => $manifest['schema'], 'source_rows' => $sourceRows,
                     'usable_rows' => count($rows),
-                    'pattern_excluded_rows' => $sourceRows - count($rows) - $leadLagExcluded - $humanExcluded - $candleExcluded,
-                    'human_excluded_rows' => $humanExcluded, 'candle_excluded_rows' => $candleExcluded,
+                    'pattern_excluded_rows' => $sourceRows - count($rows) - $leadLagExcluded,
+                    'human_excluded_rows' => 0, 'candle_excluded_rows' => 0,
                     'lead_lag_excluded_rows' => $leadLagExcluded,
                     'skipped' => $manifest['skipped'] ?? [],
                     'tuning_rows' => count($training), 'holdout_rows' => count($test),

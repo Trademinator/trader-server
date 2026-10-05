@@ -66,6 +66,9 @@ it('records the original model evidence, preserves its time and distinguishes su
         $first = app(SignalJournal::class)->record($market);
         expect($first->reason)->toBe('supported')->and($first->action)->toBe('hodl')
             ->and($first->model_id)->toBe($report['model_id'])->and($first->payload['horizon_candles'])->toBe(2);
+        expect($first->payload['scoring']['components']['automatic']['action'])->toBe('hold')
+            ->and((float) $first->payload['scoring']['effective_weights']['automatic'])->toBe(1.0);
+        expect(app(SignalJournal::class)->record($market)->getKey())->toBe($first->getKey());
         $this->actingAs($owner)->get('/dashboard')->assertOk()->assertSee('HOLD')->assertSee('Model validated');
         $this->travelTo('2024-01-01 04:08:00 UTC');
         $second = app(SignalJournal::class)->record($market);
@@ -74,9 +77,9 @@ it('records the original model evidence, preserves its time and distinguishes su
         $this->assertDatabaseCount('market_signals', 2);
         $predictions = collect($handler->getRecords())->map(fn ($record) => json_decode($record->message, true))
             ->where('event', 'intelligence.predicted')->values();
-        expect($predictions)->toHaveCount(2);
+        expect($predictions)->toHaveCount(3);
         expect($predictions[0])->toMatchArray(['model_id' => $first->model_id, 'action' => 'hodl', 'reason' => 'supported']);
-        expect($predictions[1])->toMatchArray(['model_id' => $second->model_id, 'reason' => 'stale_features']);
+        expect($predictions[2])->toMatchArray(['model_id' => $second->model_id, 'reason' => 'stale_features']);
     } finally {
         File::deleteDirectory($path);
     }

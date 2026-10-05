@@ -1,101 +1,122 @@
-# Optional human guidance and history recovery
+# Two-KNN scoring and history recovery
 
 Implementation based on `Trademinator/trader-server` commit
-`e2cd2f506ebae77938347aea34e46c2db74ebf35` (main, 2026-10-04).
+`dc9ec52836acec63654961df1c4f51d591c77ffa` (main, 2026-10-05).
 
 ## Deploy
 
-Back up the database together with `storage/app/private/research` and
-`storage/app/private/intelligence`. Apply the patch to a clean checkout, then:
+Apply the patch to a clean checkout, then:
 
 ```sh
-php artisan migrate --force
 php artisan optimize:clear
 php artisan queue:restart
 ```
 
-No Composer dependency or frontend JavaScript asset changes are required. This is
-an additive migration; do not run `migrate:fresh`, replace APP_KEY, or delete old
-research/model artifacts. Deploy the migration before restarting workers. Sites
-that normally cache configuration should regenerate that cache after editing
-`.env`. Keep the existing history and intelligence workers and minute-by-minute
-`trademinator:backfill-ohlcv` scheduler enabled. No new cron entry is added.
+No new migration, Composer dependency or frontend JavaScript asset changes are
+required. Keep existing datasets, models and annotations. Sites that cache
+configuration should regenerate that cache after editing `.env`. The existing
+history/intelligence workers and scheduler remain unchanged.
 
-## Independent, optional enhancements
+Existing stacked models must be rebuilt for validation version `m5-two-knn-v1`;
+prediction abstains on an old version. Rebuild each market using its actual
+exchange, symbol, selected period and desired schema, for example:
 
-Trend Training is excluded from model scoring by default; Candle Training stays
-enabled. The existing master switch remains supported. Use the following `.env`
-settings, replacing an existing `HUMAN_TREND_TRAINING_ENABLED=true` if present:
+```sh
+php artisan trademinator:knn-build kraken BTC/USD 1h --schema=full
+```
+
+`full` still requires complete CoinGecko context for automatic training. Existing
+technical annotation datasets can supply the human model when the automatic
+dataset uses full context. The recovery action also forces a rebuild; redispatching
+an already completed weekly generation does not. See [CLI.md](CLI.md#trademinatorknn-build).
+
+## Two independent models
+
+The automatic KNN learns cost-free future semantic outcomes. Human Candle KNN
+learns submitted BUY/HOLD/SELL annotations independently. Both use the selected
+technical features with identical normalization; only automatic KNN receives
+CoinGecko context when selected. Existing automatic pattern/lead-lag extensions
+remain automatic inputs. Human predictions are never appended to that vector.
+Human Trend Training is excluded from scoring, including when its legacy flag is
+true. Its annotation UI and saved reviews remain available.
 
 ```dotenv
 HUMAN_TRAINING_ENABLED=true
 HUMAN_TREND_TRAINING_ENABLED=false
 HUMAN_CANDLE_TRAINING_ENABLED=true
+INTELLIGENCE_AUTOMATIC_WEIGHT=0.40
+INTELLIGENCE_HUMAN_CANDLE_WEIGHT=0.60
+INTELLIGENCE_ENSEMBLE_MIN_CONFIDENCE=0.60
 ```
 
-Trend defaults to false and Candle defaults to true. Either mode can be configured
-independently. These flags control model enhancement; they
-do not erase saved reviews. The master switch retains its existing access behavior.
-The base model needs no human reviews. The 50-opinion threshold is an optional
-auxiliary fitting requirement, not a market-readiness prerequisite.
+Each model must independently pass validation and live evidence gates. Supported
+models contribute their full action-score distributions at the configured relative
+weights (defaults 40% automatic, 60% human). An unavailable or abstaining model has
+zero effective weight; remaining weights renormalize. Supported HOLD is real
+evidence. Both unavailable, a tie, or insufficient combined confidence means
+abstention. Confidence is the largest combined score times weighted mean similarity;
+it is not a profit probability. Neighbor counts use the minimum of participating
+models, never their sum, because they may describe the same candles.
 
-Ordinary model training runs first. Optional comparisons get a bounded computation
-budget (90 seconds each by default) and leave a 10-second publication reserve.
-Known auxiliary/KNN computation-budget exceptions skip the optional enhancement.
-Checksum failures, invalid source data, and unexpected programming errors still
-propagate; they are not silently converted into a successful model. These are
-cooperative budgets, not preemptive interruption of database or library calls.
+Weights and thresholds are frozen into each published artifact. Changing them
+requires rebuilding. Disabling Candle Training immediately removes its independent
+vote; it does not prevent a supported automatic prediction. No reviews are erased.
+The master switch retains its existing access behavior. The automatic model needs
+no human reviews; human fitting defaults to at least 50 annotated candles and two
+observed actions. Social/news scoring is not implemented and reports zero weight.
+CoinGecko is automatic context, not a separately weighted social model.
 
-Published artifacts remain immutable. Turning off a feature already included in
-a combined model makes that model abstain until rebuilt; removing vector dimensions
-from a trained artifact would be invalid. Existing v2 Candle artifacts remain
-readable without changing their original inference behavior. New builds use v3.
-Use the recovery action or a direct `trademinator:knn-build` to adopt new settings;
-redispatching an already completed weekly generation does not force its rebuild.
+Automatic training runs first. Human training has a cooperative 90-second budget
+and leaves a 10-second publication reserve. Known computation-budget exceptions
+skip human training. Checksum failures, invalid source data and unexpected errors
+still propagate; they are not silently converted into a successful model.
 
 ## Retain HOLDs; weight votes instead of deleting examples
 
-Candle guidance retains every eligible distinct labelled candle in its selected
-training prefix. Existing dataset bounds, source checks, annotation cutoff,
-authorized reviewers, consensus, horizon purge and chronological partitions stay
-in effect. This does not load every historical label without a window limit.
+Both models retain every eligible distinct example within
+`INTELLIGENCE_MAX_MODEL_AGE_DAYS`, which also controls model expiration. There is
+no retained-example row cap. Human training checks source integrity, current trainer
+authorization, consensus, annotation cutoff and horizon compatibility. Different
+technical/full schemas can join after projecting the selected technical keys from
+the verified original snapshot; missing technical features exclude that snapshot.
 
-Two policies compete during chronological tuning:
+Two human class-weight policies compete during chronological tuning:
 
 * **Natural:** no class-frequency adjustment.
 * **Target priors:** training-only class weights `q_c / p_c`, default targets
   BUY 0.25, HOLD 0.50, SELL 0.25.
 
-Each weight multiplies a real neighbour's distance-weighted vote (implemented by
-multiplying its class's summed vote share, then normalizing). It neither duplicates
-rare examples nor fabricates evidence for a missing class. A HOLD-only neighbourhood
-remains HOLD-only. These weights are not a required percentage of labels or signals,
-and opinion shares are not calibrated price or profit probabilities.
+Each weight multiplies a real neighbor's distance-weighted vote. It does not
+fabricate absent classes, duplicate rare examples, or discard HOLDs. These weights
+are separate from the 40/60 model weights. The human model must pass independent
+validation against human annotations; it does not have to improve or agree with
+the automatic model's future labels.
 
-There must be enough actual opinions (default 50) and at least two observed actions
-to attempt fitting. A rare or absent third action does not cause equal-count
-undersampling. The model must still satisfy the ordinary validation gates and
-improve on the baseline before it influences production intelligence.
+The first 60% trains policy candidates, the next 20% selects the policy, and the
+last 20% is a separate holdout. Outcome horizons are purged at both boundaries.
+Natural weighting wins exact tuning ties. Only the selected policy is evaluated on
+the holdout; a failure does not promote the runner-up. Class frequencies used for
+evaluation come only from its earlier training partition. Publication then refits
+that fixed policy on all eligible annotations. Annotations made today make this
+retrospective research, not simulated historical live performance. Inference must
+occur after the contributing annotations and source outcomes were available.
 
-Policies are selected using tuning results only, with natural weighting winning an
-exact tie. Only the selected policy is evaluated on the final, naturally distributed
-holdout. A failed holdout does not trigger testing/promoting the runner-up. Neither
-holdout labels nor future annotations determine class frequencies or weights.
-
-The report records `training_samples`, `training_class_counts`, `weight_candidates`,
-selected `weight_policy` and `class_weights`, plus existing comparison metrics.
-The old `balanced_class_counts` report field is replaced by actual retained counts.
-Candle Training's displayed milestones count each trainer/candle once across stored
-revisions, not current model eligibility or a balancing quota. The model report
-shows actual compatible training counts; historical labels remain stored.
+The report records `samples`, `class_counts`, `knowledge_rows`, `input_keys`,
+`weight_candidates`, `weight_policy`, `class_weights`, chronology and provenance.
+Human holdout precision is named `directional_annotation_agreement`, not future
+return accuracy. Automatic validation stays in top-level `selection` and `holdout`;
+no combined holdout performance is claimed. Signal/API `scoring` exposes individual
+predictions and configured/effective weights without training vectors. Candle
+Training's UI milestones count each trainer/candle once across revisions, rather
+than current model eligibility; historical labels remain stored.
 
 ## Deduplication and input revisions
 
 Before constructing KNN knowledge, the trainer audits candle identities. Exact
 repeated rows at one decision timestamp are consolidated; conflicting rows at the
 same timestamp fail closed. Identical feature vectors or repeated HOLD actions at
-different timestamps remain distinct observations. Candle opinions receive the
-same audit after consensus. A submitted trainer opinion still has one database
+different timestamps remain distinct observations. Human Candle training selects
+one latest compatible consensus snapshot per decision time. A submitted trainer opinion still has one database
 record per snapshot/trainer. Auto-label consecutive-action cleanup is unchanged;
 it is not applied as a blanket rewrite of manually submitted labels.
 

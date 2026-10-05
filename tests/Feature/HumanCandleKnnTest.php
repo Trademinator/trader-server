@@ -1,0 +1,225 @@
+<?php
+
+use App\Domain\Features\ContextFeatures;
+use App\Domain\Intelligence\HumanCandleKnn;
+use App\Domain\Intelligence\IntelligenceTrainer;
+use App\Domain\Intelligence\MarketIntelligence;
+use App\Domain\Intelligence\ModelStore;
+use App\Domain\Intelligence\NormalizedVector;
+use App\Domain\Research\DatasetStore;
+use App\Models\HumanCandleLabel;
+use App\Models\HumanTrainingSnapshot;
+use App\Models\MarketFeature;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
+use Tests\Support\IntelligenceFixtures;
+
+beforeEach(function () {
+    $path = sys_get_temp_dir().'/two-knn-'.Str::uuid7();
+    config(['research.path' => $path.'/research', 'intelligence.path' => $path.'/models',
+        'intelligence.knn.min_train_size' => 36, 'intelligence.knn.test_size' => 12,
+        'intelligence.knn.min_validation_rows' => 5, 'intelligence.knn.min_directional_predictions' => 1,
+        'intelligence.patterns.enabled' => false, 'human_training.enabled' => true,
+        'human_training.candle_enabled' => true, 'human_training.trend_enabled' => true,
+        'human_training.candle_min_samples' => 50, 'human_training.candle_k' => 9]);
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $this->trainer = User::factory()->create();
+    config(['operations.owner_uuid' => $this->trainer->user_id]);
+});
+
+afterEach(function () {
+    File::deleteDirectory(dirname(config('research.path')));
+});
+
+function twoKnnAnnotation(array $manifest, array $row, User $trainer, string $action): HumanTrainingSnapshot
+{
+    $payload = array_replace(HumanTrainingSnapshot::factory()->make()->payload, [
+        'feature_version' => $manifest['feature_version'], 'decision_at_ms' => $row['decision_at_ms'],
+        'microtimestamp' => $row['microtimestamp'], 'keys' => $manifest['keys'],
+        'exchange' => $manifest['exchange'], 'symbol' => $manifest['symbol'], 'period' => $manifest['period'],
+        'vector' => NormalizedVector::from($row['vector'], $manifest['keys']),
+        'features' => array_combine($manifest['keys'], $row['vector']),
+        'horizon_candles' => $manifest['label_definition']['horizon'],
+        'feature_sha256' => $row['source']['feature_sha256'] ?? null,
+    ]);
+    $snapshot = HumanTrainingSnapshot::factory()->create(['dataset_id' => $manifest['dataset_id'], 'payload' => $payload,
+        'market_key' => ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']),
+        'snapshot_key' => hash('sha256', (string) Str::uuid7())]);
+    HumanCandleLabel::factory()->create(['snapshot_id' => $snapshot->snapshot_id, 'trainer_id' => $trainer->user_id,
+        'action' => $action, 'created_at' => now(), 'updated_at' => now()]);
+
+    return $snapshot;
+}
+
+function twoKnnRewrite(array $manifest, array $rows): array
+{
+    $bytes = implode('', array_map(fn (array $row): string => json_encode($row)."\n", $rows));
+    $manifest['rows_sha256'] = hash('sha256', $bytes);
+    $path = app(DatasetStore::class)->directory($manifest['dataset_id']);
+    file_put_contents($path.'/manifest.json', json_encode($manifest));
+    file_put_contents($path.'/rows.jsonl', $bytes);
+    DB::table('research_datasets')->where('dataset_id', $manifest['dataset_id'])->update(['manifest' => json_encode($manifest)]);
+
+    return $manifest;
+}
+
+it('publishes independent knowledge and lets human candle scores outweigh an opposing automatic prediction', function () {
+    $manifest = IntelligenceFixtures::snapshot();
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    foreach ($rows as $row) {
+        twoKnnAnnotation($manifest, $row, $this->trainer, ['buy' => 'sell', 'hodl' => 'hold', 'sell' => 'buy'][$row['label']]);
+    }
+    $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+    $artifact = app(ModelStore::class)->current('kraken', 'BTC/USD', '1m');
+    expect($report['status'])->toBe('ready')->and($report['automatic']['status'])->toBe('ready')
+        ->and($report['candle_guidance']['status'])->toBe('validated')
+        ->and($report['candle_guidance']['validation_target'])->toBe('human_candle_annotations')
+        ->and($report['candle_guidance']['holdout']['directional_annotation_agreement'])->toBe(1)
+        ->and($report['candle_guidance'])->not->toHaveKey('knowledge')
+        ->and($report['candle_keys'])->toBe([])->and($report['human_keys'])->toBe([])
+        ->and($report['human_guidance']['reason'])->toBe('excluded_from_scoring')
+        ->and(count($artifact['knowledge']))->toBe(240)
+        ->and(count($artifact['candle_guidance']['knowledge']))->toBe(240)
+        ->and($artifact['knowledge'][0]['label'])->toBe('buy')
+        ->and($artifact['candle_guidance']['knowledge'][0]['label'])->toBe('sell')
+        ->and(count($artifact['knowledge'][0]['vector']))->toBe(1)
+        ->and(count($artifact['candle_guidance']['knowledge'][0]['vector']))->toBe(1);
+    IntelligenceFixtures::feature(250, 0.0);
+    $this->travelTo('2024-01-01 04:11:00 UTC');
+    // A config change cannot silently change an already published artifact's blend.
+    config(['intelligence.ensemble.weights' => ['automatic' => 0.9, 'human_candle' => 0.1]]);
+    $signal = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+    expect($signal['reason'])->toBe('supported')->and($signal['action'])->toBe('sell')
+        ->and($signal['confidence'])->toBe(0.6)
+        ->and($signal['scoring']['components']['automatic']['action'])->toBe('buy')
+        ->and($signal['scoring']['components']['human_candle']['action'])->toBe('sell')
+        ->and($signal['scoring']['effective_weights'])->toBe(['automatic' => 0.4, 'human_candle' => 0.6]);
+    config(['human_training.candle_enabled' => false]);
+    $disabled = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+    expect($disabled['action'])->toBe('buy')
+        ->and($disabled['scoring']['effective_weights'])->toBe(['automatic' => 1.0, 'human_candle' => 0.0]);
+});
+
+it('uses technical snapshots independently of CoinGecko and normalizes directional features identically at inference', function () {
+    $technical = IntelligenceFixtures::snapshot();
+    [, $rows] = app(DatasetStore::class)->load($technical['dataset_id']);
+    $technical['keys'][] = 'trend.direction';
+    foreach ($rows as &$row) {
+        $row['vector'][] = $row['label'] === 'buy' ? -1 : ($row['label'] === 'sell' ? 1 : 0);
+    }
+    unset($row);
+    $technical = twoKnnRewrite($technical, $rows);
+    foreach ($rows as $row) {
+        twoKnnAnnotation($technical, $row, $this->trainer, $row['label'] === 'hodl' ? 'hold' : $row['label']);
+    }
+    $full = IntelligenceFixtures::snapshot();
+    $full['keys'] = [...$technical['keys'], ContextFeatures::KEYS[0]];
+    $fullRows = array_map(fn (array $row): array => [...$row, 'vector' => [...$row['vector'], 0.8]], $rows);
+    $full = twoKnnRewrite($full, $fullRows);
+    $report = app(IntelligenceTrainer::class)->train($full['dataset_id']);
+    $artifact = app(ModelStore::class)->current('kraken', 'BTC/USD', '1m');
+    expect($report['candle_guidance']['input_keys'])->toBe($technical['keys'])
+        ->and($report['candle_guidance']['knowledge_rows'])->toBe(240)
+        ->and($artifact['candle_guidance']['knowledge'][0]['vector'])->toBe([0.0, 0.0]);
+    IntelligenceFixtures::feature(250, 0.0);
+    $feature = MarketFeature::query()->first();
+    $payload = $feature->payload;
+    $payload['features']['trend.direction'] = -1;
+    DB::table('market_features')->where('feature_id', $feature->feature_id)->update(['payload' => json_encode($payload)]);
+    $this->travelTo('2024-01-01 04:11:00 UTC');
+    $signal = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+    expect($signal['action'])->toBe('buy')->and($signal['reason'])->toBe('supported')
+        ->and($signal['scoring']['components']['automatic']['reason'])->toBe('missing_selected_features')
+        ->and($signal['scoring']['components']['human_candle']['input_keys'])->toBe($technical['keys'])
+        ->and($signal['scoring']['effective_weights'])->toBe(['automatic' => 0.0, 'human_candle' => 1.0]);
+});
+
+it('can publish a validated human model when automatic validation fails', function () {
+    $manifest = IntelligenceFixtures::snapshot(contradictory: true);
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    foreach ($rows as $row) {
+        twoKnnAnnotation($manifest, $row, $this->trainer, $row['label'] === 'hodl' ? 'hold' : $row['label']);
+    }
+    $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+    expect($report['status'])->toBe('ready')->and($report['automatic']['status'])->toBe('abstaining')
+        ->and($report['candle_guidance']['status'])->toBe('validated');
+    IntelligenceFixtures::feature(250, 1.0);
+    $this->travelTo('2024-01-01 04:11:00 UTC');
+    $signal = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+    expect($signal['action'])->toBe('sell')
+        ->and($signal['scoring']['effective_weights'])->toBe(['automatic' => 0.0, 'human_candle' => 1.0]);
+});
+
+it('keeps final holdout annotations out of policy selection and purges both chronology boundaries', function () {
+    $manifest = IntelligenceFixtures::snapshot();
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    $snapshots = [];
+    foreach ($rows as $row) {
+        $snapshots[] = twoKnnAnnotation($manifest, $row, $this->trainer, $row['label'] === 'hodl' ? 'hold' : $row['label']);
+    }
+    $service = app(HumanCandleKnn::class);
+    $first = $service->train($manifest, config('intelligence.knn'), microtime(true) + 30)['bundle'];
+    HumanCandleLabel::query()->whereIn('snapshot_id', array_map(fn ($snapshot) => $snapshot->snapshot_id, array_slice($snapshots, 192)))
+        ->update(['action' => 'hold']);
+    $second = $service->train($manifest, config('intelligence.knn'), microtime(true) + 30)['bundle'];
+    expect($first['status'])->toBe('validated')->and($second['status'])->toBe('holdout_failed')
+        ->and($second['weight_candidates'])->toBe($first['weight_candidates'])
+        ->and($second['weight_policy'])->toBe($first['weight_policy'])
+        ->and($first['tuning_training_labels_available_by_ms'])->toBeLessThan($first['tuning_from_ms'])
+        ->and($first['holdout_training_labels_available_by_ms'])->toBeLessThan($first['holdout_from_ms']);
+    expect($service->predict($first, ['features' => ['candle.body' => 0]], $first['available_at_ms'])['reason'])->toBe('no_post_annotation_candle');
+});
+
+it('filters unauthorized, future, disputed and incompatible annotations and counts a candle only once', function () {
+    $manifest = IntelligenceFixtures::snapshot();
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    $other = User::factory()->create();
+    twoKnnAnnotation($manifest, $rows[0], $other, 'buy');
+    $future = twoKnnAnnotation($manifest, $rows[1], $this->trainer, 'buy');
+    $future->candleLabels()->update(['updated_at' => now()->addMinute()]);
+    $bad = $rows[2];
+    $bad['vector'] = [0.123];
+    twoKnnAnnotation($manifest, $bad, $this->trainer, 'sell');
+    $disputed = twoKnnAnnotation($manifest, $rows[3], $this->trainer, 'buy');
+    config(['human_training.trainer_uuids' => [$other->user_id]]);
+    HumanCandleLabel::factory()->create(['snapshot_id' => $disputed->snapshot_id, 'trainer_id' => $other->user_id,
+        'action' => 'sell', 'updated_at' => now()]);
+    // Revoke only the earlier unauthorized label by a third, non-authorized trainer.
+    $revoked = User::factory()->create();
+    twoKnnAnnotation($manifest, $rows[4], $revoked, 'buy');
+    twoKnnAnnotation($manifest, $rows[5], $this->trainer, 'buy');
+    $revision = IntelligenceFixtures::snapshot();
+    twoKnnAnnotation($revision, $rows[5], $this->trainer, 'sell');
+    $bundle = app(HumanCandleKnn::class)->train($manifest, config('intelligence.knn'), microtime(true) + 30)['bundle'];
+    expect($bundle['samples'])->toBe(2)->and($bundle['class_counts'])->toBe(['buy' => 1, 'hold' => 0, 'sell' => 1]);
+    config(['operations.owner_uuid' => null, 'human_training.trainer_uuids' => []]);
+    expect(app(HumanCandleKnn::class)->train($manifest, config('intelligence.knn'), microtime(true) + 30)['bundle']['samples'])->toBe(0);
+});
+
+it('uses the shared age window without limiting retained human examples', function () {
+    $manifest = IntelligenceFixtures::snapshot(300, period: '1h');
+    $this->travelTo('2024-01-14 00:00:00 UTC');
+    config(['intelligence.max_model_age_days' => 10]);
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    foreach ($rows as $row) {
+        twoKnnAnnotation($manifest, $row, $this->trainer, $row['label'] === 'hodl' ? 'hold' : $row['label']);
+    }
+    $bundle = app(HumanCandleKnn::class)->train($manifest, config('intelligence.knn'), microtime(true) + 30)['bundle'];
+    $eligible = array_values(array_filter($rows, fn ($row) => $row['decision_at_ms'] >= $bundle['window']['from_ms']));
+    expect($bundle['knowledge_rows'])->toBe(count($eligible))->and($bundle['knowledge_rows'])->toBeLessThan(300)
+        ->and($bundle['knowledge'][0]['decision_at_ms'])->toBe($eligible[0]['decision_at_ms']);
+    config(['intelligence.max_model_age_days' => 14]);
+    $all = app(HumanCandleKnn::class)->train($manifest, config('intelligence.knn'), microtime(true) + 30)['bundle'];
+    expect($all['knowledge_rows'])->toBe(300);
+});
+
+it('does not silently hide a corrupt human snapshot behind the automatic fallback', function () {
+    $manifest = IntelligenceFixtures::snapshot();
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    $snapshot = twoKnnAnnotation($manifest, $rows[0], $this->trainer, 'buy');
+    DB::table('human_training_snapshots')->where('snapshot_id', $snapshot->snapshot_id)->update(['sha256' => str_repeat('0', 64)]);
+    expect(fn () => app(IntelligenceTrainer::class)->train($manifest['dataset_id']))
+        ->toThrow(LogicException::class, 'Human training snapshot checksum mismatch.');
+});

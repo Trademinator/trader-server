@@ -27,17 +27,37 @@
             <p class="guide-help">Confidence describes weighted historical agreement and similarity. It is not a calibrated probability of profit. Bull / Bear follow supported directional signals; Super also requires at least 80% confidence and six effective neighbors. The client applies trading fees, balances and execution rules.</p>
             @if ($progress['evidence_evaluated'])
                 <x-intelligence-progress label="Effective neighbors required" :value="$signal['effective_neighbors']" :target="$progress['settings']['min_effective_neighbors']" :decimals="1" />
-                <x-intelligence-progress label="Weighted agreement × similarity required" :value="max($signal['votes']) * $signal['similarity'] * 100" :target="$progress['settings']['min_confidence'] * 100" :decimals="1" suffix="%" />
+                <x-intelligence-progress label="Weighted agreement × similarity required" :value="max($signal['votes']) * $signal['similarity'] * 100" :target="($report['ensemble']['min_confidence'] ?? $progress['settings']['min_confidence']) * 100" :decimals="1" suffix="%" />
                 <p class="guide-help">These evidence meters can rise or fall with each market state. They are not training progress. Published confidence remains zero while the model abstains.</p>
             @endif
         </section>
         @include('markets.intelligence-readiness')
         @include('markets.intelligence-lead-lag')
-        @if(isset($report['human_guidance']))
-            <section class="guide-panel"><h2>Human-guided learning</h2>
-                <p>{{ ($report['human_guidance']['influence'] ?? false) ? 'Validated human opinion features contribute to this model.' : 'This model uses machine-only evidence.' }}</p>
-                <p>{{ number_format($report['human_guidance']['samples'] ?? 0) }} matching consensus snapshots · {{ str_replace('_', ' ', $report['human_guidance']['status']) }}</p>
-                <p class="guide-help">Human labels stay separate from objective outcomes. Combined models must improve both chronological tuning and holdout results. Opinion agreement is not a probability of profit.</p>
+        @if(isset($report['ensemble']))
+            <section class="guide-panel"><h2>Two-KNN scoring</h2>
+                <p>The automatic model learns future outcomes. Human Candle learns submitted BUY, HOLD and SELL annotations using the same selected technical features, without CoinGecko context.</p>
+                @if(isset($signal['scoring']))
+                    <div class="review-table-wrap"><table>
+                        <thead><tr><th scope="col">Model</th><th scope="col">Action</th><th scope="col">BUY / HOLD / SELL scores</th><th scope="col">Configured weight</th><th scope="col">Effective weight</th><th scope="col">Evidence</th></tr></thead>
+                        <tbody>
+                        @foreach(['automatic' => 'Automatic KNN', 'human_candle' => 'Human Candle KNN'] as $key => $label)
+                            @php
+                                $component = $signal['scoring']['components'][$key];
+                            @endphp
+                            <tr><th scope="row">{{ $label }}</th><td>{{ $component['reason'] === 'supported' ? strtoupper($component['action']) : 'Abstaining' }}</td>
+                                <td>{{ implode(' / ', array_map(fn ($score) => number_format($score * 100, 1).'%', $component['scores'])) }}</td>
+                                <td>{{ number_format($signal['scoring']['configured_weights'][$key], 2) }}</td>
+                                <td>{{ number_format($signal['scoring']['effective_weights'][$key] * 100, 1) }}%</td>
+                                <td>{{ str_replace('_', ' ', $component['reason']) }}</td></tr>
+                        @endforeach
+                        </tbody>
+                    </table></div>
+                @endif
+                <p>{{ number_format($report['candle_guidance']['samples'] ?? 0) }} eligible annotated candles · {{ str_replace('_', ' ', $report['candle_guidance']['status']) }}</p>
+                @if(isset($report['candle_guidance']['holdout']))
+                    <p>Human Candle held-out directional annotation agreement: {{ number_format($report['candle_guidance']['holdout']['directional_annotation_agreement'] * 100, 1) }}%.</p>
+                @endif
+                <p class="guide-help">An abstaining model receives zero effective weight. Supported HOLD votes remain evidence. Human Trend is excluded. Social/news scoring is not connected; CoinGecko is context inside the automatic model. Scores are not probabilities of profit, and neighbor counts are not added across models.</p>
                 @can('train-intelligence')<a href="{{ route('human-training.index', ['exchange' => $item->market->exchange->class, 'symbol' => $item->market->symbol, 'period' => $period]) }}">Open human training</a>@endcan
             </section>
         @endif
@@ -68,14 +88,17 @@
                 <h2>Model validation</h2>
                 <dl>
                     <dt>Status</dt><dd>{{ $report['status'] === 'ready' ? 'Validated' : 'Abstaining' }}</dd>
-                    <dt>Selected K</dt><dd>{{ $report['k'] ?? 'No eligible value' }}</dd>
-                    <dt>Knowledge rows</dt><dd>{{ number_format($report['knowledge_rows']) }} retained examples</dd>
+                    <dt>Automatic selected K</dt><dd>{{ $report['k'] ?? 'No eligible value' }}</dd>
+                    <dt>Automatic knowledge rows</dt><dd>{{ number_format($report['knowledge_rows']) }} retained examples</dd>
+                    @if(isset($report['candle_guidance']['knowledge_rows']))
+                        <dt>Human Candle K / knowledge rows</dt><dd>{{ $report['candle_guidance']['k'] }} / {{ number_format($report['candle_guidance']['knowledge_rows']) }}</dd>
+                    @endif
                     @if (isset($report['training_data']['window']))
                         <dt>History window</dt><dd>{{ number_format($report['training_data']['window']['days']) }} days, starting <x-display-time :value="$report['training_data']['window']['from_ms']" unit="milliseconds" /></dd>
                     @endif
                     <dt>Training cutoff</dt><dd><x-display-time :value="$report['trained_as_of_ms']" unit="milliseconds" /></dd>
                     @if ($report['holdout'])
-                        <dt>Later-period precision</dt><dd>{{ number_format($report['holdout']['semantic_precision'] * 100, 1) }}%</dd>
+                        <dt>Automatic later-period precision</dt><dd>{{ number_format($report['holdout']['semantic_precision'] * 100, 1) }}%</dd>
                         <dt>Directional coverage</dt><dd>{{ number_format($report['holdout']['coverage'] * 100, 1) }}%</dd>
                         <dt>Top/bottom contradictions</dt><dd>{{ number_format($report['holdout']['contradiction_rate'] * 100, 1) }}%</dd>
                     @endif
@@ -107,14 +130,14 @@
                         </details>
                     @endif
                 @endif
-                <h3>K selection requirements</h3>
+                <h3>Automatic K selection requirements</h3>
                 @if ($progress['tuning'])
                     <p>{{ $report['k'] === null ? 'Closest candidate by number of passed checks' : 'Selected candidate' }}: K = {{ $progress['tuning']['k'] }}. All checks must pass for the same candidate.</p>
                     @include('markets.intelligence-gates', ['gates' => $progress['tuning']['gates']])
                 @else
                     <p>No tuning results are available yet.</p>
                 @endif
-                <h3>Separate later-period validation</h3>
+                <h3>Automatic separate later-period validation</h3>
                 @if ($progress['holdout'])
                     @include('markets.intelligence-gates', ['gates' => $progress['holdout']])
                 @else

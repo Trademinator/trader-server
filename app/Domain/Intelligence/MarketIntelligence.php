@@ -25,8 +25,8 @@ final class MarketIntelligence
         private PatternCatalog $catalog,
         private PatternTrainer $patterns,
         private LeadLagIntelligence $leadLag,
-        private HumanGuidance $humanGuidance,
-        private CandleGuidance $candleGuidance,
+        private HumanCandleKnn $candleKnn,
+        private KnnEnsemble $ensemble,
         private TickerRepository $tickers,
         private SignalFreshness $freshness,
     ) {}
@@ -83,7 +83,7 @@ final class MarketIntelligence
     public function predict(string $exchange, string $symbol, string $period, ?int $asOfMs = null): array
     {
         $result = $this->evaluate($exchange, $symbol, $period, $asOfMs);
-        $result['action_meaning'] = SignalSemantics::actionMeaning($result['action'], $result['reason']);
+        $result['action_meaning'] = SignalSemantics::actionMeaning($result['action'], $result['reason'], $result['scoring'] ?? null);
         app(ActionLog::class)->write('intelligence.predicted', [
             'exchange' => $exchange, 'symbol' => $symbol, 'period' => $period, 'model_id' => $result['model_id'] ?? null,
             'action' => $result['action'], 'reason' => $result['reason'], 'confidence' => $result['confidence'],
@@ -154,57 +154,14 @@ final class MarketIntelligence
         $currentCandle = $tickers[(int) $current->microtimestamp];
         $context['reference_price'] = (string) $currentCandle['close'];
         $context['reference_price_source'] = 'closed_candle_close';
-        $vector = FeatureSchema::vector($current->payload, $model['keys']);
-        if ($vector === null) {
-            return [...WeightedKnn::abstain('missing_selected_features'), ...$context];
-        }
-        $vector = NormalizedVector::from($vector, $model['keys']);
-        $humanVector = $vector;
-        $context['patterns_evaluated'] = true;
-        $context['patterns'] = $this->patterns->predict($model['patterns'], $vector,
-            $this->catalog->candidates($history, $period), $current->available_at_ms);
-        if ($model['status'] !== 'ready') {
-            return [...WeightedKnn::abstain($model['reason']), ...$context];
-        }
-        if ($model['pattern_keys'] !== []) {
-            $vector = [...$vector, ...$this->patterns->features($model['patterns'], $context['patterns'])];
-        }
-        $weights = [];
-        if (($model['lead_lag_keys'] ?? []) !== []) {
-            if (($model['lead_lag']['version'] ?? null) !== LeadLagTrainer::VERSION) {
-                return [...WeightedKnn::abstain('model_version_mismatch'), ...$context];
-            }
-            $leadLag = $this->leadLag->current($model['lead_lag'], $current->available_at_ms);
-            $weights = [...array_fill(0, count($vector), 1.0), ...$leadLag['weights']];
-            $vector = [...$vector, ...$leadLag['vector']];
-            $context['lead_lag'] = $leadLag['signals'];
-        }
-        $settings = $model['settings'];
-        if (($model['human_keys'] ?? []) !== []) {
-            $human = $model['human_guidance'];
-            if (! OptionalGuidance::enabled('trend') || ($human['version'] ?? null) !== HumanGuidance::VERSION
-                || ! ($human['influence'] ?? false) || ($human['reviews_submitted_by_ms'] ?? PHP_INT_MAX) >= $current->available_at_ms) {
-                return [...WeightedKnn::abstain('human_guidance_unavailable'), ...$context];
-            }
-            $humanFeatures = $this->humanGuidance->features($human, $humanVector);
-            $weights = [...($weights ?: array_fill(0, count($vector), 1.0)), ...array_fill(0, count($humanFeatures), 1.0)];
-            $vector = [...$vector, ...$humanFeatures];
-            $context['human_guidance'] = ['status' => 'validated', 'opinion_shares' => array_combine(HumanTraining::LABELS, $humanFeatures)];
-        }
-        if (($model['candle_keys'] ?? []) !== []) {
-            $candle = $model['candle_guidance'];
-            if (! OptionalGuidance::enabled('candle') || ! in_array($candle['version'] ?? null, CandleGuidance::READABLE_VERSIONS, true)
-                || ! ($candle['influence'] ?? false) || ($candle['labels_updated_by_ms'] ?? PHP_INT_MAX) >= $current->available_at_ms) {
-                return [...WeightedKnn::abstain('candle_guidance_unavailable'), ...$context];
-            }
-            $candleFeatures = $this->candleGuidance->features($candle, $humanVector);
-            $weights = [...($weights ?: array_fill(0, count($vector), 1.0)), ...array_fill(0, count($candleFeatures), 1.0)];
-            $vector = [...$vector, ...$candleFeatures];
-            $context['candle_guidance'] = ['status' => 'validated',
-                'action_shares' => array_combine(CandleTraining::ACTIONS, $candleFeatures)];
-        }
-        $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
-        $result = $knn->predict($model['knowledge'], $vector, $model['k'], $current->available_at_ms, $weights);
+        $automatic = $this->automaticPrediction($model, $current->payload, $history, $current->available_at_ms, $context);
+        $human = $this->candleKnn->predict($model['candle_guidance'], $current->payload, $current->available_at_ms);
+        $result = $this->ensemble->combine($automatic, $human, $model['ensemble']);
+        $result['scoring']['components']['automatic']['input_keys'] = [...$model['keys'], ...$model['pattern_keys'], ...($model['lead_lag_keys'] ?? [])];
+        $result['scoring']['components']['automatic']['context_keys'] = array_values(array_diff($model['keys'], FeatureEngine::KEYS));
+        $result['scoring']['components']['human_candle']['input_keys'] = $model['candle_guidance']['input_keys'] ?? [];
+        $context['candle_guidance'] = ['status' => $model['candle_guidance']['status'], 'mode' => 'independent_knn',
+            'action_shares' => $result['scoring']['components']['human_candle']['scores']];
 
         if ($result['reason'] === 'supported' && $result['action'] !== 'hodl') {
             $thresholds = $model['regime_settings'] ?? ['super_confidence' => 0.8, 'super_effective_neighbors' => 6.0];
@@ -214,5 +171,37 @@ final class MarketIntelligence
         }
 
         return [...$result, ...$context, 'k' => $model['k']];
+    }
+
+    private function automaticPrediction(array $model, array $payload, array $history, int $decisionAt, array &$context): array
+    {
+        $vector = FeatureSchema::vector($payload, $model['keys']);
+        if ($vector === null) {
+            return WeightedKnn::abstain('missing_selected_features');
+        }
+        $vector = NormalizedVector::from($vector, $model['keys']);
+        $context['patterns_evaluated'] = true;
+        $context['patterns'] = $this->patterns->predict($model['patterns'], $vector,
+            $this->catalog->candidates($history, $model['period']), $decisionAt);
+        if ($model['automatic']['status'] !== 'ready') {
+            return WeightedKnn::abstain($model['automatic']['reason']);
+        }
+        if ($model['pattern_keys'] !== []) {
+            $vector = [...$vector, ...$this->patterns->features($model['patterns'], $context['patterns'])];
+        }
+        $weights = [];
+        if (($model['lead_lag_keys'] ?? []) !== []) {
+            if (($model['lead_lag']['version'] ?? null) !== LeadLagTrainer::VERSION) {
+                return WeightedKnn::abstain('model_version_mismatch');
+            }
+            $leadLag = $this->leadLag->current($model['lead_lag'], $decisionAt);
+            $weights = [...array_fill(0, count($vector), 1.0), ...$leadLag['weights']];
+            $vector = [...$vector, ...$leadLag['vector']];
+            $context['lead_lag'] = $leadLag['signals'];
+        }
+        $settings = $model['settings'];
+        $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
+
+        return $knn->predict($model['knowledge'], $vector, $model['k'], $decisionAt, $weights);
     }
 }
