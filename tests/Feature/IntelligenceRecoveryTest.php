@@ -160,6 +160,179 @@ it('refuses owner recovery actions from ordinary users', function () {
     Bus::assertNothingDispatched();
 });
 
+it('queues the original repair when its password form is confirmed', function (array $options, string $retry) {
+    $this->freezeTime();
+    Bus::fake([RecoverMarketHistory::class]);
+    $owner = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->user_id]);
+    $market = recoveryMarket($owner);
+    $url = route('owner.history-recovery.store', $market);
+    $this->actingAs($owner)->withSession(['auth.password_confirmed_at' => 0])
+        ->get(route('owner.history-recovery.show', $market))->assertOk();
+
+    $confirmation = $this->from(route('owner.history-recovery.show', $market))->post($url, $options);
+
+    $confirmation->assertOk()->assertViewIs('auth.confirm-password')
+        ->assertSee('action="'.$url.'"', false)
+        ->assertSee('name="retry_unavailable" value="'.$retry.'"', false)
+        ->assertSee('Confirm and repair history');
+    $this->assertDatabaseCount('history_recovery_requests', 0);
+    Bus::assertNothingDispatched();
+
+    $queued = $this->post($confirmation->viewData('formAction'), [
+        ...$confirmation->viewData('formFields'), 'password' => 'password',
+    ]);
+
+    $requestId = DB::table('history_recovery_requests')->value('request_id');
+    $queued->assertRedirectToRoute('owner.history-recovery.show', $market)
+        ->assertSessionHasNoErrors()
+        ->assertSessionHas('auth.password_confirmed_at', now()->timestamp)
+        ->assertSessionHas('status', 'Recovery request '.$requestId.' queued. The stages below update as the existing workers process it.');
+    $this->assertDatabaseHas('history_recovery_requests', [
+        'request_id' => $requestId, 'market_id' => $market->market_id,
+        'retry_unavailable' => (int) $retry, 'status' => 'queued',
+    ]);
+    $this->get($queued->headers->get('Location'))->assertSee('Recovery request '.$requestId.' queued.');
+    $this->get(route('owner.history-recovery.show', $market))->assertOk();
+    $this->post($url, [...$options, 'password' => 'password'])
+        ->assertRedirectToRoute('owner.history-recovery.show', $market);
+    $this->assertDatabaseCount('history_recovery_requests', 1);
+    Bus::assertDispatchedTimes(RecoverMarketHistory::class, 1);
+    Bus::assertDispatched(RecoverMarketHistory::class, fn ($job) => $job->requestId === $requestId);
+})->with([
+    'retry unchecked' => [[], '0'],
+    'retry checked' => [['retry_unavailable' => '1'], '1'],
+]);
+
+it('queues recovery immediately while password confirmation is recent', function () {
+    $this->freezeTime();
+    Bus::fake([RecoverMarketHistory::class]);
+    $owner = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->user_id, 'auth.password_timeout' => 60]);
+    $market = recoveryMarket($owner);
+
+    $this->actingAs($owner)->withSession(['auth.password_confirmed_at' => now()->subSeconds(30)->timestamp])
+        ->post(route('owner.history-recovery.store', $market))
+        ->assertRedirectToRoute('owner.history-recovery.show', $market);
+
+    $this->assertDatabaseCount('history_recovery_requests', 1);
+    Bus::assertDispatchedTimes(RecoverMarketHistory::class, 1);
+});
+
+it('asks for the password when the configured confirmation timeout expires', function () {
+    $this->freezeTime();
+    Bus::fake();
+    $owner = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->user_id, 'auth.password_timeout' => 60]);
+    $market = recoveryMarket($owner);
+    $this->actingAs($owner)->withSession(['auth.password_confirmed_at' => now()->timestamp])
+        ->get(route('owner.history-recovery.show', $market))->assertOk();
+    $this->travel(61)->seconds();
+
+    $this->post(route('owner.history-recovery.store', $market))->assertViewIs('auth.confirm-password');
+
+    $this->assertDatabaseCount('history_recovery_requests', 0);
+    Bus::assertNothingDispatched();
+});
+
+it('keeps invalid password attempts on the repair confirmation without queueing', function (mixed $password, string $message) {
+    Bus::fake();
+    $owner = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->user_id]);
+    $market = recoveryMarket($owner);
+
+    $this->actingAs($owner)->withSession(['auth.password_confirmed_at' => 0])
+        ->post(route('owner.history-recovery.store', $market), [
+            'password' => $password, 'retry_unavailable' => '1',
+        ])->assertUnprocessable()->assertViewIs('auth.confirm-password')
+        ->assertSee($message)
+        ->assertSee('name="retry_unavailable" value="1"', false)
+        ->assertSessionHas('auth.password_confirmed_at', 0)
+        ->assertSessionMissing('_old_input.password');
+
+    $this->assertDatabaseCount('history_recovery_requests', 0);
+    Bus::assertNothingDispatched();
+})->with([
+    'wrong password' => ['wrong-password', 'The password is incorrect.'],
+    'empty password' => ['', 'The password field is required.'],
+    'invalid password type' => [['password'], 'The password field must be a string.'],
+]);
+
+it('keeps JSON repair requests locked until password confirmation', function () {
+    Bus::fake();
+    $owner = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->user_id]);
+    $market = recoveryMarket($owner);
+
+    $this->actingAs($owner)->withSession(['auth.password_confirmed_at' => 0])
+        ->postJson(route('owner.history-recovery.store', $market))
+        ->assertStatus(423)->assertJsonPath('message', 'Password confirmation required.');
+
+    $this->assertDatabaseCount('history_recovery_requests', 0);
+    Bus::assertNothingDispatched();
+});
+
+it('rate limits repeated repair password guesses without queueing', function () {
+    Bus::fake();
+    $owner = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->user_id]);
+    $market = recoveryMarket($owner);
+    $this->actingAs($owner)->withSession(['auth.password_confirmed_at' => 0]);
+
+    for ($attempt = 0; $attempt < 6; $attempt++) {
+        $this->post(route('owner.history-recovery.store', $market), ['password' => 'wrong-password'])
+            ->assertUnprocessable();
+    }
+
+    $this->post(route('owner.history-recovery.store', $market), ['password' => 'password'])
+        ->assertTooManyRequests()->assertSessionHas('auth.password_confirmed_at', 0);
+    $this->assertDatabaseCount('history_recovery_requests', 0);
+    Bus::assertNothingDispatched();
+});
+
+it('does not let a non-owner confirm a repair with their own valid password', function () {
+    Bus::fake();
+    $owner = User::factory()->create();
+    $ordinary = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->user_id]);
+    $market = recoveryMarket($ordinary);
+
+    $this->actingAs($ordinary)->withSession(['auth.password_confirmed_at' => 0])
+        ->post(route('owner.history-recovery.store', $market), ['password' => 'password'])
+        ->assertForbidden()->assertSessionHas('auth.password_confirmed_at', 0);
+
+    $this->assertDatabaseCount('history_recovery_requests', 0);
+    Bus::assertNothingDispatched();
+});
+
+it('requires login before accepting a repair password', function () {
+    Bus::fake();
+    $owner = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->user_id]);
+    $market = recoveryMarket($owner);
+
+    $this->post(route('owner.history-recovery.store', $market), ['password' => 'password'])
+        ->assertRedirectToRoute('login');
+
+    $this->assertDatabaseCount('history_recovery_requests', 0);
+    Bus::assertNothingDispatched();
+});
+
+it('rejects invalid retry options before presenting the repair password form', function () {
+    Bus::fake();
+    $owner = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->user_id]);
+    $market = recoveryMarket($owner);
+
+    $this->actingAs($owner)->withSession(['auth.password_confirmed_at' => 0])
+        ->from(route('owner.history-recovery.show', $market))
+        ->post(route('owner.history-recovery.store', $market), ['retry_unavailable' => 'invalid'])
+        ->assertSessionHasErrors(['retry_unavailable' => 'The retry unavailable field must be true or false.']);
+
+    $this->assertDatabaseCount('history_recovery_requests', 0);
+    Bus::assertNothingDispatched();
+});
+
 it('coalesces repeated owner recovery requests into one queued job', function () {
     Bus::fake([RecoverMarketHistory::class]);
     $owner = User::factory()->create();

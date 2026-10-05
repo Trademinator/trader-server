@@ -14,6 +14,7 @@ use App\Http\Controllers\Owner\MarketEventController;
 use App\Http\Controllers\Owner\ReportController;
 use App\Http\Controllers\Owner\UserController;
 use App\Http\Controllers\Settings;
+use App\Http\Middleware\ConfirmHistoryRecoveryPassword;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -96,7 +97,7 @@ Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-
     Route::get('markets/{market}', [ReportController::class, 'market'])->name('markets.show');
     Route::get('history-recovery/{market}', [HistoryRecoveryController::class, 'show'])->whereUuid('market')->name('history-recovery.show');
     Route::post('history-recovery/{market}', [HistoryRecoveryController::class, 'store'])->whereUuid('market')
-        ->middleware(['password.confirm', 'throttle:6,1'])->name('history-recovery.store');
+        ->middleware(['throttle:6,1,history-recovery', ConfirmHistoryRecoveryPassword::class])->name('history-recovery.store');
     Route::get('intelligence', [ReportController::class, 'intelligence'])->name('intelligence');
     Route::get('intelligence/{model}', [ReportController::class, 'model'])->name('intelligence.show');
     Route::get('events', [MarketEventController::class, 'index'])->name('events');
