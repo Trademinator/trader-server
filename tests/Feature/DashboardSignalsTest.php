@@ -69,7 +69,8 @@ it('records the original model evidence, preserves its time and distinguishes su
         expect($first->payload['scoring']['components']['automatic']['action'])->toBe('hold')
             ->and((float) $first->payload['scoring']['effective_weights']['automatic'])->toBe(1.0);
         expect(app(SignalJournal::class)->record($market)->getKey())->toBe($first->getKey());
-        $this->actingAs($owner)->get('/dashboard')->assertOk()->assertSee('HOLD')->assertSee('Model validated');
+        $this->actingAs($owner)->get('/dashboard')->assertOk()->assertSee('HOLD')
+            ->assertSee('aria-label="Automatic KNN: Ready"', false);
         $this->travelTo('2024-01-01 04:08:00 UTC');
         $second = app(SignalJournal::class)->record($market);
         expect($second->reason)->toBe('stale_features')->and($second->is_change)->toBeTrue();
