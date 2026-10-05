@@ -44,7 +44,8 @@ class ReportController extends Controller
             }
         }
         $queues = DB::table('jobs')->selectRaw('queue, COUNT(*) AS total, MIN(created_at) AS oldest')->groupBy('queue')->get();
-        $failed = DB::table('failed_jobs')->select('uuid', 'connection', 'queue', 'failed_at')->orderByDesc('failed_at')->limit(10)->get();
+        $failed = DB::connection(config('queue.failed.database'))->table(config('queue.failed.table', 'failed_jobs'))
+            ->select('uuid', 'connection', 'queue', 'failed_at')->orderByDesc('failed_at')->orderByDesc('id')->limit(10)->get();
         $queueDriver = config('queue.default');
         $traffic = DB::table('access_daily_stats')->where('day', now('UTC')->toDateString())
             ->selectRaw('COALESCE(SUM(requests), 0) AS total, COALESCE(SUM(CASE WHEN status_code >= 500 THEN requests ELSE 0 END), 0) AS errors')->first();

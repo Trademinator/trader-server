@@ -9,11 +9,13 @@ use App\Http\Controllers\Markets\SubscriptionController;
 use App\Http\Controllers\Markets\SuggestionController;
 use App\Http\Controllers\Markets\SuggestionReviewController;
 use App\Http\Controllers\Owner\ArchiveController;
+use App\Http\Controllers\Owner\FailedJobController;
 use App\Http\Controllers\Owner\HistoryRecoveryController;
 use App\Http\Controllers\Owner\MarketEventController;
 use App\Http\Controllers\Owner\ReportController;
 use App\Http\Controllers\Owner\UserController;
 use App\Http\Controllers\Settings;
+use App\Http\Middleware\ConfirmFailedJobPassword;
 use App\Http\Middleware\ConfirmHistoryRecoveryPassword;
 use Illuminate\Support\Facades\Route;
 
@@ -90,6 +92,11 @@ Route::prefix('human-training')->name('human-training.')->middleware(['auth', 'v
 
 Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-owner', 'throttle:60,1'])->group(function () {
     Route::get('/', [ReportController::class, 'index'])->name('overview');
+    Route::get('failed-jobs/{job}', [FailedJobController::class, 'show'])->whereUuid('job')->name('failed-jobs.show');
+    Route::post('failed-jobs/{job}/retry', [FailedJobController::class, 'retry'])->whereUuid('job')
+        ->middleware(['throttle:12,1,failed-jobs', ConfirmFailedJobPassword::class])->name('failed-jobs.retry');
+    Route::delete('failed-jobs/{job}', [FailedJobController::class, 'destroy'])->whereUuid('job')
+        ->middleware(['throttle:12,1,failed-jobs', ConfirmFailedJobPassword::class])->name('failed-jobs.destroy');
     Route::get('users', [UserController::class, 'index'])->name('users');
     Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
     Route::put('users/{user}', [UserController::class, 'update'])->middleware(['password.confirm', 'throttle:12,1'])->name('users.update');

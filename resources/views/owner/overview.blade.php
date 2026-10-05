@@ -25,13 +25,22 @@
             <p class="owner-muted">Ready KNN models and current CoinGecko context across all {{ \App\Helpers\Decimal::format($modelTotals['total']) }} current market builds.</p>
         </section>
     </div>
-    <section class="owner-panel"><h2>Queue backlog</h2>
+    <section class="owner-panel" id="queue-backlog"><h2>Queue backlog</h2>
         <p class="owner-muted">Configured queue connection: {{ $queueDriver }}. The table below reports the database queue only.</p>
         <div class="owner-scroll"><table class="owner-table"><thead><tr><th>Queue</th><th>Pending / reserved</th><th>Oldest queued at</th></tr></thead><tbody>
             @forelse($queues as $queue)<tr><td>{{ $queue->queue }}</td><td>{{ $queue->total }}</td><td><x-display-time :value="$queue->oldest" unit="seconds" /></td></tr>@empty<tr><td colspan="3">No jobs in the database queue.</td></tr>@endforelse
         </tbody></table></div>
-        <h3>Recent recorded job failures</h3><div class="owner-scroll"><table class="owner-table"><thead><tr><th>Job UUID</th><th>Connection / queue</th><th>Failed at</th></tr></thead><tbody>
-            @forelse($failed as $job)<tr><td><code>{{ $job->uuid }}</code></td><td>{{ $job->connection }} / {{ $job->queue }}</td><td><x-display-time :value="$job->failed_at" /></td></tr>@empty<tr><td colspan="3">No recorded failures.</td></tr>@endforelse
+        <h3>Recent recorded job failures</h3><div class="owner-scroll"><table class="owner-table"><thead><tr><th>Job UUID</th><th>Connection / queue</th><th>Failed at</th><th>Actions</th></tr></thead><tbody>
+            @forelse($failed as $job)
+                <tr>
+                    <td><code>{{ $job->uuid }}</code></td>
+                    <td>{{ $job->connection }} / {{ $job->queue }}</td>
+                    <td><x-display-time :value="$job->failed_at" /></td>
+                    <td><x-owner.failed-job-actions :job="$job->uuid" :view="true" /></td>
+                </tr>
+            @empty
+                <tr><td colspan="4">No recorded failures.</td></tr>
+            @endforelse
         </tbody></table></div>
     </section>
 </x-owner.layout>
