@@ -316,6 +316,84 @@ test('batched Submit retries only unsaved changes and never repeats a committed 
     assert.equal(nodes.get('[data-submit-labels]').hidden, true, 'saved batch labels become the editing baseline');
 });
 
+test('auto-label follows empty pages and preserves manual labels between requests', async t => {
+    const pages = [
+        { labels: [], processed: 50, total: 101, next_offset: 50 },
+        { labels: [{ time: 3, decision_at_ms: 4000, action: 'buy' }], processed: 100, total: 101, next_offset: 100 },
+        { labels: [{ time: 4, decision_at_ms: 5000, action: 'sell' }], processed: 101, total: 101, next_offset: null },
+    ];
+    let mounted;
+    const offsets = [];
+    mounted = await mountedChart(t, async (_url, options) => {
+        offsets.push(JSON.parse(options.body).offset);
+        if (offsets.length === 2) {
+            assert.match(mounted.nodes.get('[data-status]').textContent, /50 of 101/);
+            assert.equal(mounted.nodes.get('[data-submit-labels]').disabled, true);
+            mounted.nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 30, clientY: 20, preventDefault() {} });
+            mounted.nodes.get('[data-menu-action="hold"]').trigger('click');
+        }
+        return { ok: true, json: async () => pages.shift() };
+    });
+
+    await mounted.nodes.get('[data-auto-label]').trigger('click');
+
+    assert.deepEqual(offsets, [0, 50, 100]);
+    assert.ok(mounted.markers.data.some(marker => marker.id === 'human-3' && marker.text === 'HOLD'));
+    assert.ok(mounted.markers.data.some(marker => marker.id === 'human-4' && marker.text === 'SELL'));
+    assert.match(mounted.nodes.get('[data-pending-status]').textContent, /2 staged candle changes/);
+    assert.equal(mounted.nodes.get('[data-stat-total]').textContent, '1');
+    assert.equal(mounted.nodes.get('[data-submit-labels]').disabled, false);
+});
+
+test('auto-label keeps completed pages and retries from the failed page', async t => {
+    let attempt = 0;
+    const { nodes, requests } = await mountedChart(t, async () => {
+        if (++attempt === 2) return { ok: false, status: 500, json: async () => ({ message: 'Temporary failure.' }) };
+        return { ok: true, json: async () => attempt === 1
+            ? { labels: [{ time: 3, decision_at_ms: 4000, action: 'hold' }], processed: 50, total: 51, next_offset: 50 }
+            : { labels: [{ time: 4, decision_at_ms: 5000, action: 'sell' }], processed: 51, total: 51, next_offset: null } };
+    });
+
+    await nodes.get('[data-auto-label]').trigger('click');
+    assert.match(nodes.get('[data-pending-status]').textContent, /1 staged candle change/);
+    assert.match(nodes.get('[data-status]').textContent, /Temporary failure.*Auto-label.*resume/);
+    assert.equal(nodes.get('[data-submit-labels]').disabled, false);
+    await nodes.get('[data-auto-label]').trigger('click');
+
+    assert.deepEqual(requests.map(request => JSON.parse(request.options.body).offset), [0, 50, 50]);
+    assert.match(nodes.get('[data-pending-status]').textContent, /2 staged candle changes/);
+    assert.equal(nodes.get('[data-stat-total]').textContent, '1');
+});
+
+test('auto-label waits for rate limits and retries the same page', async t => {
+    let attempts = 0;
+    const { nodes, requests } = await mountedChart(t, async () => ++attempts === 1
+        ? { ok: false, status: 429, headers: { get: () => '2' }, json: async () => ({ message: 'Too many requests.' }) }
+        : { ok: true, json: async () => ({ labels: [{ time: 3, decision_at_ms: 4000, action: 'hold' }], next_offset: null }) });
+
+    const pending = nodes.get('[data-auto-label]').trigger('click');
+    await flushRequests();
+    assert.equal(requests.length, 1);
+    t.mock.timers.tick(2000);
+    await pending;
+
+    assert.deepEqual(requests.map(request => JSON.parse(request.options.body).offset), [0, 0]);
+    assert.match(nodes.get('[data-pending-status]').textContent, /1 staged candle change/);
+});
+
+test('auto-label stops when the page is disposed without staging a late response', async t => {
+    let resolvePage;
+    const { nodes, requests, markers } = await mountedChart(t, () => new Promise(resolve => { resolvePage = resolve; }));
+
+    const pending = nodes.get('[data-auto-label]').trigger('click');
+    globalThis.window.trigger('pagehide', { persisted: false });
+    resolvePage({ ok: true, json: async () => ({ labels: [{ time: 3, decision_at_ms: 4000, action: 'hold' }], next_offset: 50 }) });
+    await pending;
+
+    assert.equal(requests.length, 1);
+    assert.ok(!markers.data.some(marker => marker.id === 'human-3'));
+});
+
 test('Submit respects Retry-After and resumes the same pending batch', async t => {
     let attempts = 0;
     const { nodes, requests } = await mountedChart(t, async () => ++attempts === 1

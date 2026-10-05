@@ -50,12 +50,16 @@ class CandleTrainingController extends Controller
 
     public function autoLabel(Request $request, string $dataset, CandleTraining $training): JsonResponse
     {
-        $data = $request->validate(['include_existing' => ['sometimes', 'boolean']]);
+        $data = $request->validate([
+            'include_existing' => ['sometimes', 'boolean'],
+            'offset' => ['sometimes', 'integer', 'min:0'],
+        ]);
 
         return response()->json($training->autoLabels(
             $request->user(),
             $dataset,
             (bool) ($data['include_existing'] ?? false),
+            (int) ($data['offset'] ?? 0),
         ))->header('Cache-Control', 'no-store, private');
     }
 

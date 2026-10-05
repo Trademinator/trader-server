@@ -132,6 +132,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     let chart, price, volume, measureLine, observer, markerPlugin, historyTimer, historyRequest, unsubscribeTime;
     let inspectedCandle;
     let loadingHistory = false, historyFailed = false, disposed = false, submittingLabels = false, autoLabelling = false;
+    let autoLabelOffset = 0;
     let userInteracted = false;
     let lastVisibleRange = null, retryDirection = 'older';
     const data = candleTrainingChartData(JSON.parse(root.dataset.snapshot));
@@ -451,29 +452,47 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         if (submitLabels) submitLabels.disabled = true;
         if (deleteAllTraining) deleteAllTraining.disabled = true;
         status.textContent = 'Building auto-label suggestions for this frozen dataset…';
+        let staged = 0;
         try {
-            const response = await fetch(root.dataset.autoUrl, {
-                method: 'POST', credentials: 'same-origin',
-                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': root.dataset.csrf },
-                body: JSON.stringify({ include_existing: deleteAllPending }),
-            });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.message ?? Object.values(payload.errors ?? {}).flat()[0] ?? `Request failed (${response.status}).`);
-            if (disposed) return;
-            let staged = 0;
-            for (const label of payload.labels ?? []) {
-                const time = Number(label.time), decision = Number(label.decision_at_ms);
-                if (!ACTIONS.includes(label.action) || !Number.isSafeInteger(decision) || stagedChanges.has(decision)) continue;
-                data.decisions[String(time)] = decision;
-                labels.set(time, label.action);
-                stagedChanges.set(decision, { decision_at_ms: decision, action: label.action });
-                staged++;
-            }
-            renderMarkers();
-            renderPending();
+            do {
+                let response, payload;
+                for (let retries = 0; ; retries++) {
+                    if (disposed) return;
+                    response = await fetch(root.dataset.autoUrl, {
+                        method: 'POST', credentials: 'same-origin',
+                        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': root.dataset.csrf },
+                        body: JSON.stringify({ include_existing: deleteAllPending, offset: autoLabelOffset }),
+                    });
+                    payload = await response.json().catch(() => ({}));
+                    if (disposed) return;
+                    if (response.status !== 429 || retries >= 3) break;
+                    const seconds = Math.max(1, Math.min(60, Number(response.headers?.get('Retry-After')) || 5));
+                    status.textContent = `Auto-label is waiting ${seconds}s before continuing…`;
+                    await new Promise(resolve => window.setTimeout(resolve, seconds * 1000));
+                }
+                if (!response.ok) throw new Error(payload.message ?? Object.values(payload.errors ?? {}).flat()[0] ?? `Request failed (${response.status}).`);
+                const nextOffset = payload.next_offset ?? null;
+                if (nextOffset !== null && (!Number.isSafeInteger(nextOffset) || nextOffset <= autoLabelOffset)) {
+                    throw new Error('Auto-label returned an invalid continuation position.');
+                }
+                for (const label of payload.labels ?? []) {
+                    const time = Number(label.time), decision = Number(label.decision_at_ms);
+                    if (!ACTIONS.includes(label.action) || !Number.isSafeInteger(decision) || stagedChanges.has(decision)) continue;
+                    data.decisions[String(time)] = decision;
+                    labels.set(time, label.action);
+                    stagedChanges.set(decision, { decision_at_ms: decision, action: label.action });
+                    staged++;
+                }
+                autoLabelOffset = nextOffset;
+                renderMarkers();
+                renderPending();
+                status.textContent = `${payload.processed} of ${payload.total} candles checked; ${staged} new suggestions staged…`;
+            } while (autoLabelOffset !== null);
+            autoLabelOffset = 0;
             status.textContent = `${staged} auto-label suggestion${staged === 1 ? '' : 's'} staged for review. Nothing is stored until Submit.`;
         } catch (error) {
-            status.textContent = error instanceof Error ? error.message : 'Auto-label suggestions could not be generated.';
+            const reason = error instanceof Error ? error.message : 'Auto-label suggestions could not be generated.';
+            status.textContent = `${reason} Completed suggestions remain staged. Press Auto-label to resume.`;
         } finally {
             autoLabelling = false;
             autoLabel.disabled = false;
@@ -486,6 +505,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         if (typeof window.confirm === 'function'
             && !window.confirm('Stage deletion of all your Candle Training labels for this market and period? The database will not change until Submit.')) return;
         deleteAllPending = true;
+        autoLabelOffset = 0;
         labels.clear();
         stagedChanges.clear();
         renderMarkers();

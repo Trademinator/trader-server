@@ -30,6 +30,8 @@ final class CandleTraining
 
     public const SUBMIT_BATCH_SIZE = 50;
 
+    public const AUTO_LABEL_BATCH_SIZE = 50;
+
     public function __construct(
         private DatasetStore $datasets,
         private HumanTraining $snapshots,
@@ -191,10 +193,13 @@ final class CandleTraining
     }
 
     /** Build retrospective BUY/HOLD/SELL suggestions without storing any label. */
-    public function autoLabels(User $trainer, string $dataset, bool $includeExisting = false): array
+    public function autoLabels(User $trainer, string $dataset, bool $includeExisting = false, int $offset = 0): array
     {
         Gate::forUser($trainer)->authorize('train-intelligence');
         [$manifest, $rows] = $this->load($dataset);
+        if ($offset < 0 || $offset >= count($rows)) {
+            throw ValidationException::withMessages(['offset' => 'The auto-label position is outside this frozen dataset.']);
+        }
         $takerFee = $this->takerFee($manifest);
         if ($takerFee === null) {
             throw ValidationException::withMessages([
@@ -223,16 +228,22 @@ final class CandleTraining
         $this->hodl_all_dojis($tickers);
         $this->hodl_middle_chains($tickers);
 
+        // Keep the full algorithm context, but verify only one chronological
+        // page per request. Snapshot UUIDs reflect review order, not candle time.
+        $rowBatch = array_slice($rows, $offset, self::AUTO_LABEL_BATCH_SIZE);
+        $tickers = array_slice($tickers, $offset, count($rowBatch));
+        $processed = $offset + count($rowBatch);
         $existing = collect();
         if (! $includeExisting) {
             $labelled = HumanTrainingSnapshot::query()
+                ->select(['snapshot_id', 'decision_at_ms', 'sha256', 'payload'])
                 ->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
                 ->where('version', HumanTraining::VERSION)
-                ->whereBetween('decision_at_ms', [$rows[0]['decision_at_ms'], $rows[array_key_last($rows)]['decision_at_ms']])
+                ->whereIn('decision_at_ms', array_column($rowBatch, 'decision_at_ms'))
                 ->whereHas('candleLabels', fn ($query) => $query->where('trainer_id', $trainer->user_id))
-                ->orderBy('snapshot_id')->lazy(25);
-            foreach ($labelled->chunk(25) as $batch) {
-                $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $batch, $rows);
+                ->lazyById(50, 'snapshot_id');
+            foreach ($labelled->chunk(50) as $batch) {
+                $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $batch, $rowBatch);
                 foreach ($batch as $snapshot) {
                     if (isset($compatible[$snapshot->snapshot_id])) {
                         $existing->put($snapshot->decision_at_ms, true);
@@ -254,7 +265,8 @@ final class CandleTraining
             ];
         }
 
-        return ['labels' => $labels, 'count' => count($labels)];
+        return ['labels' => $labels, 'count' => count($labels), 'processed' => $processed,
+            'total' => count($rows), 'next_offset' => $processed < count($rows) ? $processed : null];
     }
 
     /**

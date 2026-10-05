@@ -207,9 +207,11 @@ final class HumanTraining
         }
         $legacyIds = [];
         $strictTimes = [];
+        $inputDigests = [];
         $legacyHistory = app(SnapshotRevisions::class)->historyRevision($manifest) === 0;
         foreach ($snapshots as $snapshot) {
             $payload = $snapshot->verifiedPayload();
+            $inputDigests[(int) $snapshot->decision_at_ms][$snapshot->snapshot_id] = SnapshotInput::digest($payload);
             if ($legacyHistory && ! isset($payload['revision']) && ($payload['feature_sha256'] ?? null) === null) {
                 // Preserve the previous compatibility checks for source-less legacy
                 // research records only; a real provenance-bearing record is strict.
@@ -229,10 +231,20 @@ final class HumanTraining
         }
         $rawRows ??= $this->datasets->load($manifest['dataset_id'])[1];
         $rows = array_filter($rawRows, fn (array $row): bool => isset($strictTimes[$row['decision_at_ms']]));
-        $current = $this->snapshotIdsForRows($manifest, array_values($rows));
-        foreach ($current as $snapshotId) {
-            if ($snapshotId !== null) {
-                $ids[$snapshotId] = true;
+        // Compatibility is read-only. Model observations are excluded from
+        // SnapshotInput identity, so their per-candle replay queries are unnecessary.
+        foreach (array_chunk(TrainingRowAudit::inspect(array_values($rows))['rows'], 50) as $batch) {
+            $requested = array_column($batch, null, 'decision_at_ms');
+            foreach ($this->batchSnapshotPayloads($manifest, $requested, includeModelObservations: false) as $decision => $payload) {
+                if ($payload === null) {
+                    continue;
+                }
+                $currentDigest = SnapshotInput::digest($payload);
+                foreach ($inputDigests[$decision] ?? [] as $snapshotId => $digest) {
+                    if (hash_equals($currentDigest, $digest)) {
+                        $ids[$snapshotId] = true;
+                    }
+                }
             }
         }
 
@@ -256,7 +268,7 @@ final class HumanTraining
      * @param  array<int, array<string, mixed>>  $rows  keyed by decision_at_ms
      * @return array<int, array<string, mixed>|null>
      */
-    private function batchSnapshotPayloads(array $manifest, array $rows): array
+    private function batchSnapshotPayloads(array $manifest, array $rows, bool $includeModelObservations = true): array
     {
         uasort($rows, fn (array $a, array $b): int => ((int) $a['microtimestamp']) <=> ((int) $b['microtimestamp']));
         $first = reset($rows);
@@ -294,7 +306,7 @@ final class HumanTraining
                 $featureDigests[(int) $feature->microtimestamp] = hash('sha256', json_encode($feature->payload, JSON_THROW_ON_ERROR));
             }
         }
-        $observations = $this->batchModelObservations($manifest, array_keys($rows));
+        $observations = $includeModelObservations ? $this->batchModelObservations($manifest, array_keys($rows)) : [];
         $payloads = [];
         foreach ($rows as $decision => $row) {
             $timestamp = (int) $row['microtimestamp'];
