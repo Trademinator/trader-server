@@ -35,6 +35,7 @@
         @include('markets.intelligence-lead-lag')
         @if(isset($report['ensemble']))
             <section class="guide-panel"><h2>Two-KNN scoring</h2>
+                <x-knn-readiness :report="$report" :coingecko="$coingecko" />
                 <p>The automatic model learns future outcomes. Human Candle learns submitted BUY, HOLD and SELL annotations using the same selected technical features, without CoinGecko context.</p>
                 @if(isset($signal['scoring']))
                     <div class="review-table-wrap"><table>
@@ -87,7 +88,7 @@
             <section class="guide-panel">
                 <h2>Model validation</h2>
                 <dl>
-                    <dt>Status</dt><dd>{{ $report['status'] === 'ready' ? 'Validated' : 'Abstaining' }}</dd>
+                    <dt>Intelligence readiness</dt><dd><x-knn-readiness :report="$report" :coingecko="$coingecko" /></dd>
                     <dt>Automatic selected K</dt><dd>{{ $report['k'] ?? 'No eligible value' }}</dd>
                     <dt>Automatic knowledge rows</dt><dd>{{ \App\Helpers\Decimal::format($report['knowledge_rows']) }} retained examples</dd>
                     @if(isset($report['candle_guidance']['knowledge_rows']))

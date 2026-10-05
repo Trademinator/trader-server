@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Markets;
 
+use App\Domain\Intelligence\CoinGeckoReadiness;
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\MarketData\MarketCatalog;
 use App\Domain\MarketData\MarketCatalogException;
@@ -19,7 +20,7 @@ use Throwable;
 
 final class SubscriptionController extends Controller
 {
-    public function index(Request $request, MarketCatalog $catalog): View
+    public function index(Request $request, MarketCatalog $catalog, CoinGeckoReadiness $contextReadiness): View
     {
         $catalogueError = null;
         try {
@@ -39,17 +40,21 @@ final class SubscriptionController extends Controller
                 : ModelStore::marketKey($item->market->exchange->class, $item->market->symbol, $period)];
         });
         $keys = $marketKeys->filter()->unique()->values();
-        $validatedKeys = collect();
+        $modelReports = collect();
         if ($keys->isNotEmpty()) {
-            $validatedKeys = DB::table('intelligence_heads as heads')
+            $modelReports = DB::table('intelligence_heads as heads')
                 ->join('intelligence_models as models', 'models.model_id', '=', 'heads.model_id')
                 ->whereIn('heads.market_key', $keys->all())->get(['heads.market_key', 'models.report'])
-                ->filter(fn ($row): bool => ModelStore::isReadyReport(json_decode($row->report, true, flags: JSON_THROW_ON_ERROR)))
-                ->pluck('market_key')->flip();
+                ->mapWithKeys(fn ($row): array => [$row->market_key => json_decode($row->report, true, flags: JSON_THROW_ON_ERROR)]);
         }
-        $validatedSubscriptions = $marketKeys->map(
-            fn (?string $key): bool => $key !== null && $validatedKeys->has($key)
+        $subscriptionReports = $marketKeys->map(
+            fn (?string $key): ?array => $key === null ? null : $modelReports->get($key)
         );
+        $contexts = $contextReadiness->forMarkets($subscriptions->pluck('market'));
+        $subscriptionContexts = $subscriptions->mapWithKeys(fn (MarketSubscription $item): array => [
+            $item->getKey() => $contexts->get(ModelStore::marketKey($item->market->exchange->class,
+                $item->market->symbol, $item->market->feed?->selected_period ?? '')),
+        ]);
         $subscriptionGroups = $subscriptions
             ->groupBy(fn (MarketSubscription $item): string => $item->market->exchange_id)
             ->map(function ($items) use ($exchangeChoices): array {
@@ -71,7 +76,8 @@ final class SubscriptionController extends Controller
             'exchanges' => $exchanges,
             'catalogueError' => $catalogueError,
             'subscriptionGroups' => $subscriptionGroups,
-            'validatedSubscriptions' => $validatedSubscriptions,
+            'subscriptionReports' => $subscriptionReports,
+            'subscriptionContexts' => $subscriptionContexts,
             'prefillExchange' => is_string($request->query('exchange')) ? $request->query('exchange') : '',
             'prefillSymbol' => is_string($request->query('symbol')) ? $request->query('symbol') : '',
         ]);

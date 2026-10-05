@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Owner;
 
 use App\Domain\Features\FeatureEngine;
+use App\Domain\Intelligence\CoinGeckoReadiness;
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\Operations\GeoLocation;
 use App\Http\Controllers\Controller;
@@ -20,15 +21,28 @@ use Illuminate\View\View;
 
 class ReportController extends Controller
 {
-    public function index(GeoLocation $geo): View
+    public function index(GeoLocation $geo, CoinGeckoReadiness $contextReadiness): View
     {
         $users = User::query()->toBase()->selectRaw('COUNT(*) AS total, COUNT(email_verified_at) AS verified, COUNT(suspended_at) AS suspended')->first();
         $subscriptions = MarketSubscription::query()->where('active', true)->count();
         $feeds = MarketFeed::query()->selectRaw('status, COUNT(*) AS total')->groupBy('status')->orderBy('status')->get();
         $overdue = MarketFeed::query()->whereHas('market.subscriptions', fn ($q) => $q->where('active', true))
             ->where('next_pull_at', '<', now()->subMinutes(15))->count();
-        $models = DB::table('intelligence_models')->join('intelligence_heads', 'intelligence_heads.model_id', '=', 'intelligence_models.model_id')
-            ->selectRaw('status, COUNT(*) AS total')->groupBy('status')->orderBy('status')->get();
+        $modelTotals = ['total' => 0, 'automatic' => 0, 'human_candle' => 0, 'coingecko' => 0];
+        $models = DB::table('intelligence_models as models')->join('intelligence_heads as heads', 'heads.model_id', '=', 'models.model_id')
+            ->select('models.model_id', 'models.report')->orderBy('models.model_id')->lazy(100);
+        foreach ($models->chunk(100) as $batch) {
+            $reports = $batch->map(fn ($model): array => json_decode($model->report, true, flags: JSON_THROW_ON_ERROR));
+            $contexts = $contextReadiness->forStreams($reports);
+            foreach ($reports as $report) {
+                $modelTotals['total']++;
+                $key = ModelStore::marketKey($report['exchange'] ?? '', $report['symbol'] ?? '', $report['period'] ?? '');
+                $modelTotals['coingecko'] += (int) ($contexts->get($key)['ready'] ?? false);
+                foreach (ModelStore::knnReadiness($report) as $name => $state) {
+                    $modelTotals[$name] += (int) $state['ready'];
+                }
+            }
+        }
         $queues = DB::table('jobs')->selectRaw('queue, COUNT(*) AS total, MIN(created_at) AS oldest')->groupBy('queue')->get();
         $failed = DB::table('failed_jobs')->select('uuid', 'connection', 'queue', 'failed_at')->orderByDesc('failed_at')->limit(10)->get();
         $queueDriver = config('queue.default');
@@ -38,7 +52,7 @@ class ReportController extends Controller
         $latestModel = DB::table('intelligence_models')->max('created_at');
         $geoStatus = $geo->status();
 
-        return view('owner.overview', compact('users', 'subscriptions', 'feeds', 'overdue', 'models', 'queues', 'failed', 'queueDriver', 'traffic', 'latestPull', 'latestModel', 'geoStatus'));
+        return view('owner.overview', compact('users', 'subscriptions', 'feeds', 'overdue', 'modelTotals', 'queues', 'failed', 'queueDriver', 'traffic', 'latestPull', 'latestModel', 'geoStatus'));
     }
 
     public function subscriptions(Request $request): View
@@ -79,7 +93,7 @@ class ReportController extends Controller
         return view('owner.market', compact('market', 'subscriptions', 'period', 'candles', 'features', 'head', 'backfill'));
     }
 
-    public function intelligence(Request $request): View
+    public function intelligence(Request $request, CoinGeckoReadiness $contextReadiness): View
     {
         $filters = $request->validate(['history' => ['nullable', 'boolean'], 'status' => ['nullable', 'string', 'max:32']]);
         $query = DB::table('intelligence_models as models')->leftJoin('intelligence_heads as heads', 'heads.model_id', '=', 'models.model_id')
@@ -93,16 +107,25 @@ class ReportController extends Controller
 
             return $row;
         });
+        $contexts = $contextReadiness->forStreams($models->getCollection()->pluck('summary'));
+        $models->through(function ($row) use ($contexts) {
+            $row->coingecko = $contexts->get(ModelStore::marketKey($row->summary['exchange'] ?? '',
+                $row->summary['symbol'] ?? '', $row->summary['period'] ?? ''));
+
+            return $row;
+        });
 
         return view('owner.intelligence', compact('models'));
     }
 
-    public function model(string $model, ModelStore $store): View
+    public function model(string $model, ModelStore $store, CoinGeckoReadiness $contextReadiness): View
     {
         abort_unless(Str::isUuid($model) && DB::table('intelligence_models')->where('model_id', $model)->exists(), 404);
         $report = $store->report($model);
+        $coingecko = $contextReadiness->forStreams([$report])->get(ModelStore::marketKey(
+            $report['exchange'] ?? '', $report['symbol'] ?? '', $report['period'] ?? ''));
 
-        return view('owner.model', compact('report', 'model'));
+        return view('owner.model', compact('report', 'model', 'coingecko'));
     }
 
     public function access(Request $request, GeoLocation $geo): View

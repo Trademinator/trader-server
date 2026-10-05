@@ -4,6 +4,7 @@
 @import './form.css';
 @import './owner.css';
 @import './dashboard.css';
+@import './knn-readiness.css';
 
 @source "../views";
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';

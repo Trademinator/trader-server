@@ -98,11 +98,6 @@
         }
         .dark .market-row { border-top-color: #374151; }
         .market-row-title { font-weight: 750; overflow-wrap: anywhere; }
-        .market-validated-check {
-            display: inline-block; margin-left: 6px; color: #198754;
-            font-size: 1.2rem; font-weight: 900; line-height: 1; vertical-align: -.04em;
-        }
-        .dark .market-validated-check { color: #75d69c; }
         .market-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
         .market-review { border-radius: 9px; padding: 8px 12px; background: #0b5ed7; color: #fff; font-weight: 700; }
         .market-review:hover { background: #084298; }
@@ -204,7 +199,7 @@
                         <li class="market-row">
                             <div>
                                 <strong class="market-row-title">{{ $subscription->market->symbol }}{{ $subscription->market->feed?->selected_period ? ' · '.$subscription->market->feed->selected_period : '' }}
-                                    @if ($validatedSubscriptions->get($subscription->getKey(), false))<span class="market-validated-check" role="img" aria-label="Validated model" title="Validated model">✓</span>@endif
+                                    <x-knn-readiness :report="$subscriptionReports->get($subscription->getKey())" :coingecko="$subscriptionContexts->get($subscription->getKey())" class="ml-2" />
                                 </strong>
                                 <p class="market-meta">
                                     <span class="market-badge {{ $subscription->active ? 'is-active' : '' }}">{{ $subscription->active ? 'Active' : 'Inactive' }}</span>

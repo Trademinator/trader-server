@@ -23,6 +23,8 @@ it('restricts intelligence pages to the active subscription owner and escapes ma
     $this->actingAs($other)->get($url)->assertNotFound();
     $this->actingAs($owner)->get($url)->assertSee('HOLD')->assertSee('0.0%')
         ->assertSee('Training has not completed')->assertSee('What is missing?')
+        ->assertSee('Automatic KNN: Not ready — No model built yet')
+        ->assertSee('Human Candle KNN: Not ready — No model built yet')
         ->assertSee('M2/M3 jobs alone do not train an M4 model.')
         ->assertSee('fallback zeros')->assertDontSee('ETA')
         ->assertSee('&lt;script&gt;', false)->assertDontSee('<script>alert(1)</script>', false);
@@ -70,6 +72,7 @@ it('renders actual history counts and failed validation requirements for an abst
 
         $response->assertOk()->assertSee('227 retained examples')
             ->assertSee('Two-KNN scoring')->assertSee('Human Trend is excluded')
+            ->assertSee('Automatic KNN: Not ready')->assertSee('Human Candle KNN: Not ready')
             ->assertSee('Automatic KNN')->assertSee('Human Candle KNN')->assertSee('Effective weight')
             ->assertSee('227 out of 380')->assertSee('K selection requirements')
             ->assertSee(route('human-training.index', [

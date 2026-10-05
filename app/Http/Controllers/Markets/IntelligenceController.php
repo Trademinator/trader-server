@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Markets;
 
+use App\Domain\Intelligence\CoinGeckoReadiness;
 use App\Domain\Intelligence\IntelligenceReadiness;
 use App\Domain\Intelligence\MarketIntelligence;
 use App\Domain\Intelligence\ModelStore;
@@ -17,11 +18,13 @@ use Throwable;
 
 final class IntelligenceController extends Controller
 {
-    public function show(Request $request, string $subscription, MarketIntelligence $intelligence, ModelStore $models, IntelligenceReadiness $readiness, MarketCatalog $catalog): View
+    public function show(Request $request, string $subscription, MarketIntelligence $intelligence, ModelStore $models, IntelligenceReadiness $readiness, MarketCatalog $catalog, CoinGeckoReadiness $contextReadiness): View
     {
         $item = MarketSubscription::query()->with('market.exchange', 'market.feed')
             ->where('user_id', $request->user()->user_id)->where('active', true)->findOrFail($subscription);
         $period = $item->market->feed?->selected_period;
+        $coingecko = $contextReadiness->forMarkets([$item->market])->get(ModelStore::marketKey(
+            $item->market->exchange->class, $item->market->symbol, $period ?? ''));
         $report = null;
         try {
             $signal = $period === null ? [...WeightedKnn::abstain('period_pending'), 'patterns' => []]
@@ -65,6 +68,6 @@ final class IntelligenceController extends Controller
             ->sortBy(fn (array $peer): string => mb_strtolower($peer['label']))
             ->values();
 
-        return view('markets.intelligence', compact('item', 'period', 'signal', 'report', 'explanation', 'progress', 'peerMarkets'));
+        return view('markets.intelligence', compact('item', 'period', 'signal', 'report', 'explanation', 'progress', 'peerMarkets', 'coingecko'));
     }
 }

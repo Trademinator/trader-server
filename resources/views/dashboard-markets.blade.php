@@ -2,14 +2,14 @@
                 @forelse ($cards as $card)
                     @php($subscription = $card['subscription'])
                     @php($market = $subscription->market)
-                    <a class="dashboard-market {{ $card['ready'] ? 'has-validated-model' : '' }} {{ $selectedId === $subscription->getKey() ? 'is-selected' : '' }}" href="{{ route('dashboard', ['subscription' => $subscription->getKey(), 'page' => $subscriptions->currentPage(), 'q' => $search]) }}#market-detail">
+                    <a class="dashboard-market {{ $selectedId === $subscription->getKey() ? 'is-selected' : '' }}" href="{{ route('dashboard', ['subscription' => $subscription->getKey(), 'page' => $subscriptions->currentPage(), 'q' => $search]) }}#market-detail">
                         <div class="flex items-start justify-between gap-3"><div><h3>{{ $market->symbol }}</h3><p class="flex items-center gap-2"><span class="dashboard-exchange-logo" aria-hidden="true">@if ($card['logo_url'])<img src="{{ $card['logo_url'] }}" height="24" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">@endif<span>{{ mb_strtoupper(mb_substr($market->exchange->name, 0, 1)) }}</span></span>{{ $market->exchange->name }} · {{ $market->feed?->selected_period ?? 'Selecting period' }}</p></div><span class="guide-badge">Following</span></div>
                         @if ($card['sparkline'])<svg viewBox="0 0 200 48" role="img" aria-label="Recent closed price history for {{ $market->symbol }}" class="dashboard-sparkline"><polyline points="{{ $card['sparkline'] }}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" /></svg>
                         @else<p class="dashboard-muted my-3">Chart awaiting continuous price history</p>@endif
-                        <div class="flex flex-wrap justify-between gap-2"><strong>{{ $card['label'] }}</strong><span>{{ $card['ready'] ? 'Model validated' : 'Learning / awaiting validation' }}</span></div>
+                        <div class="flex flex-wrap justify-between gap-2"><strong>{{ $card['label'] }}</strong></div>
                         @if ($card['attention'])<p class="dashboard-warning">Collection or history needs attention</p>@endif
                         <p class="guide-help">Last candle closed: <x-display-time :value="$card['chart']['last_closed_at_ms']" unit="milliseconds" /></p>
-                        @if ($card['ready'])<span class="dashboard-validated-check" role="img" aria-label="Validated model" title="Validated model">✓</span>@endif
+                        <x-knn-readiness :report="$card['report']" :coingecko="$card['coingecko']" class="mt-3" />
                     </a>
                 @empty
                     @if ($search !== '')<div class="guide-panel md:col-span-2 xl:col-span-3"><p>No followed markets match “{{ $search }}”. Try another pair, exchange or period.</p></div>

@@ -23,6 +23,46 @@ final class ModelStore
             && ($report['trained_as_of_ms'] ?? 0) >= KnowledgeWindow::fromMs(now()->getTimestampMs());
     }
 
+    /** @return array<string, array{ready: bool, reason: string}> */
+    public static function knnReadiness(?array $report): array
+    {
+        $unavailable = match (true) {
+            $report === null => 'no_model',
+            ($report['validation_version'] ?? null) !== IntelligenceTrainer::VERSION => 'model_version_mismatch',
+            ($report['trained_as_of_ms'] ?? 0) < KnowledgeWindow::fromMs(now()->getTimestampMs()) => 'stale_model',
+            default => null,
+        };
+        $automatic = $report['automatic'] ?? [];
+        $human = $report['candle_guidance'] ?? [];
+        $reasons = [
+            'automatic' => match (true) {
+                ($automatic['status'] ?? null) === 'ready' => 'validated',
+                in_array($automatic['reason'] ?? null, [null, 'validated'], true) => 'automatic_model_unavailable',
+                default => $automatic['reason'],
+            },
+            'human_candle' => match (true) {
+                ! OptionalGuidance::enabled('candle') => 'candle_training_disabled',
+                ($human['version'] ?? null) !== HumanCandleKnn::VERSION => 'candle_model_version_mismatch',
+                ($human['status'] ?? null) === 'validated' && ($human['influence'] ?? false) => 'validated',
+                ($human['status'] ?? null) === 'validated' => 'candle_model_unavailable',
+                default => $human['status'] ?? 'candle_model_unavailable',
+            },
+        ];
+        $readiness = [];
+        foreach ($reasons as $name => $reason) {
+            $reason = $unavailable ?? $reason;
+            if ($reason === 'validated' && ($report['ensemble']['weights'][$name] ?? 0) <= 0) {
+                $reason = 'zero_scoring_weight';
+            }
+            if ($reason === 'validated' && ! self::isReadyReport($report)) {
+                $reason = 'model_unavailable';
+            }
+            $readiness[$name] = ['ready' => $reason === 'validated', 'reason' => $reason];
+        }
+
+        return $readiness;
+    }
+
     public function path(string $id): string
     {
         if (! Str::isUuid($id)) {

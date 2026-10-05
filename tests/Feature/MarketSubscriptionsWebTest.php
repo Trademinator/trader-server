@@ -88,6 +88,8 @@ it('groups subscriptions in independent collapsible exchanges and links each pai
         'generation_key' => null, 'sha256' => str_repeat('0', 64), 'report' => json_encode([
             'model_id' => $modelId, 'dataset_id' => $datasetId, 'status' => 'ready',
             'validation_version' => IntelligenceTrainer::VERSION, 'trained_as_of_ms' => now()->getTimestampMs(),
+            'automatic' => ['status' => 'ready', 'reason' => 'validated'],
+            'ensemble' => ['weights' => ['automatic' => 1, 'human_candle' => 0]],
         ], JSON_THROW_ON_ERROR), 'created_at' => now(),
     ]);
     DB::table('intelligence_heads')->insert(['market_key' => $marketKey, 'model_id' => $modelId, 'updated_at' => now()]);
@@ -106,8 +108,10 @@ it('groups subscriptions in independent collapsible exchanges and links each pai
     expect(strpos($list, 'BTC/USD'))->toBeLessThan(strpos($list, 'Zeta Exchange'));
     expect(strpos($list, 'Zeta Exchange'))->toBeLessThan(strpos($list, 'ETH/USD'));
     expect($list)->toContain('BTC/USD · 15m');
-    expect(substr_count($list, 'market-validated-check'))->toBe(1);
-    expect($list)->toMatch('/BTC\\/USD · 15m.*market-validated-check/s');
+    expect(substr_count($list, 'aria-label="Automatic KNN: Ready"'))->toBe(1);
+    expect($list)->toMatch('/BTC\\/USD · 15m.*aria-label="Automatic KNN: Ready"/s');
+    expect(substr_count($list, 'aria-label="Human Candle KNN: Not ready'))->toBe(3);
+    expect(substr_count($list, 'aria-label="CoinGecko context: Not ready'))->toBe(3);
     $response->assertSee('/markets/suggestions/review?exchange=kraken&amp;symbol=ADA%2FUSD', false)
         ->assertSee('/markets/suggestions/review?exchange=kraken&amp;symbol=BTC%2FUSD', false)
         ->assertSee('/markets/suggestions/review?exchange=coinbase&amp;symbol=ETH%2FUSD', false);

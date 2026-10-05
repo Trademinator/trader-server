@@ -12,16 +12,9 @@ button.dashboard-stat { text-align: left; cursor: pointer; }
 .dashboard-stat small { font-size: .8rem; color: #4b6279; }
 .dark .dashboard-stat small, .dark .dashboard-muted { color: #bacada; }
 .dashboard-market { position: relative; }
-.dashboard-market.has-validated-model { padding-bottom: 42px; }
-.dashboard-validated-check {
-    position: absolute; right: 16px; bottom: 12px; color: #198754;
-    font-size: 1.55rem; font-weight: 900; line-height: 1;
-}
-.dark .dashboard-validated-check { color: #75d69c; }
 .dashboard-market h3 { font-size: 1.15rem; font-weight: 750; }
 .dashboard-market.is-selected { border: 2px solid #087b8a; padding: 17px; }
 .dark .dashboard-market.is-selected { border-color: #4ce0cb; }
-.dashboard-market.is-selected.has-validated-model { padding-bottom: 42px; }
 .dashboard-muted { color: #4b6279; font-size: .9rem; }
 .dashboard-sparkline { width: 100%; height: 64px; margin: 12px 0; color: #087b8a; }
 .dark .dashboard-sparkline { color: #4ce0cb; }

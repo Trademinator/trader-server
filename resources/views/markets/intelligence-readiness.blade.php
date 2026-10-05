@@ -1,6 +1,7 @@
 <section class="guide-panel">
     <h2>What is missing?</h2>
-    <p class="guide-help">Trend Training and Candle Training are optional enhancements. Missing human reviews do not block the ordinary intelligence model.</p>
+    <x-knn-readiness :report="$report" :coingecko="$coingecko" />
+    <p class="guide-help">Green: automatic KNN. Blue: Human Candle KNN. Yellow: fresh, complete CoinGecko context for this market. A KNN check means the model is current, validated and enabled for scoring; it can still abstain on an individual candle. Human Candle training is optional. Human Trend is excluded from scoring.</p>
     @can('manage-server')
         <p><a class="review-control" href="{{ route('owner.history-recovery.show', $item->market) }}">Repair history and rebuild</a></p>
     @endcan

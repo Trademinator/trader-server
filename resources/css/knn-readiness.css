@@ -1,0 +1,13 @@
+.knn-readiness { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: .85rem; font-weight: 650; vertical-align: middle; }
+.knn-readiness .knn-readiness-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.knn-readiness-icon { font-size: 1.25em; font-weight: 900; line-height: 1; }
+.knn-readiness-automatic { color: #198754; }
+.knn-readiness-human_candle { color: #0b5ed7; }
+.knn-readiness-coingecko { color: #856404; }
+.knn-readiness-pending { color: #64748b; }
+.dark .knn-readiness-automatic { color: #75d69c; }
+.dark .knn-readiness-human_candle { color: #79b8ff; }
+.dark .knn-readiness-coingecko { color: #facc15; }
+.dark .knn-readiness-pending { color: #a8b5c7; }
+.knn-readiness-totals { gap: 12px 20px; }
+.knn-readiness-count { display: block; font-size: 1.4rem; font-variant-numeric: tabular-nums; }

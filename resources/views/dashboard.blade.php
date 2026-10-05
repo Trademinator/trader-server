@@ -16,7 +16,7 @@
         @if (session('status'))<p class="guide-notice" role="status">{{ session('status') }}</p>@endif
         <div class="grid gap-3 sm:grid-cols-2 {{ auth()->user()->can('manage-server') ? 'xl:grid-cols-4' : 'lg:grid-cols-3' }}" aria-label="Dashboard overview">
             <a class="dashboard-stat" href="#subscriptions"><span>Markets you follow</span><strong>{{ $totals['followed'] }}</strong><small>Active subscriptions</small></a>
-            <a class="dashboard-stat" href="#subscriptions"><span>Validated models</span><strong>{{ $totals['validated'] }} <small>/ {{ $totals['followed'] }}</small></strong><small>Across all markets you follow</small></a>
+            <a class="dashboard-stat" href="#subscriptions"><span>Intelligence readiness</span><div class="my-2"><x-knn-readiness :counts="$totals" :total="$totals['followed']" /></div><small>Across all markets you follow</small></a>
             @can('manage-server')
             <button type="button" class="dashboard-stat" data-attention-toggle aria-controls="attention" aria-expanded="false"><span>Needs attention</span><strong data-attention-count>{{ $cards->where('attention', true)->count() }}</strong><small>Collection or history on this page</small></button>
             @endcan
@@ -97,7 +97,7 @@
                         <p class="guide-help">Estimate before source checks and model-specific exclusions.</p></div>
                     <div><h3>2. Model build</h3><p>{{ $details['report'] ? 'A model build has completed.' : 'No model build recorded yet.' }}</p>
                         @if ($details['report'])<p class="guide-help">Model {{ $details['report']['model_id'] }}</p>@endif</div>
-                    <div><h3>3. Validation</h3><p>{{ ($details['report']['status'] ?? null) === 'ready' ? 'The recorded model passed its validation gates.' : 'Awaiting a model that passes validation.' }}</p><p class="guide-help">Enough rows permit evaluation; they do not guarantee a usable signal.</p></div>
+                    <div><h3>3. Validation</h3><x-knn-readiness :report="$details['report']" :coingecko="$details['coingecko']" /><p class="guide-help">Green: automatic KNN. Blue: Human Candle KNN. Yellow: fresh, complete CoinGecko context. Each KNN check requires its own current, validated model with a positive scoring weight. Readiness does not guarantee a signal for every candle.</p></div>
                 </div>
                 @if ($progress['eta'])<p><strong>Earliest data estimate: <x-display-time :value="$progress['eta']" /></strong></p>@endif
                 <p class="guide-help">{{ $progress['eta_note'] }} Validated-model ETA: unknown.</p>
