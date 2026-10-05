@@ -25,7 +25,7 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
 
     public int $maxExceptions = 1;
 
-    public int $timeout = 600;
+    public int $timeout = 900;
 
     public bool $failOnTimeout = true;
 
@@ -59,7 +59,7 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
         $exchange = $feed->market->exchange->class;
         $symbol = $feed->market->symbol;
         $key = ModelStore::marketKey($exchange, $symbol, $state->period);
-        $lock = Cache::lock('trademinator:history-intelligence:'.$key, 720);
+        $lock = Cache::lock('trademinator:history-intelligence:'.$key, 1020);
         if (! $lock->get()) {
             $this->release(60);
 
@@ -151,7 +151,7 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
                     'build_stage' => 'knn', 'build_revision' => $revision, 'build_error' => null,
                 ]);
             } elseif ($state->build_stage === 'knn' && (int) $state->build_revision > 0) {
-                $featureLock = Cache::lock('trademinator:features:'.$key, 720);
+                $featureLock = Cache::lock('trademinator:features:'.$key, 1020);
                 $featureLockAcquired = $featureLock->get();
                 if (! $featureLockAcquired) {
                     $this->release(30);
@@ -170,6 +170,7 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
                     return;
                 }
                 $revision = (int) $state->build_revision;
+                $builds->renew($this->historyId, $this->leaseToken);
                 $performance = is_string($state->build_performance)
                     ? json_decode($state->build_performance, true, flags: JSON_THROW_ON_ERROR)
                     : (array) ($state->build_performance ?? []);

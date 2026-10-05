@@ -231,6 +231,20 @@ it('requires rebuilding legacy model validation before issuing a new signal', fu
     expect($signal['regime'])->toBe('neutral');
 });
 
+it('requires rebuilding models from the retired maximum-supply feature version', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $manifest = IntelligenceFixtures::snapshot();
+    app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+    $legacy = app(ModelStore::class)->current('kraken', 'BTC/USD', '1m');
+    $legacy['feature_version'] = 'm2-v5';
+    app(ModelStore::class)->save($legacy);
+
+    $signal = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+
+    expect($signal['reason'])->toBe('model_version_mismatch');
+    expect($signal['confidence'])->toBe(0.0);
+});
+
 it('describes supported direction and stronger evidence as Bull Bear or Super states', function (float $body, string $regime) {
     $this->travelTo('2024-01-01 04:05:00 UTC');
     config(['intelligence.knn.min_effective_neighbors' => 6.0]);

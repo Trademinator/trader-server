@@ -66,8 +66,11 @@ no human reviews; human fitting defaults to at least 50 annotated candles and tw
 observed actions. Social/news scoring is not implemented and reports zero weight.
 CoinGecko is automatic context, not a separately weighted social model.
 
-Automatic training runs first. Human training has a cooperative 90-second budget
-and leaves a 10-second publication reserve. Known computation-budget exceptions
+Automatic training runs first under its existing 480-second deadline. Human
+training then receives a separate cooperative 300-second allowance, with a further
+10-second publication reserve. Training jobs allow 900 seconds overall; locks,
+recovery leases and queue reservations are extended accordingly. See
+[worker deployment and progress logs](CRONTABS.md#m4-intelligence-workers). Known computation-budget exceptions
 skip human training. Checksum failures, invalid source data and unexpected errors
 still propagate; they are not silently converted into a successful model.
 

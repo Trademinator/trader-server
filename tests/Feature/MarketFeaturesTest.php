@@ -1,8 +1,10 @@
 <?php
 
+use App\Domain\Archive\FeatureCheckpointStore;
 use App\Domain\Features\CoinGeckoCollector;
 use App\Domain\Features\FeatureBuilder;
 use App\Domain\Features\FeatureEngine;
+use App\Domain\Research\FeatureSchema;
 use App\Models\CoinGeckoMarketMapping;
 use App\Models\Exchange;
 use App\Models\Market;
@@ -62,6 +64,49 @@ it('builds idempotently without modifying source candles or leaking future snaps
         ->and($rows[39]->payload['ready'])->toBeFalse();
 });
 
+it('builds a complete full-schema vector for an uncapped asset while preserving older feature versions', function () {
+    $start = 1704067200000;
+    $cutoff = $start + 40 * 86400000;
+    $candles = [];
+    for ($i = 0; $i < 40; $i++) {
+        $candles[] = ['microtimestamp' => $start + $i * 86400000, 'open' => '100', 'high' => '101',
+            'low' => '99', 'close' => '100', 'volume' => '10'];
+    }
+    app(TickerRepository::class)->saveTickers('bitso', 'ATOM/USD', '1d', $candles);
+    createContextMarket('bitso', 'ATOM/USD', 'cosmos', 'usd', 'layer-1');
+    $snapshotId = (string) Str::uuid7();
+    DB::table('market_context_snapshots')->insert([
+        'snapshot_id' => $snapshotId, 'coin_id' => 'cosmos', 'vs_currency' => 'usd',
+        'observed_at_ms' => $cutoff - 1000,
+        'payload' => json_encode([
+            'coin' => ['current_price' => 100, 'market_cap' => 1000, 'total_volume' => 100,
+                'circulating_supply' => 534372000, 'max_supply' => null],
+            'global' => ['market_cap_change_percentage_24h_usd' => 0, 'market_cap_percentage' => ['btc' => 50],
+                'total_market_cap' => ['usd' => 100000], 'total_volume' => ['usd' => 10000]],
+            'btc_dominance_change' => 0, 'activity_deviation' => 0,
+            'categories' => ['layer-1' => 0], 'category_expires_at_ms' => ['layer-1' => $cutoff + 3600000],
+            'expires_at_ms' => $cutoff + 3600000,
+        ], JSON_THROW_ON_ERROR),
+    ]);
+    $oldId = (string) Str::uuid7();
+    $oldPayload = json_encode(['version' => 'm2-v5', 'features' => ['context.circulating_fraction' => null]], JSON_THROW_ON_ERROR);
+    DB::table('market_features')->insert([
+        'feature_id' => $oldId, 'exchange' => 'bitso', 'symbol' => 'ATOM/USD', 'period' => '1d',
+        'microtimestamp' => $cutoff - 86400000, 'available_at_ms' => $cutoff, 'version' => 'm2-v5',
+        'payload' => $oldPayload, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    expect(app(FeatureBuilder::class)->build('bitso', 'ATOM/USD', '1d', $cutoff))->toBe(40);
+
+    $this->assertDatabaseCount('market_features', 41);
+    $this->assertDatabaseHas('market_features', ['feature_id' => $oldId, 'version' => 'm2-v5', 'payload' => $oldPayload]);
+    $payload = MarketFeature::query()->where('version', FeatureEngine::VERSION)->orderByDesc('microtimestamp')->firstOrFail()->payload;
+    expect($payload)->context_ready->toBeTrue()->ready->toBeTrue()->missing->toBe([])
+        ->context_snapshot_id->toBe($snapshotId)->version->toBe('m2-v6');
+    expect($payload['features'])->not->toHaveKey('context.circulating_fraction');
+    expect(FeatureSchema::vector($payload, FeatureSchema::keys('full')))->toHaveCount(27);
+});
+
 it('persists intermediate feature checkpoints for bounded incremental replay', function () {
     $start = 1700000000000;
     $candles = [];
@@ -76,7 +121,7 @@ it('persists intermediate feature checkpoints for bounded incremental replay', f
         ->where('period', '1m')->count())->toBeGreaterThanOrEqual(3);
 
     $boundary = $start + 1096 * 60000;
-    expect(app(\App\Domain\Archive\FeatureCheckpointStore::class)->before('kraken', 'BTC/USD', '1m', $boundary))
+    expect(app(FeatureCheckpointStore::class)->before('kraken', 'BTC/USD', '1m', $boundary))
         ->not->toBeNull();
 });
 

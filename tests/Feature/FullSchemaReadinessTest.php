@@ -83,14 +83,14 @@ beforeEach(function () {
 });
 
 it('shows partial CoinGecko context while keeping technical intelligence available', function () {
-    fullSchemaReadinessFeatures(['context.category_momentum', 'context.circulating_fraction']);
+    fullSchemaReadinessFeatures(['context.category_momentum']);
     fullSchemaReadinessMapping();
 
     $full = fullSchemaReadiness()['full_schema'];
 
     expect($full['context_available'])->toBe(8)
         ->and($full['context_total'])->toBe(count(ContextFeatures::KEYS))
-        ->and($full['missing'])->toBe(['context.category_momentum', 'context.circulating_fraction'])
+        ->and($full['missing'])->toBe(['context.category_momentum'])
         ->and($full['technical_ready'])->toBeTrue()
         ->and($full['technical_missing'])->toBe([])
         ->and($full['full_ready'])->toBeFalse()
@@ -118,7 +118,8 @@ it('marks the strict full schema ready only when all technical and context featu
 
     $full = fullSchemaReadiness()['full_schema'];
 
-    expect($full['context_available'])->toBe(10)
+    expect($full['context_available'])->toBe(9)
+        ->and($full['context_total'])->toBe(9)
         ->and($full['missing'])->toBe([])
         ->and($full['technical_ready'])->toBeTrue()
         ->and($full['full_ready'])->toBeTrue();

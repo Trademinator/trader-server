@@ -3,6 +3,7 @@
 namespace App\Domain\Intelligence;
 
 use App\Domain\Features\FeatureEngine;
+use App\Domain\Operations\ActionLog;
 use App\Domain\Research\DatasetStore;
 use App\Domain\Research\SemanticLabels;
 use Illuminate\Support\Facades\Cache;
@@ -50,7 +51,8 @@ final class IntelligenceTrainer
         $settings = config('intelligence.knn');
         $ensemble = KnnEnsemble::settings(config('intelligence.ensemble'));
         $deadline ??= microtime(true) + config('intelligence.max_seconds');
-        $lock = Cache::lock('trademinator:intelligence:'.ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']), 720);
+        $publicationDeadline = OptionalGuidance::publicationDeadline($deadline);
+        $lock = Cache::lock('trademinator:intelligence:'.ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']), 1020);
         if (! $lock->get()) {
             throw new RuntimeException('Intelligence training is already running for this market and period.');
         }
@@ -130,8 +132,10 @@ final class IntelligenceTrainer
                 'reason' => 'excluded_from_scoring', 'influence' => false, 'keys' => [], 'samples' => 0];
             $buildPerformance['stages']['human_guidance_ms'] = 0;
             $stageStarted = hrtime(true);
-            $candle = OptionalGuidance::compare('candle', HumanCandleKnn::VERSION, $deadline,
-                fn (float $auxiliaryDeadline): array => $this->candleKnn->train($manifest, $settings, $auxiliaryDeadline));
+            $progress = new HumanTrainingProgress(app(ActionLog::class), $manifest);
+            $candle = OptionalGuidance::compare('candle', HumanCandleKnn::VERSION, $publicationDeadline,
+                fn (float $auxiliaryDeadline): array => $this->candleKnn->train($manifest, $settings, $auxiliaryDeadline, $progress),
+                $progress);
             $buildPerformance['stages']['candle_guidance_ms'] = $this->elapsedMs($stageStarted);
             $candle['bundle']['mode'] = 'independent_knn';
             $automaticReady = $selection['k'] !== null && ($evaluation['eligible'] ?? false);
@@ -174,6 +178,7 @@ final class IntelligenceTrainer
                     'human_excluded_rows' => 0, 'candle_excluded_rows' => 0,
                     'lead_lag_excluded_rows' => $leadLagExcluded,
                     'skipped' => $manifest['skipped'] ?? [],
+                    'reconstruction' => $manifest['reconstruction'] ?? [],
                     'tuning_rows' => count($training), 'holdout_rows' => count($test),
                 ],
                 'selection' => $selection, 'holdout' => $evaluation,
@@ -182,7 +187,7 @@ final class IntelligenceTrainer
                 'knowledge_rows' => count($knowledge), 'knowledge' => $knowledge, 'patterns' => $patternBundle,
                 'build_performance' => $buildPerformance,
             ];
-            if (microtime(true) > $deadline) {
+            if (microtime(true) > $publicationDeadline) {
                 throw new RuntimeException('Intelligence training time budget exceeded before publication.');
             }
 

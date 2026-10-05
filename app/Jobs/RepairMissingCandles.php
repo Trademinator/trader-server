@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Domain\Intelligence\BackfillIntelligence;
 use App\Domain\MarketData\CandleGapRepairs;
+use App\Domain\MarketData\CandleReconstructor;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\MarketData\ExchangeMetadata;
 use App\Models\MarketFeed;
@@ -127,6 +128,15 @@ final class RepairMissingCandles implements ShouldQueue
             }
             ksort($closed, SORT_NUMERIC);
 
+            if ($fromMs === $toMs && ! isset($closed[$fromMs])) {
+                $reconstructed = app(CandleReconstructor::class)->reconstruct(
+                    $exchanges, $exchange->class, $market->symbol, $state->period, $fromMs, $nowMs,
+                );
+                if ($reconstructed !== null) {
+                    $closed[$fromMs] = $reconstructed;
+                }
+            }
+
             $beforeMissing = 0;
             $afterMissing = 0;
             $changed = false;
@@ -159,8 +169,11 @@ final class RepairMissingCandles implements ShouldQueue
                 $changed = $afterMissing < $beforeMissing;
                 if ($changed) {
                     $recovered = array_values(array_diff($after, $before));
-                    $repairs->markHistoryChanged($state->market_id, $state->period,
-                        (int) min($recovered), (int) max($recovered));
+                    // Reconstructed writes record their own revision, including later native replacements.
+                    $native = array_values(array_filter($recovered, fn ($at) => ! isset($closed[$at]['reconstruction'])));
+                    if ($native !== []) {
+                        $repairs->markHistoryChanged($state->market_id, $state->period, (int) min($native), (int) max($native));
+                    }
                 }
 
                 return true;
@@ -181,7 +194,8 @@ final class RepairMissingCandles implements ShouldQueue
             if ($changed) {
                 $repairs->release($this->gapId, $this->leaseToken, [
                     'status' => 'resolved',
-                    'reason' => $afterMissing === 0 ? 'repaired' : 'partially_repaired',
+                    'reason' => isset($closed[$fromMs]['reconstruction']) ? 'reconstructed_'.$closed[$fromMs]['reconstruction']['method']
+                        : ($afterMissing === 0 ? 'repaired' : 'partially_repaired'),
                     'attempts' => $attempts,
                     'empty_attempts' => 0,
                     'failures' => 0,

@@ -3,6 +3,7 @@
 use App\Models\Exchange;
 use App\Repositories\ExchangeRepository;
 use App\Repositories\TickerRepository;
+use ccxt\NetworkError;
 use Mockery\MockInterface;
 
 it('fetches a candle exactly on the requested end boundary', function () {
@@ -153,5 +154,65 @@ it('bounds the CCXT history limit to the requested backfill window', function ()
         ->and($candle['microtimestamp'])->toBe($from);
     expect($client->options['paginate'])->toBeFalse();
     expect($client->options['fetchOHLCV']['paginate'])->toBeFalse();
+    $this->assertDatabaseCount('tickers', 0);
+});
+
+it('reads generic reconstruction evidence as decimal strings with bounded adapter parameters', function (string $exchangeClass, array $params) {
+    $from = 1704069000000;
+    $client = Mockery::mock(ccxt\Exchange::class)->makePartial();
+    $client->timeframes = ['5m' => '5m'];
+    $client->number = 'floatval';
+    $client->options = ['paginate' => true, 'fetchOHLCV' => ['paginate' => true]];
+    $client->shouldReceive('fetch_ohlcv')->once()->with('ATOM/USD', '5m', $from, 3, $params)
+        ->andReturnUsing(function () use ($client, $from) {
+            return [[$from, $client->parse_number('11.123456789123456789'), '12', '10', '11.5',
+                $client->parse_number('0.000000000000000001')]];
+        });
+    $repository = new ExchangeRepository;
+    $reflection = new ReflectionClass($repository);
+    $reflection->getProperty('exchange')->setValue($repository, new Exchange(['class' => $exchangeClass]));
+    $reflection->getProperty('ccxtExchange')->setValue($repository, $client);
+
+    $rows = $repository->fetchCandleEvidence('ATOM/USD', '5m', $from, $from + 900000, 100);
+
+    expect($rows[0])->toMatchArray(['open' => '11.123456789123456789', 'volume' => '0.000000000000000001']);
+    expect($client->number)->toBe('floatval');
+    expect($client->options['fetchOHLCV']['paginate'])->toBeFalse();
+    $this->assertDatabaseCount('tickers', 0);
+})->with([
+    'generic' => ['kraken', []],
+    'Coinbase until' => ['coinbase', ['until' => 1704069900000]],
+    'NDAX ToDate' => ['ndax', ['ToDate' => '2024-01-01 00:45:00']],
+]);
+
+it('restores CCXT numeric mode after a failed reconstruction evidence request', function () {
+    $client = Mockery::mock(ccxt\Exchange::class)->makePartial();
+    $client->timeframes = ['5m' => '5m'];
+    $client->number = 'floatval';
+    $client->shouldReceive('fetch_ohlcv')->once()->andThrow(new NetworkError('offline'));
+    $repository = new ExchangeRepository;
+    $reflection = new ReflectionClass($repository);
+    $reflection->getProperty('exchange')->setValue($repository, new Exchange(['class' => 'kraken']));
+    $reflection->getProperty('ccxtExchange')->setValue($repository, $client);
+
+    expect(fn () => $repository->fetchCandleEvidence('ATOM/USD', '5m', 1704069000000, 1704069900000, 3))
+        ->toThrow(NetworkError::class);
+
+    expect($client->number)->toBe('floatval');
+    $this->assertDatabaseCount('tickers', 0);
+});
+
+it('does not normalize unknown evidence volume into zero', function () {
+    $client = Mockery::mock(ccxt\Exchange::class)->makePartial();
+    $client->timeframes = ['5m' => '5m'];
+    $client->shouldReceive('fetch_ohlcv')->once()->andReturn([[1704069000000, '11', '12', '10', '11.5', null]]);
+    $repository = new ExchangeRepository;
+    $reflection = new ReflectionClass($repository);
+    $reflection->getProperty('exchange')->setValue($repository, new Exchange(['class' => 'kraken']));
+    $reflection->getProperty('ccxtExchange')->setValue($repository, $client);
+
+    expect(fn () => $repository->fetchCandleEvidence('ATOM/USD', '5m', 1704069000000, 1704069900000, 3))
+        ->toThrow(RuntimeException::class);
+
     $this->assertDatabaseCount('tickers', 0);
 });

@@ -19,7 +19,7 @@ final class TrainMarketIntelligence implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 3;
 
-    public int $timeout = 600;
+    public int $timeout = 900;
 
     public int $uniqueFor = 86400;
 
@@ -42,7 +42,7 @@ final class TrainMarketIntelligence implements ShouldBeUnique, ShouldQueue
     public function handle(MarketIntelligence $intelligence): void
     {
         $key = 'trademinator:intelligence-week:'.$this->uniqueId();
-        $lock = Cache::lock($key.':lock', 720);
+        $lock = Cache::lock($key.':lock', 1020);
         if (! $lock->get()) {
             throw new RuntimeException('Weekly intelligence work is already running.');
         }

@@ -25,7 +25,7 @@ class ActionLog
                 $record[$key] = $fields[$key];
             }
         }
-        foreach (['route', 'method', 'command', 'job', 'queue', 'outcome', 'error', 'source', 'reason', 'exchange', 'period', 'action', 'status'] as $key) {
+        foreach (['route', 'method', 'command', 'job', 'queue', 'outcome', 'error', 'source', 'reason', 'exchange', 'period', 'action', 'status', 'stage'] as $key) {
             $value = $fields[$key] ?? null;
             if (is_string($value) && preg_match('/^[a-zA-Z0-9_\\\\.\/:{}-]{1,160}$/D', $value)) {
                 $record[$key] = $value;
@@ -36,10 +36,11 @@ class ActionLog
         }
         foreach ([
             'status_code', 'exit_code', 'duration_ms', 'attempt', 'line', 'rows', 'fetched', 'repaired',
-            'missing_ranges', 'knowledge_rows', 'confidence', 'effective_neighbors',
+            'missing_ranges', 'knowledge_rows', 'confidence', 'effective_neighbors', 'candle_ms',
             'total_ms', 'dataset_ms', 'patterns_ms', 'lead_lag_ms', 'knn_tuning_ms', 'holdout_ms',
             'human_guidance_ms', 'candle_guidance_ms', 'persistence_ms',
             'feature_replay_ms', 'feature_rows', 'feature_chunks',
+            'budget_seconds', 'remaining_ms', 'processed', 'total', 'eligible_rows', 'memory_bytes',
         ] as $key) {
             if (is_int($fields[$key] ?? null) || (is_float($fields[$key] ?? null) && is_finite($fields[$key]))) {
                 $record[$key] = $fields[$key];

@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Domain\MarketData\CandleGapRepairs;
+use App\Domain\MarketData\CandleGaps as GapRanges;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Repositories\TickerRepository;
 use Illuminate\Console\Command;
@@ -17,7 +18,7 @@ final class CandleGaps extends Command
 
     protected $description = 'Scan and report missing closed candles for active subscribed market feeds with suggested fixes';
 
-    public function handle(CandleGapRepairs $repairs, TickerRepository $tickers): int
+    public function handle(CandleGapRepairs $repairs, TickerRepository $tickers, GapRanges $ranges): int
     {
         $exchange = $this->option('exchange');
         $symbol = $this->option('symbol');
@@ -31,6 +32,7 @@ final class CandleGaps extends Command
         }
 
         $rows = [];
+        $commands = [];
         $feedCount = 0;
         $problemCount = 0;
 
@@ -118,15 +120,24 @@ final class CandleGaps extends Command
                 $reason .= ' · '.Str::limit($this->singleLine((string) $lastError), 80);
             }
 
+            $merged = collect($ranges->merge($gaps->map(fn (object $gap): array => [
+                'from' => (int) $gap->from_ms, 'to' => (int) $gap->to_ms,
+            ])->all(), $marketPeriod))->map(fn (array $range): object => (object) [
+                'from_ms' => $range['from'], 'to_ms' => $range['to'], 'period' => $marketPeriod,
+            ]);
+            foreach ($merged as $gap) {
+                $commands[] = $this->syncCommand($exchangeClass, $marketSymbol, $marketPeriod, $gap->from_ms, $gap->to_ms);
+            }
+
             $rows[] = [
                 $exchangeClass,
                 $marketSymbol,
                 $marketPeriod,
                 $statuses->map(fn (string $status): string => strtoupper($status))->implode(', '),
-                (string) $this->missingCount($repairs, $gaps),
-                $this->ranges($gaps),
+                (string) $this->missingCount($repairs, $merged),
+                $this->ranges($merged),
                 $reason,
-                $this->suggestion($gaps, $exchangeClass, $marketSymbol, $marketPeriod),
+                $this->suggestion($gaps),
             ];
         }
 
@@ -142,6 +153,14 @@ final class CandleGaps extends Command
             ['Exchange', 'Symbol', 'Period', 'Status', 'Missing', 'Range(s)', 'Reason / error', 'Suggested fix'],
             $rows,
         );
+
+        if ($commands !== []) {
+            $this->newLine();
+            $this->comment('Manual repair commands (one per consecutive missing range):');
+            foreach ($commands as $command) {
+                $this->line($command);
+            }
+        }
 
         if (! $scan) {
             $this->comment('No local history scan was performed because --no-scan was supplied.');
@@ -178,29 +197,16 @@ final class CandleGaps extends Command
         return $remaining > 0 ? "{$ranges} +{$remaining} more" : $ranges;
     }
 
-    private function suggestion(Collection $gaps, string $exchange, string $symbol, string $period): string
+    private function suggestion(Collection $gaps): string
     {
         $statuses = $gaps->pluck('status')->filter()->unique()->all();
-        $backfill = 'php artisan trademinator:backfill-ohlcv'
-            .' --exchange='.escapeshellarg($exchange)
-            .' --symbol='.escapeshellarg($symbol)
-            .' --period='.escapeshellarg($period);
-        $from = $this->isoTime((int) $gaps->min('from_ms'));
-        $to = $this->isoTime((int) $gaps->max('to_ms'));
-        $sync = 'php artisan trademinator:sync-ohlcv'
-            .' '.escapeshellarg($exchange)
-            .' '.escapeshellarg($symbol)
-            .' '.escapeshellarg($period)
-            .' --from='.escapeshellarg($from)
-            .' --to='.escapeshellarg($to)
-            .' --repair-gaps';
 
         if (in_array('unavailable', $statuses, true)) {
-            return "The exchange repeatedly omitted these candles. Try manually: {$sync}";
+            return 'The exchange repeatedly omitted these candles. Manual retry commands are listed below.';
         }
 
         if (in_array('paused', $statuses, true)) {
-            return "Fix the reported access/support error, then retry: {$sync}";
+            return 'Fix the reported access/support error, then use the commands below.';
         }
 
         if (in_array('queued', $statuses, true)) {
@@ -208,10 +214,27 @@ final class CandleGaps extends Command
         }
 
         if (in_array('retrying', $statuses, true)) {
-            return "Wait until the retry is due, then run: {$backfill}";
+            return 'Automatic retry is pending; manual repair commands are listed below.';
         }
 
-        return "Queue the repair: {$backfill}";
+        return 'Run the sync command(s) below for the missing ranges.';
+    }
+
+    private function syncCommand(string $exchange, string $symbol, string $period, int $fromMs, int $toMs): string
+    {
+        if ($fromMs === $toMs) {
+            $timeframe = new CandleTimeframe;
+            $fromMs = $timeframe->previous($fromMs, $period);
+            $toMs = $timeframe->next($toMs, $period);
+        }
+
+        return 'php artisan trademinator:sync-ohlcv'
+            .' '.escapeshellarg($exchange)
+            .' '.escapeshellarg($symbol)
+            .' '.escapeshellarg($period)
+            .' --from='.escapeshellarg($this->isoTime($fromMs))
+            .' --to='.escapeshellarg($this->isoTime($toMs))
+            .' --repair-gaps';
     }
 
     private function displayTime(int $milliseconds): string

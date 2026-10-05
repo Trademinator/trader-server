@@ -38,7 +38,7 @@ final class BackfillIntelligence
                 ->where('trained_revision', $row->trained_revision)->where('build_stage', $row->build_stage)->update([
                     'build_stage' => $stage,
                     'build_revision' => $stage === 'features' ? $row->history_revision : $row->build_revision,
-                    'build_lease_token' => $token, 'build_lease_until' => now()->addMinutes(15), 'updated_at' => now(),
+                    'build_lease_token' => $token, 'build_lease_until' => now()->addMinutes(20), 'updated_at' => now(),
                 ]);
             if (! $claimed) {
                 continue;
@@ -67,7 +67,7 @@ final class BackfillIntelligence
     public function renew(string $id, string $token): bool
     {
         return $this->owned($id, $token)->update([
-            'build_lease_until' => now()->addMinutes(15),
+            'build_lease_until' => now()->addMinutes(20),
             'build_next_attempt_at' => null,
             'build_error' => null,
             'updated_at' => now(),

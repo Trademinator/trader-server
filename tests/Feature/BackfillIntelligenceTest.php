@@ -220,6 +220,8 @@ it('retains pending training while intelligence is disabled and recovers stale b
     $first = DB::table('market_history_backfills')->first();
     $stale = new RebuildBackfilledIntelligence($id, $first->build_lease_token);
     $this->travel(16)->minutes();
+    expect(app(BackfillIntelligence::class)->dispatchDue())->toBe(0);
+    $this->travel(5)->minutes();
     expect(app(BackfillIntelligence::class)->dispatchDue())->toBe(1);
 
     $stale->handle(app(BackfillIntelligence::class), app(FeatureBuilder::class), app(MarketIntelligence::class));

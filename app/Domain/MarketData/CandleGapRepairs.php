@@ -71,23 +71,11 @@ final class CandleGapRepairs
         $market = $feed->market;
         $period = $feed->selected_period;
         $nowMs = now()->getTimestampMs();
-        $previous = null;
         $seen = [];
         $found = 0;
 
-        foreach ($this->tickers->streamHistory($market->exchange->class, $market->symbol, $period, 0, $nowMs) as $timestamp => $_) {
-            $timestamp = (int) $timestamp;
-            if ($previous !== null) {
-                $firstMissing = $this->timeframe->next($previous, $period);
-                if ($firstMissing < $timestamp) {
-                    $found += $this->recordSequence($feed, $firstMissing, $timestamp, $nowMs, $seen);
-                }
-            }
-            $previous = $timestamp;
-        }
-
-        if ($previous !== null) {
-            $found += $this->recordSequence($feed, $this->timeframe->next($previous, $period), null, $nowMs, $seen);
+        foreach ($this->tickers->missingClosedCandleRanges($market->exchange->class, $market->symbol, $period, $nowMs) as $range) {
+            $found += $this->recordSequence($feed, $range['from'], $this->timeframe->next($range['to'], $period), $nowMs, $seen);
         }
 
         $this->resolveRowsNotSeen($feed->market_id, $period, $seen);
@@ -289,6 +277,41 @@ final class CandleGapRepairs
     public function markHistoryChanged(string $marketId, string $period, ?int $fromMs = null, ?int $toMs = null): void
     {
         app(HistoryChanges::class)->record($marketId, $period, $fromMs, $toMs);
+    }
+
+    /** Manual sync shares the existing retry records instead of leaving them indefinitely retrying. */
+    public function recordManualResult(MarketFeed $feed, int $fromMs, int $toMs, array $before, array $after): void
+    {
+        $period = (string) $feed->selected_period;
+        $seen = [];
+        foreach ((new CandleGaps)->between(array_keys($after), $period) as $gap) {
+            $this->recordSequence($feed, $gap['from'], $gap['to'] + 1, now()->getTimestampMs(), $seen);
+        }
+        $rows = DB::table('candle_gap_repairs')->where('market_id', $feed->market_id)->where('period', $period)
+            ->where('from_ms', '>=', $fromMs)->where('to_ms', '<=', $toMs)->where('status', '!=', 'resolved')
+            ->where(fn ($query) => $query->whereNull('lease_until')->orWhere('lease_until', '<=', now()))->get();
+        foreach ($rows as $row) {
+            $beforeMissing = $this->missingCount($period, $row->from_ms, $row->to_ms, array_keys($before));
+            $afterMissing = $this->missingCount($period, $row->from_ms, $row->to_ms, array_keys($after));
+            $partial = $afterMissing > 0 && $afterMissing < $beforeMissing;
+            if ($partial) {
+                $this->reconcileInterval($feed, $row->from_ms, $row->to_ms);
+            }
+            $resolved = $afterMissing === 0 || $partial;
+            $empty = $afterMissing > 0 && $afterMissing >= $beforeMissing ? (int) $row->empty_attempts + 1 : 0;
+            $unavailable = $empty >= max(1, (int) config('history_backfill.gap_empty_attempts_before_unavailable'));
+            $method = $afterMissing === 0 ? ($after[$row->from_ms]['reconstruction']['method'] ?? null) : null;
+            DB::table('candle_gap_repairs')->where('gap_id', $row->gap_id)
+                ->where(fn ($query) => $query->whereNull('lease_until')->orWhere('lease_until', '<=', now()))->update([
+                    'status' => $resolved ? 'resolved' : ($unavailable ? 'unavailable' : 'retrying'),
+                    'reason' => $afterMissing === 0 ? ($method === null ? 'repaired' : 'reconstructed_'.$method)
+                        : ($partial ? 'partially_repaired' : ($unavailable ? 'exchange_omitted_candles' : 'no_candle_returned')),
+                    'attempts' => (int) $row->attempts + 1, 'empty_attempts' => $empty,
+                    'failures' => 0, 'last_error' => null, 'lease_token' => null, 'lease_until' => null,
+                    'next_attempt_at' => $resolved || $unavailable ? null : now()->addSeconds($this->emptyRetryDelay($empty)),
+                    'updated_at' => now(),
+                ]);
+        }
     }
 
     public function emptyRetryDelay(int $emptyAttempts): int

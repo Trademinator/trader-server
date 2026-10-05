@@ -81,7 +81,7 @@ it('never uses future or expired context and distinguishes missing from neutral'
     expect($row['features']['context.global_regime'])->toBe(0.5)
         ->and($row['features']['context.price_deviation'])->toBe(0.5)
         ->and($row['features']['context.activity'])->toBe(0.0)
-        ->and($row['features']['context.circulating_fraction'])->toBeNull();
+        ->and($row['features']['context.activity_deviation'])->toBeNull();
 });
 
 it('expires provider data independently of its receipt time and rejects malformed numeric context', function () {

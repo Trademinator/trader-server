@@ -2,6 +2,7 @@
 
 namespace App\Domain\Intelligence;
 
+use App\Domain\MarketData\CandleProvenance;
 use App\Domain\MarketData\CandleTimeframe;
 
 /** Explicit gap-free crypto variants; target geometry is not an extra indicator pipeline. */
@@ -58,6 +59,10 @@ final class PatternCatalog
             $sequence = [...$candidate['prefix'], ...array_slice($future, 1, $remaining)];
             $candidate['label'] = $this->completed($candidate['type'], $sequence) ? 'completed' : 'failed';
             $candidate['label_available_at_ms'] = (new CandleTimeframe)->next($future[$remaining]['microtimestamp'], $period);
+            foreach ($sequence as $bar) {
+                $candidate['label_available_at_ms'] = max($candidate['label_available_at_ms'],
+                    CandleProvenance::availableAt($bar, $period));
+            }
             unset($candidate['prefix']);
         }
         unset($candidate);

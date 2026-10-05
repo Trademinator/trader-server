@@ -106,7 +106,7 @@ final class FeatureBuilder
                 $row['keys'] = $keys;
                 $row['vector'] = array_values($row['features']);
                 $row['missing'] = array_keys(array_filter($row['features'], fn ($value) => $value === null));
-                $row['ready'] = $row['missing'] === [];
+                $row['ready'] = $row['missing'] === [] && ($row['source_available_at_ms'] ?? $row['available_at_ms']) <= $row['available_at_ms'];
                 $row['version'] = FeatureEngine::VERSION;
                 $pending[] = [
                     'feature_id' => (string) Str::uuid7(),

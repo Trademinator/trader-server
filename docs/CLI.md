@@ -215,7 +215,11 @@ Description: Scan and report missing closed candles for active subscribed market
 
 Signature: `trademinator:candle-gaps {--exchange=} {--symbol=} {--period=} {--no-scan}`
 
-Scans locally stored candle history for gaps across active subscribed market feeds and reports repair status, missing-candle counts, affected ranges, and a suggested fix. The scan itself does not contact exchanges or queue repairs. Use `--no-scan` to report only already recorded gap state.
+Finds missing closed candles across active subscribed market feeds by recursively bisecting time-aligned ranges. Each database range query returns only its count and first/last timestamps using the existing ticker index. Complete halves are skipped; empty halves become missing ranges immediately; incomplete halves are split again. The expected count comes from the time boundaries, not the number of stored rows. Off-grid timestamps cannot replace expected candles, and calendar periods use actual calendar boundaries.
+
+Reports repair status, missing-candle counts, affected ranges, and copyable `trademinator:sync-ohlcv` commands. Adjacent or overlapping gap pages are merged into one command per consecutive missing range; separate holes are never combined into a broad historical download. For a single missing candle, the command starts one candle earlier and ends one candle later, including both neighbours. Longer missing ranges use their first and last missing candle start times.
+
+The scan updates the existing gap-repair records; no new table or migration is required. It does not contact exchanges or queue repairs. It begins at the first stored candle and includes trailing closed gaps, excluding the open candle. Use `--no-scan` to report only already recorded gap state. Verified archived history is merged and checked through the canonical history reader once per scan, keeping a compact in-memory timestamp index for recursive probes; archives are not reopened at every split.
 
 ```bash
 php artisan trademinator:candle-gaps
@@ -277,14 +281,14 @@ Saved status and stop policy:
 
 `oldest_candle_ms` tracks the earliest actual candle known to this backfill, separately from the search boundary, which can pass through empty intervals. `candles_received` counts accepted page rows, including any already present due to an independent manual import. `empty_windows`, `failures`, `last_error` and `next_attempt_at` explain stalls. Window timestamp fields are UTC Unix milliseconds; ordinary retry timestamps follow Laravel's stored timestamp convention. Configuration for page size, per-job request/time budgets and pause thresholds is in `config/history_backfill.php`.
 
-Missing-candle repairs are separate from the backward-history cursor. A repair requests only the exact closed gap range (at most the configured page size), uses the same market/history-exchange/feature locks as historical backfill, and upserts through the existing ticker repository. Partial responses are split into the remaining missing ranges. A successful request that still returns no candle retries after one hour, then six hours, then daily; after `HISTORY_GAP_EMPTY_ATTEMPTS_BEFORE_UNAVAILABLE` successful empty attempts (default 5) the range is marked `unavailable`. Network/rate-limit/request failures use the separate error retry policy and do not count as evidence that the exchange omitted the candle. No synthetic zero-volume candles are created. Any repaired historical insert increments the existing history revision so M2/KNN rebuilding sees the correction. Gap scan cadence and dispatch limits are controlled by `HISTORY_GAP_SCAN_INTERVAL_MINUTES`, `HISTORY_GAP_SCAN_MARKETS_PER_RUN`, and `HISTORY_GAP_REPAIR_DISPATCH_LIMIT`.
+Missing-candle repairs are separate from the backward-history cursor. A repair requests only the exact closed gap range (at most the configured page size), uses the same market/history-exchange/feature locks as historical backfill, and upserts through the existing ticker repository. Partial responses are split into the remaining missing ranges. A successful request that still returns no candle retries after one hour, then six hours, then daily; after `HISTORY_GAP_EMPTY_ATTEMPTS_BEFORE_UNAVAILABLE` successful empty attempts (default 5) the range is marked `unavailable`. Network/rate-limit/request failures use the separate error retry policy and do not count as evidence that the exchange omitted the candle. Isolated holes also use the reconstruction policy documented under `sync-ohlcv`: complete smaller candles, an inferred next-open fill after successful empty lower-timeframe requests, or parent reconciliation of sparse/empty intervals on any exchange. Provenance and causal availability distinguish the methods. Request failures never trigger inferred filling. Any repaired historical insert increments the existing history revision so M2/KNN rebuilding sees the correction. Gap scan cadence and dispatch limits are controlled by `HISTORY_GAP_SCAN_INTERVAL_MINUTES`, `HISTORY_GAP_SCAN_MARKETS_PER_RUN`, and `HISTORY_GAP_REPAIR_DISPATCH_LIMIT`.
 
 After a **completed backward window imports at least one candle**, the worker automatically queues an ordered rebuild on `INTELLIGENCE_QUEUE` (default `intelligence`):
 
 1. Rebuild M2 features from the enlarged closed-candle history.
 2. Build and validate fresh KNN/pattern intelligence using `config('intelligence.schema')` (default `core`).
 
-The two stages are separate jobs, each limited to 600 seconds, so the existing intelligence worker and `retry_after >= 720` remain sufficient. The trained generation uses the history revision, independently of the weekly generation key; this week's existing model cannot suppress the new build. Empty windows and failed imports do not trigger a new revision. Only one rebuild pipeline per market/period is queued or running. Several imports waiting for features are folded into one build; imports arriving after feature preparation stay pending for one follow-up pass. Duplicate/stale jobs cannot acknowledge a newer revision. Feature and model failures preserve imported candles and pending work, record `build_error`, and retry with exponential delay from 60 seconds to one hour. The minute scheduler recovers an expired lease or an interrupted dispatch. `INTELLIGENCE_ENABLED=false` or `HISTORY_BACKFILL_ENABLED=false` pauses automatic rebuilding without discarding pending revisions; inactive/changed feeds are deferred too.
+The two stages are separate jobs, each limited to 900 seconds; use the intelligence worker and `retry_after >= 1080` documented in [CRONTABS.md](CRONTABS.md#m4-intelligence-workers). Feature replay retains its 540-second cooperative limit. The trained generation uses the history revision, independently of the weekly generation key; this week's existing model cannot suppress the new build. Empty windows and failed imports do not trigger a new revision. Only one rebuild pipeline per market/period is queued or running. Several imports waiting for features are folded into one build; imports arriving after feature preparation stay pending for one follow-up pass. Duplicate/stale jobs cannot acknowledge a newer revision. Feature and model failures preserve imported candles and pending work, record `build_error`, and retry with exponential delay from 60 seconds to one hour. The minute scheduler recovers an expired lease or an interrupted dispatch. `INTELLIGENCE_ENABLED=false` or `HISTORY_BACKFILL_ENABLED=false` pauses automatic rebuilding without discarding pending revisions; inactive/changed feeds are deferred too.
 
 `--status` also exposes `history_revision`, `trained_revision`, `build_stage` (`features` or `knn`), `build_revision`, `build_failures`, `build_error`, `build_next_attempt_at`, `model_id` and `last_trained_at`. Matching history/trained revisions mean every completed import has been included in a successful build. A successful build can still produce an abstaining model if validation fails; it does not force a BUY/SELL signal.
 
@@ -338,7 +342,7 @@ php artisan trademinator:fetch-market-context --coin=cosmos --vs-currency=usd
 
 Every invocation requests fresh context even if a snapshot exists in the current UTC hour; no `--force` option is needed. Requires `COINGECKO_ENABLED=true`, `COINGECKO_API_KEY`, and the same cache lock used by `collect-market-context`. An occupied lock, invalid selection/configuration, provider failure, or absent/stale coin data returns failure. Global and category endpoints are shared dependencies of this one coin's context. Existing snapshots remain unchanged; new snapshots use receipt time and cannot fill historical context gaps. Repeated manual refreshes count at most once per completed UTC hour in the activity history, preserving its warm-up and the 24-hour dominance lookup.
 
-Prints the selected coin/quote before fetching and the saved count after completion. A saved snapshot may still have null provider fields or context warm-up values. In particular, an uncapped asset can still lack `context.circulating_fraction`, whose current definition is circulating supply divided by maximum supply. This command does not rebuild M2 features or train KNN. It has no schedule; the existing hourly `collect-market-context` schedule is unchanged. The existing collection command also runs directly when invoked from the CLI, but targets active subscriptions and skips already-collected hours.
+Prints the selected coin/quote before fetching and the saved count after completion. A saved snapshot may still have null provider fields or context warm-up values. Maximum supply is not used by the current feature schema, so uncapped supply does not prevent full-context readiness. This command does not rebuild M2 features or train KNN. It has no schedule; the existing hourly `collect-market-context` schedule is unchanged. The existing collection command also runs directly when invoked from the CLI, but targets active subscriptions and skips already-collected hours.
 
 ## trademinator:create-indicators
 
@@ -493,7 +497,7 @@ Fetch and upsert candles in bounded overlapping pages. Required: `exchange`, `sy
 | `--from` | `7 days ago` | Fetch start. |
 | `--to` | `now` | Fetch end; initial start must precede end. |
 | `--incremental` | Off | Start at the later of the requested start and latest stored candle, refreshing that candle too. |
-| `--repair-gaps` | Off | Inspect gaps and make bounded repair attempts; no synthetic candles. |
+| `--repair-gaps` | Off | Retry missing candles and reconstruct isolated holes, including inferred next-open fills after empty lower requests. |
 | `--queue` | Off | Queue sequential page jobs; requires a persistent queue. |
 | `--page-size` | `90` | Integer from 10 to 100 passed as the CCXT request limit. |
 
@@ -503,6 +507,30 @@ php artisan trademinator:sync-ohlcv kraken BTC/USD 1m --from='90 days ago' --que
 ```
 
 Overlapping pages can count the same candle more than once in totals; unique database keys prevent duplicate rows. Recent fetched candles can still be open; M2 only emits features after candle completion. See [pagination details](SYNC-PAGINATION.md).
+
+With `--repair-gaps`, an isolated hole must have both adjacent, completed exchange candles. The same four-step policy applies to every exchange using its supported historical OHLCV timeframes:
+
+1. **Smaller candles:** after retrying the native timeframe, try up to three supported, fixed smaller timeframes, largest first, that divide the target interval exactly. For Bitso `15m`, these are `5m` then `1m`; an exchange advertising `3m` can use that too. Complete coverage supplies exact trade-price OHLC and decimal volume. Each source window is capped at 100 candles.
+2. **Parent reconciliation:** when step 1 did not consist entirely of successful empty lower-timeframe responses, try the two nearest supported larger fixed timeframes that are exact multiples of the target, with at most 100 child intervals. For Bitso `15m`, these are `30m` then `1h`. The parent must be closed, and every other target-timeframe child must be present. Parent volume and OHLC must exactly match the known siblings plus any observed smaller candles inside the hole. A sparse smaller series is usable only after this reconciliation accounts for its activity. Trade counts and first/last trade times, when supplied, must also reconcile; malformed or incomplete supplied metadata cannot silently be ignored. Bitso's raw endpoint retains that additional evidence.
+3. **Empty lower-timeframe fallback:** if at least one supported lower timeframe was queried and every checked lower timeframe returned zero candles inside the missing interval, skip parent requests and insert `open = high = low = close = next candle's open`, with `volume = 0`. Both immediate neighbours must be native, present and closed. Mark the result `method: next_open`, `verification: empty_lower_timeframes`, and `inferred: true`. This is an explicit filling policy, not proof of no trading. Timeouts, failed requests, unsupported lower timeframes, and partial nonempty lower series do not trigger it. The existing parent-verified `no_trades` path continues to use the previous close when its separate reconciliation succeeds. Exact decimal comparisons use BCMath without a rounding tolerance; generic CCXT evidence requests use string-number mode and restore the original mode afterwards.
+4. **Provenance and training:** persist the source candles, verification method, evidence digest and availability time. A repair that depends on a parent becomes usable only when that parent closes. A `next_open` fill becomes usable only when the following candle closes; a feature decision at the missing candle’s own close cannot use that later price. The existing feature/dataset/KNN rebuild workflow and future-evidence safeguards apply to all exchanges.
+
+Consecutive holes, reconstructed neighbours and partial nonempty evidence that cannot be reconciled remain unresolved. The empty-lower fallback returns before consulting parents, so missing or invalid parent trade metadata does not block it. Prices are never linearly interpolated. Native exchange candles recovered while checking a parent are used directly. Only the explicit empty-lower fallback permits an inferred fill; other recovery paths require the corresponding exchange evidence.
+
+Reconstruction adds at most seven evidence requests per isolated hole, with a 45-second budget for starting requests and a 15-second request timeout. Manual pages use the same market, exchange, history and feature locks as queued repair work. A busy lock asks the operator to retry. The direct command stays synchronous; successful changes can dispatch the existing intelligence rebuild job on its configured queue.
+
+JSON output includes `pages`, `fetched`, `repaired`, `reconstructed`, and `missing_ranges`. `fetched` counts returned native candles, including existing rows. With repairs enabled, `repaired` counts previously absent timestamps inserted in that page, including the initial native fetch; `reconstructed` is the subset rebuilt from evidence. The latter counters do not count existing neighbouring candles as repairs. `missing_ranges` is the sum of observed remaining interior ranges across overlapping pages. Run `candle-gaps` for the feed-wide status. Manual requests advance the existing gap retry records and resolve successful repairs; live queued leases are preserved. With repairs enabled, `reconstruction_details` includes the candle timestamp, final reason and per-timeframe checks for the first 100 attempts; `reconstruction_details_omitted` counts any remaining attempts. Examples of unresolved reasons are `parent_candle_unavailable`, `parent_siblings_incomplete`, `parent_volume_mismatch`, `parent_prices_mismatch` and `invalid_trade_metadata`. Both manual and queued repairs also log `candles.reconstruction_check` and `candles.reconstruction` with `candle_ms`. A zero reconstruction count therefore comes with an explanation. A successful inferred fill reports `reason: reconstructed_next_open`; subsequent runs do not insert it again, and a later native exchange candle can replace it.
+
+Each reconstructed candle carries a `reconstruction` payload with its verification basis (`complete_lower_timeframe`, `parent_ohlcv`, `parent_ohlcv_and_trade_counts`, or `empty_lower_timeframes`), method (`lower_timeframe`, `no_trades`, or `next_open`), version, source timeframe/bounds, evidence and digest, reconstruction time, and evidence availability time. Derived larger candles retain provenance and exclude reconstructed zero-volume intervals from trade-price OHLC calculations. Provenance survives archival and is propagated into features, immutable dataset sources/manifests and `training_data.reconstruction` in model reports. Feature decisions and pattern/semantic labels cannot use evidence before its source candles close. Native candles supersede reconstructions, including archived reconstructions; other hot/cold conflicts remain errors. Both reconstruction and native replacement mark the affected history for the existing feature/dataset/KNN rebuild pipeline. Existing frozen datasets are preserved; a rebuild produces a new snapshot.
+
+For example, rerun an isolated gap command already printed by `candle-gaps`:
+
+```bash
+php artisan trademinator:sync-ohlcv bitso 'ATOM/USD' 15m --from='2024-02-28T20:45:00Z' --to='2024-02-28T21:15:00Z' --repair-gaps
+php artisan trademinator:candle-gaps --exchange=bitso --symbol='ATOM/USD' --period=15m
+```
+
+Queued repairs use the same reconstruction policy automatically. No additional command, migration, scheduler entry or queue is required. Automatic intelligence rebuilding requires an active feed, enabled history/intelligence processing and a persistent queue serviced as described in [CRONTABS.md](CRONTABS.md). Without those prerequisites, rebuild explicitly with `trademinator:build-features` followed by `trademinator:knn-build` for the affected market.
 
 ## Scheduler and workers
 
@@ -514,7 +542,7 @@ Overlapping pages can count the same candle more than once in totals; unique dat
 
 Schedules are defined in `routes/console.php`. All use shared-cache scheduler locks. Configure a shared atomic-lock-capable cache and a persistent queue across nodes. Trademinator does not require a permanent worker daemon: configure the scheduler cron and the `queue:work --stop-when-empty` queue-drain cron documented in [CRONTABS.md](CRONTABS.md).
 
-Set the queue connection's `retry_after` to at least 720 seconds. After deploying code or configuration changes, clear/rebuild configuration as appropriate:
+Set the queue connection's `retry_after` to at least 1080 seconds. After deploying code or configuration changes, clear/rebuild configuration as appropriate:
 
 ```bash
 php artisan optimize:clear
@@ -545,7 +573,7 @@ Required arguments are the exact CCXT exchange ID, symbol, and supported candle 
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--schema` | `core` | `core`: 15 technical features without long elapsed returns; `technical`: all 18 technical features; `full`: technical plus all 10 CoinGecko context features; `custom`: exact keys from `--features`. See [Choosing a feature schema](#choosing-a-feature-schema) for the feature lists and history requirements shared with M4. |
+| `--schema` | `core` | `core`: 15 technical features without long elapsed returns; `technical`: all 18 technical features; `full`: technical plus all 9 CoinGecko context features; `custom`: exact keys from `--features`. See [Choosing a feature schema](#choosing-a-feature-schema) for the feature lists and history requirements shared with M4. |
 | `--features` | None | Comma-separated ordered M2 keys; required only for `custom`, rejected with other schemas. Must be nonempty, unique, known keys. Missing selected values cause a row to be dropped, never imputed. |
 | `--horizon` | `12` | Integer 1–10,000 future candles; enter at next open and exit at the close of the horizon-th subsequent candle. |
 | `--fee-bps` | `10` | Fee per side, in basis points. 10 bps = 0.10%; use the actual exchange/account fee. |
@@ -651,7 +679,7 @@ Active market subscriptions now have an **Intelligence** link. The page shows th
 - Tuning uses expanding chronological folds, starting with at least `intelligence.knn.min_train_size` mature training rows (default 250) and 100 test rows. Every earlier eligible training row remains available to later folds; 250 is a validation minimum, not a knowledge cap. Outcome endpoints must be strictly before a fold's first decision. `Kmax = min(floor(sqrt(min_train_size)), k_cap)`; default cap 65. Coarse candidates are refined near the best eligible value. Semantic directional precision ranks first, then confidence, coverage and stability; excessive top/bottom contradictions disqualify a candidate. Defaults require at least 50 validation rows, 5 directional predictions, 55% semantic precision, 1% directional coverage and at most 5% contradictions.
 - The final 20% is reserved for a later evaluation block and never selects K. Its predictions search all eligible pre-holdout training rows, and it must also pass the evidence gates. The published knowledge then contains every eligible mature row in the build's age window, after required source checks and chronological helper-model exclusions. A rejected build publishes an abstaining head so an older model is not silently presented as newly validated. Historical model artifacts remain available by ID.
 - `INTELLIGENCE_MAX_MODEL_AGE_DAYS` (default 14, positive integer days) governs both training history and model expiry. At cutoff `T`, decision timestamps must be at least `T - N days`, including that boundary, and their full label horizon must be closed by `T`. An earlier `--from` is clamped to this boundary; explicit frozen datasets are filtered again before training. Older candles may supply feature/label warm-up, but cannot become retained examples. Neither the former 3,000-row build cap nor the 250-example retention cap applies. The artifact records the window and excluded-row count. Each rebuild replaces the active model; between builds its knowledge stays frozen. A model expires once its cutoff is more than `N` days old. Changing the setting requires refreshing cached configuration and rebuilding to change existing knowledge. Models from the previous validation version must be rebuilt.
-- Application checks still bound training to 480 seconds, with a 600-second queue timeout and 720-second locks. A time-budget failure does not publish a truncated model. Longer windows require more memory and computation; adjust the window or coordinate application/worker time budgets as needed. Features older than 2 candle periods cannot issue a signal. Raw source/feature mismatches, changed feature versions, or corrupt artifacts fail closed.
+- Automatic training retains its 480-second deadline. Human Candle training has a separate 300-second allowance and a further 10-second publication reserve, with a 900-second job timeout, 1020-second training locks and queue reservations of at least 1080 seconds. A human-stage timeout skips its vote while allowing publication of a supported automatic model; source-integrity and unexpected failures still propagate. Structured `intelligence.human_training.*` action/syslog events identify the stage and progress; see [worker deployment and logging](CRONTABS.md#m4-intelligence-workers). Longer windows require more memory and computation; adjust the window or coordinate application/worker time budgets as needed. Features older than 2 candle periods cannot issue a signal. Raw source/feature mismatches, changed feature versions, or corrupt artifacts fail closed.
 
 ### Pattern prediction and chronological stacking
 
@@ -676,7 +704,7 @@ Required arguments identify the exact exchange class, symbol and candle period. 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--dataset` | New snapshot | Train a verified frozen M4 semantic dataset UUID for this exact market. Old M3 fee-aware labels are rejected. Cannot combine with date options or non-default schema. |
-| `--schema` | `core` | Select the stored M2 inputs: `core` (15 technical features), `technical` (18), or `full` (18 technical + 10 CoinGecko context features). See [Choosing a feature schema](#choosing-a-feature-schema). Custom schemas can be consumed from an explicitly built semantic dataset through the domain service. |
+| `--schema` | `core` | Select the stored M2 inputs: `core` (15 technical features), `technical` (18), or `full` (18 technical + 9 CoinGecko context features). See [Choosing a feature schema](#choosing-a-feature-schema). Custom schemas can be consumed from an explicitly built semantic dataset through the domain service. |
 | `--from` | Bounded recent history | Inclusive decision-time start. |
 | `--to` | Training cutoff | Inclusive decision-time end, clamped to the cutoff. |
 | `--as-of` | Before newest closed feature | Maximum time at which all training outcomes must have become available; capped at now. Explicit values can require waiting for a later candle before inference. |
@@ -697,7 +725,7 @@ php artisan trademinator:knn-build kraken BTC/USD 1m --dataset=DATASET_UUID
 | --- | --- | --- | --- |
 | `core` (default) | 15 | Short-window trend, returns, momentum, volatility, volume activity and candle shape. | Start here, especially with recent history or incomplete CoinGecko coverage. |
 | `technical` | 18 | Everything in `core`, plus 24-hour, 7-day and 30-day price returns. | Evaluate longer-term price context when those exact historical anchors are available. |
-| `full` | 28 | Everything in `technical`, plus all 10 CoinGecko context features. | Evaluate market-wide and asset context when complete historical context is available for the chosen market. |
+| `full` | 27 | Everything in `technical`, plus all 9 CoinGecko context features. | Evaluate market-wide and asset context when complete historical context is available for the chosen market. |
 
 These counts describe the selected M2 inputs. Pattern length/stage/progress/similarity and any validated pattern-completion probabilities added by M4 are separate from these counts; choosing `full` does not enable pattern prediction by itself.
 
@@ -720,7 +748,7 @@ The numeric windows above count candles in the supplied period: `return.12` span
 
 All three values must exist for every included row. M2 looks for a close at the exact timestamp 24 hours, 7 days and 30 days before that candle, within the same uninterrupted history segment. A gap resets the segment, and a period whose timestamps cannot align with an anchor cannot provide that return. Consequently, `technical` generally needs at least 30 days of continuous history before its first eligible row, followed by enough eligible rows and mature outcomes for training. Merely having 30 days of candles does not guarantee a trainable model.
 
-#### Full: technical plus ten CoinGecko context features
+#### Full: technical plus nine CoinGecko context features
 
 | Exact feature key | Meaning |
 | --- | --- |
@@ -732,10 +760,11 @@ All three values must exist for every included row. M2 looks for a close at the 
 | `context.category_momentum` | Normalized momentum of the asset's configured category. |
 | `context.price_deviation` | Normalized difference between the exchange close and CoinGecko's reference price in the matching quote currency. |
 | `context.market_cap_share` | Asset market capitalization divided by global market capitalization. |
-| `context.circulating_fraction` | Circulating supply divided by maximum supply. |
 | `context.volume_share` | Asset volume divided by global volume; an activity/liquidity proxy. |
 
-`full` requires a valid CoinGecko market mapping and context snapshots that were already observed and still fresh at each candle's decision time, including usable category data. Enabling CoinGecko today does not recreate context observations for past candles. Some assets lack a maximum supply or category data, so collecting more candles alone may never make all 10 context values available. The training command reads stored features; it does not fetch missing context or recalculate indicators.
+`full` requires a valid CoinGecko market mapping and context snapshots that were already observed and still fresh at each candle's decision time, including usable category data. Enabling CoinGecko today does not recreate context observations for past candles. Missing category data or historical context can still prevent all 9 context values from being available. The training command reads stored features; it does not fetch missing context or recalculate indicators.
+
+Feature version `m2-v6` removes `context.circulating_fraction` entirely. No current feature depends on maximum supply, and no total-supply replacement is added. Full-context readiness now counts 9 values. After upgrading, run `trademinator:build-features` and rebuild datasets/KNN models for the new version; old rows and models are preserved but are not compatible with the new version. Custom feature lists must also remove the retired key. See [M2's feature contract](M2-README.md#data-contract).
 
 #### Missing values and choosing between schemas
 
@@ -752,7 +781,7 @@ php -d memory_limit=512M artisan trademinator:knn-build bitso ADA/USD 1m --schem
 # Add the three elapsed-time returns; their historical anchors must exist.
 php -d memory_limit=512M artisan trademinator:knn-build bitso ADA/USD 1m --schema=technical
 
-# Also require all 10 historical CoinGecko context values.
+# Also require all 9 historical CoinGecko context values.
 php -d memory_limit=512M artisan trademinator:knn-build bitso ADA/USD 1m --schema=full
 ```
 
@@ -920,11 +949,11 @@ Description: Queue daily lead/lag and downstream intelligence reevaluation for o
 
 Signature: `trademinator:dispatch-lead-lag`
 
-No arguments/options. Scheduled daily at 03:45 in the application timezone. Requires migrated tables, active subscriptions on at least two distinct exchanges with the exact same symbol/selected period, stored closed candles, M2 features, a persistent queue, shared atomic cache locks and shared private model/research storage. Uses `INTELLIGENCE_QUEUE`, default `intelligence`. It queues one combined lead/lag + KNN/pattern build per matching shared feed, with a per-day/version generation key. Queue uniqueness, per-market build locks and database generation uniqueness protect redelivery. Repeating the command does not re-train a completed daily generation. Use direct `knn-build` to force reevaluation. Disabled intelligence/lead-lag/daily refresh exits successfully without dispatch; sync/null queues fail. Worker failures appear in the normal failed-job reporting; compute/time limits are the existing 480/600-second limits. No orders, messages or external API calls.
+No arguments/options. Scheduled daily at 03:45 in the application timezone. Requires migrated tables, active subscriptions on at least two distinct exchanges with the exact same symbol/selected period, stored closed candles, M2 features, a persistent queue, shared atomic cache locks and shared private model/research storage. Uses `INTELLIGENCE_QUEUE`, default `intelligence`. It queues one combined lead/lag + KNN/pattern build per matching shared feed, with a per-day/version generation key. Queue uniqueness, per-market build locks and database generation uniqueness protect redelivery. Repeating the command does not re-train a completed daily generation. Use direct `knn-build` to force reevaluation. Disabled intelligence/lead-lag/daily refresh exits successfully without dispatch; sync/null queues fail. Worker failures appear in the normal failed-job reporting; automatic training retains 480 seconds, human training receives a separate 300 seconds plus 10 seconds for publication, and the job timeout is 900 seconds. No orders, messages or external API calls.
 
 ```bash
 php artisan trademinator:dispatch-lead-lag
-php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --timeout=600 --memory=512 --tries=3
+php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --timeout=900 --memory=512 --tries=3
 php artisan queue:failed
 ```
 
@@ -938,13 +967,13 @@ Signature: `trademinator:dispatch-market-signals`
 
 No arguments or command-specific options. Scheduled every minute with shared scheduler locks. Requires the M4.2 migration, a persistent database/Redis queue, shared atomic-lock-capable cache, shared model storage, an active market subscription and a selected feed period. `sync` and `null` queue connections fail. `DASHBOARD_SIGNALS_ENABLED=false` or `INTELLIGENCE_ENABLED=false` makes dispatch and already queued recorder jobs idle.
 
-Queues a unique `RecordMarketSignal` job per shared market on `INTELLIGENCE_QUEUE` (default `intelligence`), regardless of subscriber count. The job allows two attempts, a 120-second timeout and a 60-second retry delay; the existing intelligence worker and `retry_after >= 720` remain sufficient. Uniqueness lasts up to five minutes; a per-market recording lock and observation deduplication also protect repeated delivery. A queued job rechecks that an active subscriber still exists and reads the current selected period. Queue backlog can delay observations; the command does not backfill missed decisions.
+Queues a unique `RecordMarketSignal` job per shared market on `INTELLIGENCE_QUEUE` (default `intelligence`), regardless of subscriber count. The job allows two attempts, a 120-second timeout and a 60-second retry delay; the existing intelligence worker and `retry_after >= 1080` remain sufficient. Uniqueness lasts up to five minutes; a per-market recording lock and observation deduplication also protect repeated delivery. A queued job rechecks that an active subscriber still exists and reads the current selected period. Queue backlog can delay observations; the command does not backfill missed decisions.
 
 Side effects: appends the current model/source/action/reason/evidence to `market_signals` with its actual recording time. Repeated consecutive observations reuse the saved record; a later source candle or an intervening-state recovery creates a new record. Missing or unusable intelligence records waiting evidence, not a fabricated BUY/SELL. Existing observations are never recomputed with a newer model. This command performs inference only; it does not train, subscribe, allocate funds or send orders. Client execution remains Unknown.
 
 ```bash
 php artisan trademinator:dispatch-market-signals
-php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --timeout=600 --memory=512 --tries=3
+php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --timeout=900 --memory=512 --tries=3
 ```
 
 Install the existing [intelligence cron worker](CRONTABS.md#m4-intelligence-workers); no additional system cron or permanent daemon is required. The [M plan](M-PLAN.md) describes marker timing, access and the future Client reporting contract.

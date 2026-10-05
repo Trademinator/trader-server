@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Features\FeatureEngine;
 use Trademinator\BcMath\PrecisionPolicy;
 use Trademinator\Indicators\Traits\Technical;
 
@@ -224,7 +225,6 @@ it('matches batch results exactly when tiny prices cross retained slice boundari
     expect($sliced)->toBe($batch);
 })->with([1, 7, 23, 500]);
 
-
 it('does not inflate ordinary recursive scales merely by adding another candle', function () {
     $technical = f10Technical();
     $rows = [];
@@ -262,5 +262,5 @@ it('does not change the process-wide BCMath scale', function () {
 });
 
 it('versions the changed feature calculations separately from the local-trait m2-v4', function () {
-    expect(\App\Domain\Features\FeatureEngine::VERSION)->toBe('m2-v5');
+    expect(FeatureEngine::VERSION)->toBe('m2-v6');
 });

@@ -31,6 +31,10 @@ final class ClosedCandleAggregator
         $bucket = $previous = null;
         $bar = null;
         $count = 0;
+        $reconstructed = [];
+        $sourceAvailable = 0;
+        $sourceHash = null;
+        $hasTradedSource = false;
         foreach ($source as $raw) {
             $timestamp = $raw['microtimestamp'];
             if (! is_int($timestamp) || $timestamp < 0 || $timestamp % $baseMs !== 0
@@ -45,6 +49,16 @@ final class ClosedCandleAggregator
                 $bucket = $currentBucket;
                 $bar = null;
                 $count = 0;
+                $reconstructed = [];
+                $sourceAvailable = 0;
+                $sourceHash = hash_init('sha256');
+                $hasTradedSource = false;
+            }
+            $sourceAvailable = max($sourceAvailable, CandleProvenance::availableAt($raw, $base));
+            hash_update($sourceHash, json_encode($raw, JSON_THROW_ON_ERROR));
+            $method = CandleProvenance::method($raw);
+            if ($method !== null) {
+                $reconstructed[] = ['microtimestamp' => $timestamp, 'reconstruction' => $raw['reconstruction']];
             }
             foreach (['open', 'high', 'low', 'close', 'volume'] as $key) {
                 $raw[$key] = bcconv($raw[$key]);
@@ -58,15 +72,26 @@ final class ClosedCandleAggregator
                 || bccomp($raw['low'], $raw['open'], $scale) > 0 || bccomp($raw['low'], $raw['close'], $scale) > 0) {
                 throw new InvalidArgumentException('Invalid base candle geometry.');
             }
+            $empty = $method !== null && bccomp($raw['volume'], '0', max(2, bcdec([$raw['volume']]))) === 0;
             if ($timestamp === $bucket) {
                 $bar = $raw;
                 $bar['derived_from'] = $base;
                 $bar['derivation_version'] = 'm4-closed-utc-v1';
+                $hasTradedSource = ! $empty;
             } elseif ($bar !== null && $previous + $baseMs === $timestamp) {
-                $scale = max(2, bcdec([$bar['high'], $bar['low'], $raw['high'], $raw['low']]));
-                $bar['high'] = bccomp($raw['high'], $bar['high'], $scale) > 0 ? $raw['high'] : $bar['high'];
-                $bar['low'] = bccomp($raw['low'], $bar['low'], $scale) < 0 ? $raw['low'] : $bar['low'];
-                $bar['close'] = $raw['close'];
+                if (! $empty) {
+                    if (! $hasTradedSource) {
+                        foreach (['open', 'high', 'low', 'close'] as $key) {
+                            $bar[$key] = $raw[$key];
+                        }
+                    } else {
+                        $scale = max(2, bcdec([$bar['high'], $bar['low'], $raw['high'], $raw['low']]));
+                        $bar['high'] = bccomp($raw['high'], $bar['high'], $scale) > 0 ? $raw['high'] : $bar['high'];
+                        $bar['low'] = bccomp($raw['low'], $bar['low'], $scale) < 0 ? $raw['low'] : $bar['low'];
+                        $bar['close'] = $raw['close'];
+                    }
+                    $hasTradedSource = true;
+                }
                 $bar['volume'] = bcadd($bar['volume'], $raw['volume'], max(2, bcdec([$bar['volume'], $raw['volume']])));
             } else {
                 $bar = null;
@@ -74,6 +99,15 @@ final class ClosedCandleAggregator
             $previous = $timestamp;
             $count++;
             if ($bar !== null && $count === intdiv($targetMs, $baseMs) && $bucket + $targetMs <= $cutoffMs) {
+                if ($reconstructed !== []) {
+                    $bar['reconstruction'] = [
+                        'version' => CandleProvenance::VERSION, 'method' => 'lower_timeframe', 'source_period' => $base,
+                        'source_from_ms' => $bucket, 'source_until_ms' => $bucket + $targetMs,
+                        'available_at_ms' => max($sourceAvailable, $bucket + $targetMs),
+                        'evidence_sha256' => hash_final(hash_copy($sourceHash)),
+                        'evidence' => ['reconstructed_sources' => $reconstructed],
+                    ];
+                }
                 yield $bar;
             }
         }

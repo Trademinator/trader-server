@@ -64,8 +64,10 @@ it('keeps an explicit feature order and drops missing values without zero imputa
     expect(FeatureSchema::vector(['features' => ['trend.direction' => -1, 'context.btc_dominance' => 0.6]], $keys))->toBe([0.6, -1])
         ->and(FeatureSchema::vector(['features' => ['trend.direction' => 1]], $keys))->toBeNull()
         ->and(count(FeatureSchema::keys('core')))->toBe(15)
-        ->and(count(FeatureSchema::keys('full')))->toBe(28)
+        ->and(count(FeatureSchema::keys('technical')))->toBe(18)
+        ->and(count(FeatureSchema::keys('full')))->toBe(27)
         ->and(fn () => FeatureSchema::keys('custom', ['label']))->toThrow(InvalidArgumentException::class)
+        ->and(fn () => FeatureSchema::keys('custom', ['context.circulating_fraction']))->toThrow(InvalidArgumentException::class)
         ->and(fn () => FeatureSchema::keys('custom', ['trend.direction', 'trend.direction']))->toThrow(InvalidArgumentException::class)
         ->and(fn () => FeatureSchema::vector(['features' => ['trend.direction' => 2]], ['trend.direction']))->toThrow(InvalidArgumentException::class);
 });

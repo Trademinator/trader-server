@@ -9,7 +9,7 @@ php artisan trademinator:sync-ohlcv kraken BTC/USD 1m --from='30 days ago' --pag
 php artisan trademinator:sync-ohlcv kraken BTC/USD 1m --from='30 days ago' --page-size=50 --queue
 ```
 
-Direct execution walks each page in sequence and reports the number of pages plus the received, repaired and still-missing ranges. A queued run enqueues the first page; that job schedules the next page only when it succeeds. A failing page is retried up to five times with backoff, then the sequence stops. Failed jobs can be inspected with `php artisan queue:failed`.
+Direct execution walks each page in sequence and reports `pages`, `fetched`, `repaired`, `reconstructed`, and `missing_ranges`. With `--repair-gaps`, repairs count newly inserted timestamps in that page, including the initial fetch; reconstructions are a subset. Fetched counts can include existing neighbours. Repair output also includes bounded `reconstruction_details` with per-timeframe checks and rejection reasons, plus an omitted-detail count. A queued run enqueues the first page; that job schedules the next page only when it succeeds. A failing page is retried up to five times with backoff, then the sequence stops. Failed jobs can be inspected with `php artisan queue:failed`. See [CLI.md](CLI.md#trademinatorsync-ohlcv) for isolated reconstruction, evidence requirements and retry bookkeeping.
 
 Adjacent pages overlap a few candle periods so a missing interval at a page boundary can be inspected. The overlap can make aggregate received and gap counts include repeats, but persistence upserts by exchange, symbol, period and timestamp. `--incremental` skips old pages and revisits the most recent stored candle. `--to=now` is evaluated when the command starts.
 

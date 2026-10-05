@@ -5,7 +5,7 @@ return [
     // Trend annotations remain available for research, but never enter live scoring.
     'trend_enabled' => env('HUMAN_TREND_TRAINING_ENABLED', false),
     'candle_enabled' => env('HUMAN_CANDLE_TRAINING_ENABLED', true),
-    'auxiliary_max_seconds' => 90,
+    'auxiliary_max_seconds' => 300,
     'publication_reserve_seconds' => 10,
     'trainer_uuids' => array_values(array_filter(array_map('trim', explode(',', (string) env('HUMAN_TRAINING_TRAINER_UUIDS', ''))))),
     'chart_candles' => 90,

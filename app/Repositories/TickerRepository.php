@@ -5,9 +5,15 @@ namespace App\Repositories;
 use App\Domain\Archive\ArchiveIntegrityException;
 use App\Domain\Archive\PortableJson;
 use App\Domain\Archive\TickerArchive;
+use App\Domain\MarketData\CandleGaps;
+use App\Domain\MarketData\CandleProvenance;
+use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\MarketData\CandleTimestampIndex;
 use App\Domain\MarketData\ExchangeCredentials;
+use App\Domain\MarketData\HistoryChanges;
 use App\Domain\MarketData\TickerHistoryCache;
 use App\Domain\Operations\ActionLog;
+use App\Models\Market;
 use App\Models\Ticker;
 use ccxt\Exchange;
 use Illuminate\Support\Facades\App;
@@ -203,7 +209,12 @@ class TickerRepository extends BaseRepository
                 continue;
             }
             if (PortableJson::encode($hot->current()) !== PortableJson::encode($coldPayload)) {
-                throw new ArchiveIntegrityException("Hot/cold ticker conflict at {$exchange}|{$symbol}|{$period}|{$hot->key()}.");
+                // A later exchange candle supersedes an archived reconstruction;
+                // all other conflicting source duplicates remain integrity errors.
+                if (CandleProvenance::method($coldPayload) === null
+                    || CandleProvenance::method($hot->current()) !== null) {
+                    throw new ArchiveIntegrityException("Hot/cold ticker conflict at {$exchange}|{$symbol}|{$period}|{$hot->key()}.");
+                }
             }
             yield (int) $hot->key() => $hot->current();
             $hot->next();
@@ -232,6 +243,67 @@ class TickerRepository extends BaseRepository
         $this->historyCache()->putMetadata($exchange, $symbol, $period, 'latest', $latest);
 
         return $latest;
+    }
+
+    /**
+     * Recursive metadata-only discovery, from the first stored candle through
+     * the last closed slot. No history payloads are read for database-only feeds.
+     *
+     * @return list<array{from: int, to: int}> Inclusive missing candle start times.
+     */
+    public function missingClosedCandleRanges(string $exchange, string $symbol, string $period, int $untilMs): array
+    {
+        return DB::transaction(function () use ($exchange, $symbol, $period, $untilMs): array {
+            $gaps = new CandleGaps;
+            $archived = config('archive.enabled') && DB::table('archive_catalog')->where('logical_type', 'tickers')
+                ->where('verification_state', 'verified')->where('exchange', $exchange)->where('symbol', $symbol)
+                ->where('period', $period)->where('range_start_ms', '<', $untilMs)->exists();
+
+            if ($archived) {
+                // Verify and merge hot/cold history once, retaining only eight bytes
+                // per timestamp. Recursive probes never reopen compressed shards.
+                $timestamps = (function () use ($exchange, $symbol, $period, $untilMs): \Generator {
+                    foreach ($this->streamHistory($exchange, $symbol, $period, 0, $untilMs) as $timestamp => $_) {
+                        yield $timestamp;
+                    }
+                })();
+                $index = new CandleTimestampIndex($timestamps, $period);
+                $first = $index->first();
+
+                return $first === null ? [] : $gaps->find($first, $untilMs, $period, $index->summary(...));
+            }
+
+            $query = Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)
+                ->where('period', $period)->where('microtimestamp', '<', $untilMs)->toBase();
+            $first = (clone $query)->min('microtimestamp');
+            if ($first === null) {
+                return [];
+            }
+
+            $timeframe = new CandleTimeframe;
+            $calendar = str_ends_with($period, 'M') || str_ends_with($period, 'y');
+            $step = $timeframe->next((int) $first, $period) - (int) $first;
+            $summary = function (int $fromMs, int $toMs) use ($query, $period, $timeframe, $calendar, $step): array {
+                $range = (clone $query)->whereBetween('microtimestamp', [$fromMs, $toMs]);
+                if ($calendar) {
+                    $starts = [];
+                    for ($cursor = $fromMs; $cursor <= $toMs; $cursor = $timeframe->next($cursor, $period)) {
+                        $starts[] = $cursor;
+                    }
+                    $range->whereIn('microtimestamp', $starts);
+                } else {
+                    // An off-grid row must not disguise a missing expected candle.
+                    $range->whereRaw('microtimestamp % ? = ?', [$step, $fromMs % $step]);
+                }
+                $row = $range->selectRaw('COUNT(*) AS candle_count, MIN(microtimestamp) AS first_ms, MAX(microtimestamp) AS last_ms')->first();
+
+                return ['count' => (int) $row->candle_count,
+                    'first' => $row->first_ms === null ? null : (int) $row->first_ms,
+                    'last' => $row->last_ms === null ? null : (int) $row->last_ms];
+            };
+
+            return $gaps->find((int) $first, $untilMs, $period, $summary);
+        });
     }
 
     /** @return list<int> */
@@ -280,19 +352,59 @@ class TickerRepository extends BaseRepository
         $affected = 0;
 
         foreach (array_chunk($tickers, 100) as $chunk) {
-            $data = [];
+            $affected += DB::transaction(function () use ($exchange, $symbol, $period, $chunk, $unique, $update): int {
+                $timestamps = array_column($chunk, 'microtimestamp');
+                $wanted = array_fill_keys($timestamps, true);
+                $before = [];
+                $hasReconstruction = array_any($chunk, fn ($row) => isset($row['reconstruction']))
+                    || Ticker::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+                        ->whereIn('microtimestamp', $timestamps)->whereNotNull('payload->reconstruction')->exists();
+                $hasArchive = config('archive.enabled') && DB::table('archive_catalog')->where('logical_type', 'tickers')
+                    ->where('verification_state', 'verified')->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+                    ->where('range_start_ms', '<=', max($timestamps))->where('range_end_ms', '>=', min($timestamps))->exists();
+                if ($hasReconstruction || $hasArchive) {
+                    foreach ($this->streamHistory($exchange, $symbol, $period, min($timestamps), max($timestamps)) as $at => $raw) {
+                        if (isset($wanted[$at])) {
+                            $before[$at] = $raw;
+                        }
+                    }
+                }
+                $data = $changed = [];
+                $inserted = 0;
+                foreach ($chunk as $ticker) {
+                    $at = $ticker['microtimestamp'];
+                    $row = ['exchange' => $exchange, 'symbol' => $symbol, 'period' => $period,
+                        'microtimestamp' => $at, 'payload' => json_encode($ticker, JSON_THROW_ON_ERROR)];
+                    if (CandleProvenance::method($ticker) !== null) {
+                        if (isset($before[$at])) {
+                            continue;
+                        }
+                        // Even a concurrent native insert wins over a reconstruction.
+                        $saved = Ticker::query()->insertOrIgnore([...$row, 'ticker_id' => (string) Str::uuid7(),
+                            'created_at' => now(), 'updated_at' => now()]);
+                        $inserted += $saved;
+                        if ($saved) {
+                            $changed[] = $at;
+                        }
+                    } else {
+                        $data[] = $row;
+                        if (isset($before[$at]['reconstruction'])) {
+                            $changed[] = $at;
+                        }
+                    }
+                }
+                $saved = $inserted + ($data === [] ? 0 : $this->update($data, $unique, $update));
+                if ($changed !== []) {
+                    $markets = Market::query()->where('symbol', $symbol)
+                        ->whereHas('exchange', fn ($query) => $query->where('class', $exchange))->pluck('market_id');
+                    foreach ($markets as $marketId) {
+                        app(HistoryChanges::class)->record($marketId, $period, min($changed), max($changed),
+                            'candle_reconstruction', immediate: true);
+                    }
+                }
 
-            foreach ($chunk as $ticker) {
-                $data[] = [
-                    'exchange' => $exchange,
-                    'symbol' => $symbol,
-                    'period' => $period,
-                    'microtimestamp' => $ticker['microtimestamp'],
-                    'payload' => json_encode($ticker, JSON_THROW_ON_ERROR),
-                ];
-            }
-
-            $affected += $this->update($data, $unique, $update);
+                return $saved;
+            });
         }
 
         if ($affected > 0) {

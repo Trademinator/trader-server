@@ -19,7 +19,7 @@ final class HumanCandleKnn
 
     public function __construct(private DatasetStore $datasets, private HumanTraining $snapshots) {}
 
-    public function train(array $manifest, array $settings, float $deadline): array
+    public function train(array $manifest, array $settings, float $deadline, ?HumanTrainingProgress $progress = null): array
     {
         $keys = array_values(array_intersect($manifest['keys'], FeatureEngine::KEYS));
         $settings = array_replace($settings, config('human_training.candle_validation', []));
@@ -32,7 +32,10 @@ final class HumanCandleKnn
         if ($keys === []) {
             return ['bundle' => [...$bundle, 'status' => 'no_technical_features']];
         }
-        $rows = $this->opinions($manifest, $keys, $bundle['annotation_cutoff_ms'], $deadline);
+        $progress?->stage('loading_annotations');
+        $rows = $this->opinions($manifest, $keys, $bundle['annotation_cutoff_ms'], $deadline, $progress);
+        $this->deadline($deadline);
+        $progress?->stage('annotations_loaded', ['eligible_rows' => count($rows)]);
         $bundle = [...$bundle, 'samples' => count($rows), 'class_counts' => $this->counts($rows),
             'sampling' => 'all_eligible_distinct_candles'];
         if (count($rows) < max(5, (int) config('human_training.candle_min_samples'))) {
@@ -42,6 +45,7 @@ final class HumanCandleKnn
             return ['bundle' => [...$bundle, 'status' => 'insufficient_action_diversity']];
         }
         $knn = $this->knn($settings);
+        $progress?->stage('preparing_neighbors', ['total' => count($rows)]);
         $rows = $knn->prepareRows($rows);
         $tuningStart = (int) floor(count($rows) * 0.6);
         $holdoutStart = (int) floor(count($rows) * 0.8);
@@ -57,8 +61,9 @@ final class HumanCandleKnn
         }
         $selected = null;
         foreach (['natural' => null, 'target_priors' => config('human_training.candle_target_weights')] as $policy => $target) {
+            $progress?->stage('tuning_'.$policy, ['processed' => 0, 'total' => count($tuning), 'knowledge_rows' => count($training)]);
             $weights = ClassPriorWeights::fit($this->counts($training), $target);
-            $score = $this->evaluate($knn, $training, $tuning, $k, $weights, $settings, $deadline);
+            $score = $this->evaluate($knn, $training, $tuning, $k, $weights, $settings, $deadline, $progress);
             $bundle['weight_candidates'][$policy] = ['class_weights' => $weights, 'tuning' => $score];
             if ($score['eligible'] && ($selected === null || $this->rank($score) > $this->rank($selected['tuning']))) {
                 $selected = ['policy' => $policy, 'target' => $target, 'tuning' => $score];
@@ -73,8 +78,9 @@ final class HumanCandleKnn
         }
         // Fix the policy before touching the final holdout; never try a runner-up afterward.
         $training = $this->purge(array_slice($rows, 0, $holdoutStart), $holdout[0]['decision_at_ms']);
+        $progress?->stage('holdout', ['processed' => 0, 'total' => count($holdout), 'knowledge_rows' => count($training)]);
         $weights = ClassPriorWeights::fit($this->counts($training), $selected['target']);
-        $score = $this->evaluate($knn, $training, $holdout, $k, $weights, $settings, $deadline);
+        $score = $this->evaluate($knn, $training, $holdout, $k, $weights, $settings, $deadline, $progress);
         $bundle = [...$bundle, 'weight_policy' => $selected['policy'], 'tuning' => $selected['tuning'],
             'holdout' => $score, 'holdout_passed' => $score['eligible'],
             'holdout_training_labels_available_by_ms' => max(array_column($training, 'label_available_at_ms')),
@@ -83,6 +89,8 @@ final class HumanCandleKnn
             return ['bundle' => $bundle];
         }
         // Publication retains all eligible annotations, including the evaluated period.
+        $progress?->stage('finalizing', ['knowledge_rows' => count($rows)]);
+        $this->deadline($deadline);
         $knowledge = array_map(fn (array $row): array => [
             'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
             'vector' => $row['vector'], 'label' => $row['label'],
@@ -121,7 +129,8 @@ final class HumanCandleKnn
         return $knn->vote($neighbors, $bundle['k'], $this->voteWeights($bundle['class_weights']));
     }
 
-    private function opinions(array $manifest, array $keys, int $annotationCutoff, float $deadline): array
+    private function opinions(array $manifest, array $keys, int $annotationCutoff, float $deadline,
+        ?HumanTrainingProgress $progress = null): array
     {
         $trainerIds = array_map('strtolower', array_filter([...User::ownerIds(), ...config('human_training.trainer_uuids')]));
         $trainers = User::query()->whereIn('user_id', $trainerIds)->get()
@@ -140,6 +149,7 @@ final class HumanCandleKnn
             // Keep each source contiguous so its full checksum-verified dataset is loaded once.
             ->orderBy('dataset_id')->orderBy('decision_at_ms')->orderByDesc('snapshot_id')->lazy(25);
         $opinions = [];
+        $processed = 0;
         $loadedDataset = null;
         $source = $rawRows = $byTime = [];
         foreach ($snapshots->chunk(25) as $batch) {
@@ -148,18 +158,24 @@ final class HumanCandleKnn
                 // Use each annotation's original schema when checking its immutable chart.
                 // Technical annotations remain usable when the automatic schema adds context.
                 if ($dataset !== $loadedDataset) {
+                    $progress?->stage('loading_dataset', ['dataset_id' => $dataset, 'processed' => $processed]);
                     [$source, $rawRows] = $this->datasets->load($dataset);
                     $byTime = array_column($rawRows, null, 'decision_at_ms');
                     $loadedDataset = $dataset;
                 }
+                $this->deadline($deadline);
                 if ([$source['exchange'], $source['symbol'], $source['period'], $source['feature_version']]
                     !== [$manifest['exchange'], $manifest['symbol'], $manifest['period'], $manifest['feature_version']]
                     || $source['label_definition']['horizon'] !== $manifest['label_definition']['horizon']) {
                     continue;
                 }
+                $progress?->stage('validating_snapshots', ['dataset_id' => $dataset,
+                    'processed' => $processed, 'eligible_rows' => count($opinions)]);
                 $compatible = $this->snapshots->compatibleSnapshotIds($source, $group, $rawRows);
+                $this->deadline($deadline);
                 foreach ($group as $snapshot) {
                     $this->deadline($deadline);
+                    $progress?->tick(['processed' => $processed++, 'eligible_rows' => count($opinions)]);
                     $decision = $snapshot->decision_at_ms;
                     if (! isset($compatible[$snapshot->snapshot_id])
                         || (isset($opinions[$decision]) && strcmp($opinions[$decision]['provenance']['snapshot_id'], $snapshot->snapshot_id) >= 0)) {
@@ -202,18 +218,22 @@ final class HumanCandleKnn
                 }
             }
         }
+        $progress?->tick(['processed' => $processed, 'eligible_rows' => count($opinions)]);
         ksort($opinions);
 
         return array_values($opinions);
     }
 
-    private function evaluate(WeightedKnn $knn, array $training, array $test, int $k, array $weights, array $settings, float $deadline): array
+    private function evaluate(WeightedKnn $knn, array $training, array $test, int $k, array $weights, array $settings, float $deadline,
+        ?HumanTrainingProgress $progress = null): array
     {
         $predictions = [];
         foreach ($test as $row) {
             $this->deadline($deadline);
             $predictions[] = $knn->vote($knn->neighborsPrepared($training, $row['vector'], $k, $row['decision_at_ms']), $k, $this->voteWeights($weights));
+            $progress?->tick(['processed' => count($predictions)]);
         }
+        $this->deadline($deadline);
         $score = (new KnnTuner($knn))->evaluatePredictions($test, $predictions, $settings);
         $score['k'] = $k;
         $score['directional_annotation_agreement'] = $score['semantic_precision'];

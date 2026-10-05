@@ -5,6 +5,7 @@ namespace App\Domain\Research;
 use App\Domain\Features\FeatureEngine;
 use App\Domain\Intelligence\KnowledgeWindow;
 use App\Domain\Intelligence\PatternCatalog;
+use App\Domain\MarketData\CandleProvenance;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\Operations\ActionLog;
 use App\Models\MarketFeature;
@@ -92,7 +93,8 @@ final class DatasetSnapshotBuilder
                     $history = $this->tickers->streamHistory($exchange, $symbol, $period, $historyStart, $asOfMs);
                     $history->rewind();
                 }
-                $counts = array_fill_keys(['missing_features', 'missing_source', 'gaps', 'immature'], 0);
+                $counts = array_fill_keys(['missing_features', 'missing_source', 'gaps', 'immature', 'unavailable_evidence'], 0);
+                $reconstruction = ['rows_using_reconstructed_history' => 0, 'rows_with_reconstructed_candle' => 0, 'methods' => []];
                 if ($definition instanceof SemanticLabels) {
                     $counts['semantic_warmup'] = 0;
                 }
@@ -136,6 +138,11 @@ final class DatasetSnapshotBuilder
                             continue;
                         }
                     }
+                    if (($payload['source_available_at_ms'] ?? $decision) > $decision) {
+                        $counts['unavailable_evidence']++;
+
+                        continue;
+                    }
                     $vector = FeatureSchema::vector($payload, $keys);
                     if ($vector === null) {
                         $counts['missing_features']++;
@@ -173,6 +180,15 @@ final class DatasetSnapshotBuilder
                         $this->validateCandle($bar);
                         $expected = $timeframe->next($expected, $period);
                     }
+                    $labelAvailable = $expected;
+                    foreach ($window as $bar) {
+                        $labelAvailable = max($labelAvailable, CandleProvenance::availableAt($bar, $period));
+                    }
+                    if ($labelAvailable > $asOfMs) {
+                        $counts['immature']++;
+
+                        continue;
+                    }
                     if (! isset($payload['close']) || (float) $payload['close'] !== (float) $window[0]['close']) {
                         throw new RuntimeException('Source candles changed since M2 features were built; rebuild features.');
                     }
@@ -183,12 +199,15 @@ final class DatasetSnapshotBuilder
                         : $definition->label((float) $entry['open'], (float) $exit['close']);
                     $row = [
                         'microtimestamp' => $timestamp, 'decision_at_ms' => $decision,
-                        'entry_at_ms' => $entry['microtimestamp'], 'label_available_at_ms' => $expected,
+                        'entry_at_ms' => $entry['microtimestamp'], 'label_available_at_ms' => $labelAvailable,
                         'vector' => $vector, 'label' => $label['action'],
                         'entry_price' => (string) $entry['open'], 'exit_price' => (string) $exit['close'],
                         'gross_return' => $label['gross_return'],
                         'source' => ['feature_id' => $feature->getKey(), 'history_start_ms' => $payload['history_start_ms'] ?? null,
                             'context_snapshot_id' => $payload['context_snapshot_id'] ?? null,
+                            'reconstruction' => ['candle' => $window[0]['reconstruction'] ?? null,
+                                'feature_history_counts' => $payload['reconstruction_counts'] ?? [],
+                                'label_window_counts' => CandleProvenance::counts($window)],
                             'feature_sha256' => hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR)),
                             'candle_window_sha256' => hash('sha256', json_encode($window, JSON_THROW_ON_ERROR))],
                     ];
@@ -209,6 +228,16 @@ final class DatasetSnapshotBuilder
                     DatasetStore::write($file, $line);
                     hash_update($hash, $line);
                     $labels[$row['label']]++;
+                    if (($payload['reconstruction_counts'] ?? []) !== []) {
+                        $reconstruction['rows_using_reconstructed_history']++;
+                        foreach (array_keys($payload['reconstruction_counts']) as $usedMethod) {
+                            $reconstruction['methods'][$usedMethod] = ($reconstruction['methods'][$usedMethod] ?? 0) + 1;
+                        }
+                    }
+                    $method = CandleProvenance::method($window[0]);
+                    if ($method !== null) {
+                        $reconstruction['rows_with_reconstructed_candle']++;
+                    }
                     $count++;
                     $firstDecision ??= $decision;
                     $lastDecision = $decision;
@@ -231,6 +260,7 @@ final class DatasetSnapshotBuilder
                     'label_definition' => $definition->metadata(), 'from_ms' => $fromMs, 'to_ms' => $toMs, 'as_of_ms' => $asOfMs,
                     'first_decision_at_ms' => $firstDecision, 'last_decision_at_ms' => $lastDecision,
                     'rows' => $count, 'label_counts' => $labels, 'skipped' => $counts,
+                    'reconstruction' => $reconstruction,
                     'rows_sha256' => hash_final($hash),
                 ];
                 $json = json_encode($manifest, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT)."\n";

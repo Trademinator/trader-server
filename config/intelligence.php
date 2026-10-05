@@ -9,6 +9,7 @@ return [
     'lookback' => 20,
     'minimum_move_bps' => 10.0,
     'extreme_fraction' => 0.2,
+    // Automatic dataset/model deadline; human training adds its own allowance.
     'max_seconds' => 480,
     // Both the training history window and the published model's maximum age.
     'max_model_age_days' => (int) env('INTELLIGENCE_MAX_MODEL_AGE_DAYS', 14),

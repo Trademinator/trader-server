@@ -2,6 +2,7 @@
 
 namespace App\Domain\Features;
 
+use App\Domain\MarketData\CandleProvenance;
 use App\Domain\MarketData\CandleTimeframe;
 use InvalidArgumentException;
 use Trademinator\Indicators\Traits\Technical;
@@ -13,8 +14,8 @@ final class FeatureEngine
 {
     use Technical;
 
-    // Isolate package precision and recurrence state from the local-trait version.
-    public const VERSION = 'm2-v5';
+    // Keep the nine-field context schema separate from older supply-dependent vectors.
+    public const VERSION = 'm2-v6';
 
     public const KEYS = [
         'trend.ema_3_12', 'trend.direction', 'return.4', 'return.12',
@@ -104,15 +105,21 @@ final class FeatureEngine
             while ($elapsedCloses !== [] && array_key_first($elapsedCloses) < $timestamp - 2592000000) {
                 unset($elapsedCloses[array_key_first($elapsedCloses)]);
             }
-            yield [
+            $row = [
                 'close' => (float) $close,
                 'microtimestamp' => $timestamp,
                 'available_at_ms' => $candle['available_at_ms'],
                 'history_start_ms' => $historyStart,
                 'indicators' => $indicators,
                 'features' => $features,
-                'technical_ready' => $count >= 28,
+                'technical_ready' => $count >= 28 && $candle['source_available_at_ms'] <= $candle['available_at_ms'],
             ];
+            if ($candle['reconstruction_counts'] !== []) {
+                $row['source_available_at_ms'] = $candle['source_available_at_ms'];
+                $row['reconstruction_counts'] = $candle['reconstruction_counts'];
+                $row['reconstruction'] = $candle['reconstruction'] ?? null;
+            }
+            yield $row;
         }
     }
 
@@ -125,6 +132,8 @@ final class FeatureEngine
             'previous' => $checkpoint['through_ms'] ?? null,
             'history_start_ms' => $checkpoint['history_start_ms'] ?? null,
             'count' => (int) ($checkpoint['feature_count'] ?? 0),
+            'source_available_at_ms' => (int) ($checkpoint['source_available_at_ms'] ?? 0),
+            'reconstruction_counts' => $checkpoint['reconstruction_counts'] ?? [],
         ];
         $pending = [];
         $flush = function () use (&$pending, &$carry, $checkpointCallback): \Generator {
@@ -141,6 +150,8 @@ final class FeatureEngine
                 'through_ms' => (int) $last['microtimestamp'],
                 'history_start_ms' => (int) $last['history_start_ms'],
                 'feature_count' => (int) ($last['__feature_count'] ?? 0),
+                'source_available_at_ms' => (int) ($last['source_available_at_ms'] ?? 0),
+                'reconstruction_counts' => $last['reconstruction_counts'] ?? [],
             ] : null;
             $pending = [];
             foreach ($newKeys as $key) {
@@ -199,6 +210,8 @@ final class FeatureEngine
         $previous = $seed['previous'] ?? null;
         $historyStart = $seed['history_start_ms'] ?? null;
         $count = (int) ($seed['count'] ?? 0);
+        $sourceAvailable = (int) ($seed['source_available_at_ms'] ?? 0);
+        $reconstructionCounts = $seed['reconstruction_counts'] ?? [];
         foreach ($candles as $raw) {
             if (! is_array($raw)) {
                 throw new InvalidArgumentException('Each candle must be an array.');
@@ -234,10 +247,20 @@ final class FeatureEngine
             if ($previous !== null && $timestamp !== $timeframe->next($previous, $period)) {
                 $count = 0;
                 $historyStart = null;
+                $sourceAvailable = 0;
+                $reconstructionCounts = [];
+            }
+            $method = CandleProvenance::method($raw);
+            $sourceAvailable = max($sourceAvailable, CandleProvenance::availableAt($raw, $period));
+            if ($method !== null) {
+                $reconstructionCounts[$method] = ($reconstructionCounts[$method] ?? 0) + 1;
+                $row['reconstruction'] = $raw['reconstruction'];
             }
             $historyStart ??= $timestamp;
             $row['history_start_ms'] = $historyStart;
             $row['available_at_ms'] = $closeAt;
+            $row['source_available_at_ms'] = $sourceAvailable;
+            $row['reconstruction_counts'] = $reconstructionCounts;
             $row['__feature_count'] = ++$count;
             $previous = $timestamp;
             yield $timestamp => $row;

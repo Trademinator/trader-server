@@ -5,6 +5,7 @@ namespace App\Repositories;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\MarketData\ExchangeCredentials;
 use App\Domain\MarketData\MarketCatalogException;
+use App\Domain\MarketData\OhlcvNormalizer;
 use App\Models\Exchange;
 use App\Models\User;
 use ccxt;
@@ -149,6 +150,14 @@ class ExchangeRepository extends BaseRepository
     /** One bounded CCXT page, without persistence; history checkpoints own the transaction. */
     public function fetchHistoryPage(string $symbol, string $period, int $fromMs, int $untilMs, int $limit): array
     {
+        [$requestLimit, $params] = $this->candleRequest($period, $fromMs, $untilMs, $limit);
+
+        return $this->tickerRepository->fetch($symbol, $period, $fromMs, $requestLimit, $params);
+    }
+
+    /** @return array{int, array} */
+    private function candleRequest(string $period, int $fromMs, int $untilMs, int $limit): array
+    {
         if ($fromMs < 0 || $fromMs >= $untilMs || $limit < 1 || $limit > 100
             || ! in_array($period, CandleTimeframe::SUPPORTED, true)) {
             throw new \InvalidArgumentException('Invalid historical candle page.');
@@ -183,7 +192,60 @@ class ExchangeRepository extends BaseRepository
             $this->ccxtExchange->options['fetchOHLCV']['paginate'] = false;
         }
 
-        return $this->tickerRepository->fetch($symbol, $period, $fromMs, $requestLimit, $params);
+        return [$requestLimit, $params];
+    }
+
+    /** Read-only decimal evidence, with Bitso's additional trade counts and times when available. */
+    public function fetchCandleEvidence(string $symbol, string $period, int $fromMs, int $untilMs, int $limit): array
+    {
+        [$requestLimit, $params] = $this->candleRequest($period, $fromMs, $untilMs, $limit);
+        if (! isset($this->ccxtExchange->timeframes[$period])) {
+            throw new \InvalidArgumentException('Invalid candle evidence request.');
+        }
+        $number = $this->ccxtExchange->number;
+        try {
+            if ($this->exchange->class !== 'bitso') {
+                $this->ccxtExchange->number = 'strval';
+                $rows = $this->ccxtExchange->fetch_ohlcv($symbol, $period, $fromMs, $requestLimit, $params);
+
+                return $this->normalizeCandleEvidence($rows);
+            }
+            $market = $this->ccxtExchange->market($symbol);
+            $response = $this->ccxtExchange->publicGetOhlc([
+                'book' => $market['id'], 'time_bucket' => $this->ccxtExchange->timeframes[$period],
+                'start' => $fromMs, 'end' => $untilMs,
+            ]);
+            if (($response['success'] ?? false) !== true || ! is_array($response['payload'] ?? null)) {
+                throw new \UnexpectedValueException('Invalid Bitso candle evidence response.');
+            }
+            $rows = [];
+            foreach ($response['payload'] as $raw) {
+                $rows[] = [
+                    'microtimestamp' => $raw['bucket_start_time'] ?? null,
+                    'open' => $raw['first_rate'] ?? null, 'high' => $raw['max_rate'] ?? null,
+                    'low' => $raw['min_rate'] ?? null, 'close' => $raw['last_rate'] ?? null, 'volume' => $raw['volume'] ?? null,
+                    'trade_count' => $raw['trade_count'] ?? null,
+                    'first_trade_time' => $raw['first_trade_time'] ?? null, 'last_trade_time' => $raw['last_trade_time'] ?? null,
+                ];
+            }
+
+            return $this->normalizeCandleEvidence($rows);
+        } catch (\Throwable $error) {
+            throw ExchangeCredentials::safeFailure($error);
+        } finally {
+            $this->ccxtExchange->number = $number;
+        }
+    }
+
+    private function normalizeCandleEvidence(array $rows): array
+    {
+        foreach ($rows as $row) {
+            if (! is_numeric($row['volume'] ?? $row[5] ?? null)) {
+                throw new \UnexpectedValueException('Candle reconstruction evidence requires an explicit volume.');
+            }
+        }
+
+        return (new OhlcvNormalizer)->normalize($rows);
     }
 
     /** Confirm that an adapter returned at least one candle inside an exact historical window. */

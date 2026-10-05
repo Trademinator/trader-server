@@ -32,6 +32,9 @@ final class FeatureSchema
 
     public static function vector(array $payload, array $keys): ?array
     {
+        if (($payload['source_available_at_ms'] ?? 0) > ($payload['available_at_ms'] ?? 0)) {
+            return null;
+        }
         $vector = [];
         foreach ($keys as $key) {
             $value = $payload['features'][$key] ?? null;

@@ -4,8 +4,9 @@ Complete command reference: [CLI.md](CLI.md).
 
 Current package integration: [COMPOSER-PACKAGE-MIGRATION.md](COMPOSER-PACKAGE-MIGRATION.md).
 The older installation notes below describe previous M2 releases. The package
-replacement adds two Composer requirements and uses feature version `m2-v5`;
-follow the integration document for its installation and lockfile steps.
+replacement added two Composer requirements and introduced feature version `m2-v5`;
+follow the integration document for its installation and lockfile steps. The current
+feature version is `m2-v6`, which removes the maximum-supply-dependent context metric.
 
 M2 converts M1's stored, completed exchange candles into versioned feature vectors for M3 datasets and M4 KNN. It does not trade, train a model, or change billing. Exchange/CCXT OHLCV remains authoritative. CoinGecko supplies optional, separately timestamped context.
 
@@ -54,7 +55,7 @@ php artisan config:cache
 php artisan trademinator:collect-market-context
 ```
 
-Context collection runs hourly. Requests batch up to 100 unique resolved coin IDs per quote currency, reuse global/category data, and avoid duplicate samples within the same UTC hour. Multiple users subscribing to the same market therefore share the same CoinGecko mapping and context stream. HTTP failures, including 429, fail visibly without fabricating snapshots; collection resumes on the next scheduled run. Shared locks prevent simultaneous collectors.
+Scheduled context collection runs hourly. Requests batch up to 100 unique resolved coin IDs per quote currency, reuse global/category data, and avoid duplicate samples within the same UTC hour. The manual [fetch-market-context command](CLI.md#trademinatorfetch-market-context) can refresh one mapped coin/quote immediately, including within the current hour. Rolling activity history counts at most one observation per completed UTC hour. Multiple users subscribing to the same market share the same CoinGecko mapping and context stream. HTTP failures, including 429, fail visibly without fabricating snapshots; collection resumes on the next scheduled run. Shared locks prevent simultaneous collectors.
 
 Mappings can be inspected in `coin_gecko_market_mappings`. `pending` means awaiting resolution, `resolved` is usable, `ambiguous` requires an explicit future/admin mapping decision, `unmapped` means no exact symbol match was found, and `unsupported` currently means the market symbol is not a plain spot `BASE/QUOTE` pair.
 
@@ -66,8 +67,8 @@ Endpoints and authentication are based on the official CoinGecko API endpoints a
 
 Each feature payload contains:
 
-- `version`: `m2-v5`, identifying the published-package implementation and precision contract. Metric definitions, periods, feature ordering and normalization remain unchanged. See [package integration](COMPOSER-PACKAGE-MIGRATION.md).
-- Existing `m2-v1` through `m2-v4` rows may coexist in `market_features`; M2/M3 queries select `FeatureEngine::VERSION`. Rebuilding creates `m2-v5` rows without rewriting older contracts or reusing old-version checkpoints. Existing frozen datasets stay unchanged; build new datasets for the new version.
+- `version`: `m2-v6`, removing `context.circulating_fraction` from the full schema. The full vector now contains 18 technical and 9 context features. Technical calculations and the other context definitions retain the published-package implementation and precision contract. See [package integration](COMPOSER-PACKAGE-MIGRATION.md).
+- Existing `m2-v1` through `m2-v5` rows may coexist in `market_features`; M2/M3 queries select `FeatureEngine::VERSION`. Rebuilding creates `m2-v6` rows without rewriting older contracts or reusing old-version checkpoints. Existing frozen datasets and models stay unchanged; rebuild features and create new datasets/models for the new version. Remove the retired key from any custom schema.
 - `microtimestamp`: candle opening time in milliseconds; `available_at_ms`: candle closing time.
 - `history_start_ms`: beginning of the uninterrupted candle segment used to seed calculations.
 - `indicators`: named raw technical indicator values, with `null` during warm-up. Trait-backed decimal results are stored as decimal strings so BCMath precision is not lost before normalization.
@@ -75,7 +76,7 @@ Each feature payload contains:
 - `missing`: names of null features; `technical_ready`: core technical warm-up completed; `context_ready`: every context field present; `ready`: no feature is missing.
 - `context_snapshot_id`: exact observed snapshot, or null.
 
-Every continuous feature lies in `[0, 1]`; direction fields use `-1`, `0`, `1`. Never feed nulls directly to KNN or silently convert them to zero. M3 should explicitly select a feature schema and filter/impute under training-only rules. A technical-only schema is valid when CoinGecko is disabled. Keep schema/version and history origin with each dataset. Missing max supply (for uncapped assets), category, long return history, or context will keep the full vector's `ready` false intentionally.
+Every continuous feature lies in `[0, 1]`; direction fields use `-1`, `0`, `1`. Never feed nulls directly to KNN or silently convert them to zero. M3 should explicitly select a feature schema and filter/impute under training-only rules. A technical-only schema is valid when CoinGecko is disabled. Keep schema/version and history origin with each dataset. Missing category, long return history, or context will keep the full vector's `ready` false intentionally. Maximum supply is not used: uncapped assets can have all nine context features ready, and no circulating/total-supply replacement is introduced.
 
 ## Indicators and normalization
 
@@ -102,7 +103,6 @@ Signed bounded normalization is `B(x,s) = 0.5 + 0.5*tanh(x/s)`. Zero change is 0
 | `context.category_momentum` | `B(category market-cap 24h percentage change,10)` |
 | `context.price_deviation` | `B(exchange close / aggregate same-quote price−1,0.05)` |
 | `context.market_cap_share` | Coin market cap / global market cap in the same currency |
-| `context.circulating_fraction` | Circulating supply / max supply; unknown/uncapped max supply stays null |
 | `context.volume_share` | Coin volume / global volume in the same currency; liquidity/activity proxy, not order-book depth |
 
 Ratios representing fractions are clamped to `[0,1]`. `FeatureEngine::calculateSlice()` calls the ordinary `Technical` array methods directly: `ema()`, `rsi()`, `sto_rsi()`, `cci()`, `atrp()`, `roc()`, `volume_activity()` and `candle_geometry()`. All former indicator methods ending in `_next` have been removed, not renamed or left as a second implementation. The engine applies versioned ML normalization after the shared trait calculations.

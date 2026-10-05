@@ -134,5 +134,5 @@ it('keeps tiny-price features causal and identical across retained slice boundar
         ->and($prefix)->toBe(array_slice($batch, 0, 40))
         ->and($source)->toBe($original)
         ->and(end($batch)['features']['volatility.atrp_3'])->toBeGreaterThan(0)
-        ->and(FeatureEngine::VERSION)->toBe('m2-v5');
+        ->and(FeatureEngine::VERSION)->toBe('m2-v6');
 });

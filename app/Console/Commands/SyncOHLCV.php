@@ -71,13 +71,24 @@ final class SyncOHLCV extends Command
         }
 
         try {
-            $result = ['pages' => 0, 'fetched' => 0, 'repaired' => 0, 'missing_ranges' => 0];
+            $result = ['pages' => 0, 'fetched' => 0, 'repaired' => 0, 'reconstructed' => 0, 'missing_ranges' => 0];
+            if ($this->option('repair-gaps')) {
+                $result['reconstruction_details'] = [];
+                $result['reconstruction_details_omitted'] = 0;
+            }
             do {
                 $page = $pages->window($from, $to, $period, $size);
                 $part = $synchronizer->sync($exchange, $symbol, $period, $page['from'], $page['to'], false, (bool) $this->option('repair-gaps'), $size);
                 $result['pages']++;
-                foreach (['fetched', 'repaired', 'missing_ranges'] as $key) {
-                    $result[$key] += $part[$key];
+                foreach (['fetched', 'repaired', 'reconstructed', 'missing_ranges'] as $key) {
+                    $result[$key] += $part[$key] ?? 0;
+                }
+                foreach ($part['reconstruction_details'] ?? [] as $detail) {
+                    if (count($result['reconstruction_details']) < 100) {
+                        $result['reconstruction_details'][] = $detail;
+                    } else {
+                        $result['reconstruction_details_omitted']++;
+                    }
                 }
                 $from = $page['next'];
             } while ($from !== null);

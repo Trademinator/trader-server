@@ -6,6 +6,8 @@ use App\Domain\Intelligence\IntelligenceTrainer;
 use App\Domain\Intelligence\MarketIntelligence;
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\Intelligence\NormalizedVector;
+use App\Domain\Operations\ActionContext;
+use App\Domain\Operations\ActionLog;
 use App\Domain\Research\DatasetStore;
 use App\Models\HumanCandleLabel;
 use App\Models\HumanTrainingSnapshot;
@@ -14,6 +16,8 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger;
 use Tests\Support\IntelligenceFixtures;
 
 beforeEach(function () {
@@ -66,12 +70,21 @@ function twoKnnRewrite(array $manifest, array $rows): array
 }
 
 it('publishes independent knowledge and lets human candle scores outweigh an opposing automatic prediction', function () {
+    $handler = new TestHandler;
+    app()->instance(ActionLog::class, new ActionLog(new Logger('test', [$handler]), app(ActionContext::class)));
     $manifest = IntelligenceFixtures::snapshot();
     [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
     foreach ($rows as $row) {
         twoKnnAnnotation($manifest, $row, $this->trainer, ['buy' => 'sell', 'hodl' => 'hold', 'sell' => 'buy'][$row['label']]);
     }
     $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+    $records = array_values(array_filter(array_map(fn ($record): array => json_decode($record->message, true), $handler->getRecords()),
+        fn (array $record): bool => str_starts_with($record['event'], 'intelligence.human_training.')));
+    expect(array_column($records, 'stage'))->toContain('loading_annotations', 'loading_dataset', 'validating_snapshots',
+        'tuning_natural', 'tuning_target_priors', 'holdout', 'finalizing');
+    expect($records[0])->toMatchArray(['event' => 'intelligence.human_training.started', 'budget_seconds' => 300]);
+    expect($records[array_key_last($records)])->toMatchArray(['event' => 'intelligence.human_training.completed',
+        'reason' => 'validated', 'knowledge_rows' => 240]);
     $artifact = app(ModelStore::class)->current('kraken', 'BTC/USD', '1m');
     expect($report['status'])->toBe('ready')->and($report['automatic']['status'])->toBe('ready')
         ->and($report['candle_guidance']['status'])->toBe('validated')

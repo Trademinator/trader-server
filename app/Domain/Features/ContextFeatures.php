@@ -6,7 +6,7 @@ final class ContextFeatures
 {
     public const KEYS = ['context.global_regime', 'context.btc_dominance', 'context.btc_dominance_change',
         'context.activity', 'context.activity_deviation', 'context.category_momentum',
-        'context.price_deviation', 'context.market_cap_share', 'context.circulating_fraction',
+        'context.price_deviation', 'context.market_cap_share',
         'context.volume_share'];
 
     public function calculate(?array $snapshot, float $close, int $asOfMs, int $maxAgeMs, ?string $category = null): array
@@ -31,7 +31,6 @@ final class ContextFeatures
         $features['context.price_deviation'] = $priceRatio === null ? null : $bound($priceRatio - 1, 0.05);
         $currency = $snapshot['vs_currency'];
         $features['context.market_cap_share'] = $ratio($coin['market_cap'] ?? null, $global['total_market_cap'][$currency] ?? null);
-        $features['context.circulating_fraction'] = $ratio($coin['circulating_supply'] ?? null, $coin['max_supply'] ?? null);
         // Aggregate volume share is an activity/liquidity proxy, not executable order-book depth.
         $features['context.volume_share'] = $ratio($coin['total_volume'] ?? null, $global['total_volume'][$currency] ?? null);
         foreach ($features as &$value) {

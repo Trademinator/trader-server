@@ -1,8 +1,10 @@
 <?php
 
+use App\Domain\MarketData\CandleReconstructor;
 use App\Domain\Operations\ActionContext;
 use App\Domain\Operations\ActionLog;
 use App\Models\User;
+use App\Repositories\ExchangeRepository;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -154,3 +156,17 @@ it('links jobs to their parent and records the actual attempt outcome', function
     expect(json_encode($handler->getRecords()))->not->toContain('VERY_PRIVATE');
     expect(app(ActionContext::class)->current())->toBe([]);
 })->with(['completed' => ['success', 'completed'], 'released' => ['release', 'released'], 'failed' => ['fail', 'failed']]);
+
+it('records the candle and reason for an unresolved reconstruction without requiring debug mode', function () {
+    $handler = captureOperationsLog();
+    $repository = Mockery::mock(ExchangeRepository::class);
+
+    $attempt = app(CandleReconstructor::class)->attempt($repository, 'kraken', 'ATOM/USD', '15m',
+        1704069000000, 1704078000000);
+
+    expect($attempt['candle'])->toBeNull();
+    expect(operationRecords($handler, 'candles.reconstruction')[0])->toMatchArray([
+        'exchange' => 'kraken', 'symbol' => 'ATOM/USD', 'period' => '15m', 'candle_ms' => 1704069000000,
+        'reason' => 'not_isolated', 'outcome' => 'skipped',
+    ]);
+});

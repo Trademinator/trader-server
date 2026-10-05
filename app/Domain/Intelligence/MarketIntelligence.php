@@ -39,7 +39,7 @@ final class MarketIntelligence
         $buildPerformance['started_monotonic_ns'] = hrtime(true);
         $buildPerformance['stages'] ??= [];
         $deadline = microtime(true) + config('intelligence.max_seconds');
-        $lock = Cache::lock('trademinator:intelligence-build:'.ModelStore::marketKey($exchange, $symbol, $period), 720);
+        $lock = Cache::lock('trademinator:intelligence-build:'.ModelStore::marketKey($exchange, $symbol, $period), 1020);
         if (! $lock->get()) {
             throw new RuntimeException('A knowledge build is already running for this market and period.');
         }
