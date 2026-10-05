@@ -36,7 +36,7 @@ final class LeadLagSeries
 
                 continue;
             }
-            if ($previous !== null && $time === $previous['time'] + $step) {
+            if ($previous !== null && $time === $previous['time'] + $step && $time + $step >= $fromMs) {
                 $result[$time + $step] = ['return' => log((float) $bar['close']) - log($previous['close']),
                     'volume' => (float) $bar['volume'], 'range' => ((float) $bar['high'] - (float) $bar['low']) / (float) $bar['close']];
             }

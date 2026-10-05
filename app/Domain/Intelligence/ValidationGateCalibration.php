@@ -43,11 +43,11 @@ final class ValidationGateCalibration
             throw new RuntimeException('Could not reproduce the model pre-holdout training row count.');
         }
 
-        $trainSize = (int) ($artifact['settings']['train_size'] ?? 0);
+        $trainSize = (int) ($artifact['settings']['min_train_size'] ?? $artifact['settings']['train_size'] ?? 0);
         if ($trainSize < 1) {
             throw new RuntimeException('Model has an invalid training-window size.');
         }
-        $evaluationTraining = array_slice($training, -$trainSize);
+        $evaluationTraining = isset($artifact['settings']['min_train_size']) ? $training : array_slice($training, -$trainSize);
         if ($evaluationTraining === []) {
             throw new RuntimeException('Model has no pre-holdout rows for baseline calibration.');
         }
@@ -199,6 +199,7 @@ final class ValidationGateCalibration
             }
         }
 
+        $windowFrom = $artifact['training_data']['window']['from_ms'] ?? null;
         $training = [];
         foreach ($sourceRows as $row) {
             $decision = $row['decision_at_ms'] ?? null;
@@ -207,6 +208,7 @@ final class ValidationGateCalibration
                 throw new RuntimeException('Source dataset row has invalid chronology.');
             }
             if ($decision >= $holdoutFrom || $available >= $holdoutFrom
+                || ($windowFrom !== null && $decision < $windowFrom)
                 || ($patternAfter !== null && $decision <= $patternAfter)
                 || ($leadLagAfter !== null && $decision <= $leadLagAfter)
                 || ($humanFrom !== null && $decision < $humanFrom)

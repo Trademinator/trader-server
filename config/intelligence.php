@@ -9,13 +9,13 @@ return [
     'lookback' => 20,
     'minimum_move_bps' => 10.0,
     'extreme_fraction' => 0.2,
-    'max_rows' => 3000,
     'max_seconds' => 480,
+    // Both the training history window and the published model's maximum age.
     'max_model_age_days' => (int) env('INTELLIGENCE_MAX_MODEL_AGE_DAYS', 14),
     'max_signal_age_periods' => (int) env('INTELLIGENCE_MAX_SIGNAL_AGE_PERIODS', 2),
     'max_signal_age_seconds' => max(60, (int) env('INTELLIGENCE_MAX_SIGNAL_AGE_SECONDS', 86400)),
     'knn' => [
-        'train_size' => 250,
+        'min_train_size' => 250, // Validation warmup only; all eligible history is retained.
         'test_size' => 100,
         'gap' => 0,
         'k_cap' => 65,

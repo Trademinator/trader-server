@@ -2,6 +2,7 @@
 
 namespace App\Domain\Intelligence;
 
+use App\Domain\Research\DatasetStore;
 use App\Models\HumanTrainingSnapshot;
 use App\Models\User;
 use Carbon\CarbonImmutable;
@@ -168,15 +169,15 @@ final class CandleGuidance
         $cutoff = CarbonImmutable::createFromTimestampMs($annotationCutoff)->format('Y-m-d H:i:s.v');
         $snapshots = HumanTrainingSnapshot::query()
             ->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
-            ->where('version', HumanTraining::VERSION)->whereIn('decision_at_ms', array_keys($byTime))
+            ->where('version', HumanTraining::VERSION)->whereBetween('decision_at_ms', [array_key_first($byTime), array_key_last($byTime)])
             ->whereHas('candleLabels', fn ($query) => $query->whereIn('trainer_id', $trainers))
             ->with(['candleLabels' => fn ($query) => $query->whereIn('trainer_id', $trainers)
                 ->whereIn('action', CandleTraining::ACTIONS)->where('updated_at', '<=', $cutoff)->orderBy('trainer_id')])
-            ->orderBy('decision_at_ms')->orderByDesc('snapshot_id')->lazy(25)->take((int) config('intelligence.max_rows'));
+            ->orderBy('decision_at_ms')->orderByDesc('snapshot_id')->lazy(25);
         $opinions = [];
         $rawRows = null;
         foreach ($snapshots->chunk(25) as $batch) {
-            $rawRows ??= app(\App\Domain\Research\DatasetStore::class)->load($manifest['dataset_id'], (int) config('intelligence.max_rows'))[1];
+            $rawRows ??= app(DatasetStore::class)->load($manifest['dataset_id'])[1];
             $compatible = app(HumanTraining::class)->compatibleSnapshotIds($manifest, $batch, $rawRows);
             foreach ($batch as $snapshot) {
                 if (! isset($compatible[$snapshot->snapshot_id])) {
@@ -240,7 +241,7 @@ final class CandleGuidance
     {
         return $candidate['selection']['k'] === null
             ? $tuner->evaluatePredictions($candidate['test'], array_fill(0, count($candidate['test']), WeightedKnn::abstain('no_eligible_k')), $settings)
-            : $tuner->evaluate(array_slice($candidate['training'], -$settings['train_size']), $candidate['test'], $candidate['selection']['k'], $settings, $deadline);
+            : $tuner->evaluate($candidate['training'], $candidate['test'], $candidate['selection']['k'], $settings, $deadline);
     }
 
     public function improves(?array $machine, ?array $combined): bool

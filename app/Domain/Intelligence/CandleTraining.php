@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Traits\CandleAutoDetection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
@@ -27,11 +28,18 @@ final class CandleTraining
 
     public const PAGE_SIZE = 50;
 
+    public const SUBMIT_BATCH_SIZE = 50;
+
     public function __construct(
         private DatasetStore $datasets,
         private HumanTraining $snapshots,
         private MarketCatalog $catalog,
     ) {}
+
+    public static function submissionLimit(): int
+    {
+        return max(1, (int) (config('human_training.candle_max_changes') ?? 3000));
+    }
 
     public function count(User $trainer): int
     {
@@ -182,7 +190,6 @@ final class CandleTraining
             ->where('trainer_id', $trainer->user_id)->delete();
     }
 
-
     /** Build retrospective BUY/HOLD/SELL suggestions without storing any label. */
     public function autoLabels(User $trainer, string $dataset, bool $includeExisting = false): array
     {
@@ -221,7 +228,7 @@ final class CandleTraining
             $labelled = HumanTrainingSnapshot::query()
                 ->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
                 ->where('version', HumanTraining::VERSION)
-                ->whereIn('decision_at_ms', array_column($rows, 'decision_at_ms'))
+                ->whereBetween('decision_at_ms', [$rows[0]['decision_at_ms'], $rows[array_key_last($rows)]['decision_at_ms']])
                 ->whereHas('candleLabels', fn ($query) => $query->where('trainer_id', $trainer->user_id))
                 ->orderBy('snapshot_id')->lazy(25);
             foreach ($labelled->chunk(25) as $batch) {
@@ -259,7 +266,7 @@ final class CandleTraining
     {
         Gate::forUser($trainer)->authorize('train-intelligence');
         [$manifest, $rows] = $this->load($dataset);
-        if (count($changes) > (int) config('intelligence.max_rows')) {
+        if (count($changes) > self::submissionLimit()) {
             throw ValidationException::withMessages(['changes' => 'Too many candle-label changes were submitted at once.']);
         }
 
@@ -322,7 +329,7 @@ final class CandleTraining
                 }
                 $snapshotId = $snapshotIds[$decision];
                 $upserts[] = [
-                    'candle_label_id' => (string) \Illuminate\Support\Str::uuid7(),
+                    'candle_label_id' => (string) Str::uuid7(),
                     'snapshot_id' => $snapshotId,
                     'trainer_id' => $trainer->user_id,
                     'action' => $change['action'],
@@ -409,12 +416,12 @@ final class CandleTraining
 
     private function load(string $dataset): array
     {
-        [$manifest, $rows] = $this->datasets->load($dataset, (int) config('intelligence.max_rows'));
+        [$manifest, $rows] = $this->datasets->load($dataset);
         if (($manifest['feature_version'] ?? null) !== FeatureEngine::VERSION
             || ($manifest['label_definition']['version'] ?? null) !== SemanticLabels::VERSION
             || ($manifest['as_of_ms'] ?? PHP_INT_MAX) > now()->getTimestampMs()
-            || $rows === [] || count($rows) > config('intelligence.max_rows')) {
-            throw ValidationException::withMessages(['dataset' => 'Choose a current, bounded semantic dataset built from closed candles.']);
+            || $rows === []) {
+            throw ValidationException::withMessages(['dataset' => 'Choose a current semantic dataset built from closed candles.']);
         }
 
         return [$manifest, $rows];

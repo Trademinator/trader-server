@@ -17,6 +17,8 @@ use InvalidArgumentException;
 
 final class IntelligenceReadiness
 {
+    private const HISTORY_SAMPLE_SIZE = 2000;
+
     public function __construct(private CandleTimeframe $timeframe) {}
 
     public function describe(string $exchange, string $symbol, ?string $period, ?MarketFeed $feed, ?array $report, array $signal): array
@@ -68,9 +70,12 @@ final class IntelligenceReadiness
             return $data;
         }
         $keys = $report['keys'] ?? FeatureSchema::keys(config('intelligence.schema'));
-        $history = $this->history($exchange, $symbol, $period, $keys, $horizon);
+        $latest = MarketFeature::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+            ->where('version', FeatureEngine::VERSION)->where('available_at_ms', '<=', now()->getTimestampMs())
+            ->orderByDesc('microtimestamp')->first(['feature_id', 'microtimestamp', 'available_at_ms', 'payload']);
+        $history = $this->history($exchange, $symbol, $period, $keys, $horizon, $latest);
         $data['history'] = $history;
-        $data['full_schema'] = $this->fullSchema($exchange, $symbol, $period);
+        $data['full_schema'] = $this->fullSchema($exchange, $symbol, $latest);
         if ($history['closed'] === 0) {
             $data['issues'][] = 'No current-version closed-candle features exist for this market and period. Run the M2 feature builder.';
         } elseif ($history['stale']) {
@@ -85,8 +90,12 @@ final class IntelligenceReadiness
         if ($history['gaps'] > 0) {
             $data['issues'][] = 'The feature window contains gaps. The training builder must verify continuous source candles before these rows can be used.';
         }
-        if ($minimum > config('intelligence.max_rows') - $horizon) {
-            $data['issues'][] = 'The configured intelligence.max_rows cap is below the minimum history requirement; collecting longer cannot fix this configuration.';
+        $earliestRequired = $history['as_of_ms'];
+        for ($i = 0; $i < $minimum + $horizon - 1; $i++) {
+            $earliestRequired = $this->timeframe->previous($earliestRequired, $period);
+        }
+        if ($earliestRequired < KnowledgeWindow::fromMs($history['as_of_ms'])) {
+            $data['issues'][] = 'The configured INTELLIGENCE_MAX_MODEL_AGE_DAYS window is too short for the minimum history requirement at this candle period; increase the number of days.';
         }
         $skipped = $data['source']['skipped'] ?? [];
         if (($skipped['gaps'] ?? 0) + ($skipped['missing_source'] ?? 0) > 0) {
@@ -99,6 +108,8 @@ final class IntelligenceReadiness
             $data['eta_note'] = 'ETA unavailable: retraining the pattern or lead/lag models changes how much earlier history must be excluded from KNN training.';
         } elseif ($remaining === 0) {
             $data['eta_note'] = 'Enough potential history is present to attempt training now. Source checks, pattern exclusions and validation still have to pass.';
+        } elseif ($history['sampled']) {
+            $data['eta_note'] = 'ETA unavailable: only recent feature rows were checked. Older rows in the age window may already satisfy the history requirement; the training build checks the full window.';
         } else {
             $eta = $history['latest_ms'];
             for ($i = 0; $i < $remaining; $i++) {
@@ -111,15 +122,13 @@ final class IntelligenceReadiness
         return $data;
     }
 
-    /** Bounded, read-only estimate. The dataset builder remains authoritative for source/gap/semantic checks. */
-    private function history(string $exchange, string $symbol, string $period, array $keys, int $horizon): array
+    /** Bounded display estimate only. Training still uses every eligible row in the age window. */
+    private function history(string $exchange, string $symbol, string $period, array $keys, int $horizon, ?MarketFeature $latest): array
     {
         $now = now()->getTimestampMs();
-        $features = MarketFeature::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
-            ->where('version', FeatureEngine::VERSION)->where('available_at_ms', '<=', $now)
-            ->orderByDesc('microtimestamp')->limit((int) config('intelligence.max_rows') + 1)->get();
-        $latest = $features->first();
-        $result = ['closed' => $features->count(), 'complete' => 0, 'potential' => 0, 'immature' => 0,
+        $asOfMs = $latest?->microtimestamp ?? $now;
+        $result = ['closed' => 0, 'complete' => 0, 'potential' => 0, 'immature' => 0, 'as_of_ms' => $asOfMs,
+            'checked' => 0, 'sampled' => false,
             'missing_keys' => [], 'invalid' => false, 'gaps' => 0, 'latest_ms' => $latest?->available_at_ms, 'stale' => true];
         if ($latest === null) {
             return $result;
@@ -129,23 +138,34 @@ final class IntelligenceReadiness
             $staleAt = $this->timeframe->next($staleAt, $period);
         }
         $result['stale'] = $now >= $staleAt;
-        $result['missing_keys'] = array_values(array_filter($keys, fn (string $key): bool => ($latest->payload['features'][$key] ?? null) === null));
+        $latestPayload = $latest->payload;
+        $result['missing_keys'] = array_values(array_filter($keys, fn (string $key): bool => ($latestPayload['features'][$key] ?? null) === null));
+        $query = MarketFeature::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
+            ->where('version', FeatureEngine::VERSION)->where('microtimestamp', '<=', $asOfMs)
+            ->whereBetween('available_at_ms', [KnowledgeWindow::fromMs($asOfMs), $now]);
+        $result['closed'] = (clone $query)->count();
+        $features = $query->orderByDesc('available_at_ms')->orderByDesc('microtimestamp')
+            ->limit(self::HISTORY_SAMPLE_SIZE)->get(['feature_id', 'microtimestamp', 'available_at_ms', 'payload'])
+            ->sortBy('microtimestamp');
+        $result['checked'] = $features->count();
+        $result['sampled'] = $result['checked'] < $result['closed'];
         $previous = null;
-        foreach ($features->reverse() as $feature) {
+        foreach ($features as $feature) {
             if ($previous !== null && $this->timeframe->next($previous, $period) !== $feature->microtimestamp) {
                 $result['gaps']++;
             }
             $previous = $feature->microtimestamp;
-            if (($feature->payload['version'] ?? null) !== FeatureEngine::VERSION
-                || ($feature->payload['microtimestamp'] ?? null) !== $feature->microtimestamp
-                || ($feature->payload['available_at_ms'] ?? null) !== $feature->available_at_ms
+            $payload = $feature->payload;
+            if (($payload['version'] ?? null) !== FeatureEngine::VERSION
+                || ($payload['microtimestamp'] ?? null) !== $feature->microtimestamp
+                || ($payload['available_at_ms'] ?? null) !== $feature->available_at_ms
                 || $feature->available_at_ms !== $this->timeframe->next($feature->microtimestamp, $period)) {
                 $result['invalid'] = true;
 
                 continue;
             }
             try {
-                if (FeatureSchema::vector($feature->payload, $keys) === null) {
+                if (FeatureSchema::vector($payload, $keys) === null) {
                     continue;
                 }
             } catch (InvalidArgumentException) {
@@ -169,18 +189,16 @@ final class IntelligenceReadiness
         return $result;
     }
 
-    private function fullSchema(string $exchange, string $symbol, string $period): array
+    private function fullSchema(string $exchange, string $symbol, ?MarketFeature $latest): array
     {
         $contextKeys = ContextFeatures::KEYS;
         $technicalKeys = FeatureSchema::keys('technical');
-        $latest = MarketFeature::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)
-            ->where('version', FeatureEngine::VERSION)->where('available_at_ms', '<=', now()->getTimestampMs())
-            ->orderByDesc('microtimestamp')->first();
         $mapping = CoinGeckoMarketMapping::query()
             ->whereHas('market', fn ($market) => $market->where('symbol', $symbol)
                 ->whereHas('exchange', fn ($query) => $query->where('class', $exchange)))
             ->first();
-        $features = $latest?->payload['features'] ?? [];
+        $payload = $latest?->payload;
+        $features = $payload['features'] ?? [];
         $contextMissing = array_values(array_filter($contextKeys, fn (string $key): bool => ($features[$key] ?? null) === null));
         $technicalMissing = array_values(array_filter($technicalKeys, fn (string $key): bool => ($features[$key] ?? null) === null));
         $technicalReady = false;
@@ -188,8 +206,8 @@ final class IntelligenceReadiness
         $invalid = false;
         if ($latest !== null) {
             try {
-                $technicalReady = FeatureSchema::vector($latest->payload, $technicalKeys) !== null;
-                $fullReady = FeatureSchema::vector($latest->payload, FeatureSchema::keys('full')) !== null;
+                $technicalReady = FeatureSchema::vector($payload, $technicalKeys) !== null;
+                $fullReady = FeatureSchema::vector($payload, FeatureSchema::keys('full')) !== null;
             } catch (InvalidArgumentException) {
                 $invalid = true;
             }

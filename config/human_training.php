@@ -17,6 +17,7 @@ return [
     'k' => 9,
     'min_precision_gain' => 0.02,
     'candle_min_samples' => 50,
+    'candle_max_changes' => 3000, // Per annotation request, independent of the model history window.
     // Compared against natural frequencies on chronological tuning data only.
     'candle_target_weights' => ['buy' => 0.25, 'hold' => 0.50, 'sell' => 0.25],
     'candle_k' => 9,

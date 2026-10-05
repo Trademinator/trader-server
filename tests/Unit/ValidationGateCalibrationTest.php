@@ -1,7 +1,6 @@
 <?php
 
 use App\Domain\Intelligence\ValidationGateCalibration;
-use RuntimeException;
 
 function calibrationRows(): array
 {
@@ -83,4 +82,16 @@ it('refuses calibration when the persisted training chronology cannot be reprodu
 
     expect(fn () => (new ValidationGateCalibration)->analyze($artifact, calibrationRows()))
         ->toThrow(RuntimeException::class, 'Could not reproduce');
+});
+
+it('uses all eligible pre-holdout rows for models with an age window', function () {
+    $artifact = calibrationArtifact();
+    unset($artifact['settings']['train_size']);
+    $artifact['settings']['min_train_size'] = 5;
+    $artifact['training_data'] = ['tuning_rows' => 8, 'window' => ['from_ms' => 300]];
+
+    $analysis = (new ValidationGateCalibration)->analyze($artifact, calibrationRows());
+
+    expect($analysis['evaluation_training_rows'])->toBe(8)
+        ->and($analysis['training_class_counts'])->toBe(['buy' => 3, 'hodl' => 3, 'sell' => 2]);
 });

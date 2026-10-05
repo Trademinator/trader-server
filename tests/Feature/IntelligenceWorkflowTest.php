@@ -22,7 +22,7 @@ use Tests\Support\IntelligenceFixtures;
 beforeEach(function () {
     $path = sys_get_temp_dir().'/trademinator-m4-'.Str::uuid7();
     config(['research.path' => $path.'/research', 'intelligence.path' => $path.'/models',
-        'intelligence.knn.train_size' => 36, 'intelligence.knn.test_size' => 12,
+        'intelligence.knn.min_train_size' => 36, 'intelligence.knn.test_size' => 12,
         'intelligence.knn.min_validation_rows' => 5, 'intelligence.knn.min_directional_predictions' => 1,
         'intelligence.patterns.enabled' => false, 'intelligence.horizon' => 2, 'intelligence.lookback' => 3]);
 });
@@ -66,7 +66,7 @@ it('publishes a validated model with separate chronological tuning and untouched
     expect($artifact['status'])->toBe('ready');
     expect($artifact['holdout']['semantic_precision'])->toBe(1);
     expect($artifact['holdout_training_labels_available_by_ms'])->toBeLessThan($artifact['holdout_from_ms']);
-    expect($artifact['knowledge_rows'])->toBe(36);
+    expect($artifact['knowledge_rows'])->toBe(240);
     $this->assertDatabaseCount('intelligence_models', 1);
     $this->assertDatabaseCount('intelligence_heads', 1);
     $this->artisan('trademinator:model-info', ['model' => $artifact['model_id']])->assertSuccessful();
@@ -245,12 +245,11 @@ it('describes supported direction and stronger evidence as Bull Bear or Super st
     expect($signal['regime'])->toBe($regime);
 })->with([[0.0, 'super_bull'], [1.0, 'super_bear'], [0.21, 'bull'], [0.79, 'bear']]);
 
-it('rejects an oversized training dataset before opening its rows', function () {
+it('rejects a missing training dataset file before publishing a model', function () {
     $manifest = IntelligenceFixtures::snapshot(40);
-    config(['intelligence.max_rows' => 20]);
     unlink(app(DatasetStore::class)->directory($manifest['dataset_id']).'/rows.jsonl');
 
     expect(fn () => app(IntelligenceTrainer::class)->train($manifest['dataset_id']))
-        ->toThrow(InvalidArgumentException::class, 'Dataset exceeds intelligence.max_rows');
+        ->toThrow(RuntimeException::class);
     $this->assertDatabaseCount('intelligence_models', 0);
 });

@@ -42,7 +42,8 @@ final class DatasetStore
     public function load(string $id, ?int $maxRows = null): array
     {
         $manifest = $this->manifest($id);
-        $limit = min((int) config('research.max_rows'), $maxRows ?? PHP_INT_MAX);
+        $semantic = ($manifest['label_definition']['version'] ?? null) === SemanticLabels::VERSION;
+        $limit = min($semantic ? PHP_INT_MAX : (int) config('research.max_rows'), $maxRows ?? PHP_INT_MAX);
         if ($manifest['rows'] > $limit) {
             throw new RuntimeException('Dataset exceeds research.max_rows; use a smaller date range.');
         }

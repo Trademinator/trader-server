@@ -48,7 +48,6 @@ class CandleTrainingController extends Controller
         return response()->json($page)->header('Cache-Control', 'no-store, private');
     }
 
-
     public function autoLabel(Request $request, string $dataset, CandleTraining $training): JsonResponse
     {
         $data = $request->validate(['include_existing' => ['sometimes', 'boolean']]);
@@ -64,7 +63,7 @@ class CandleTrainingController extends Controller
     {
         $data = $request->validate([
             'delete_all' => ['sometimes', 'boolean'],
-            'changes' => ['present', 'array', 'max:'.max(1, (int) config('intelligence.max_rows'))],
+            'changes' => ['present', 'array', 'max:'.CandleTraining::submissionLimit()],
             'changes.*.decision_at_ms' => ['required', 'integer', 'min:1'],
             'changes.*.action' => ['nullable', Rule::in(CandleTraining::ACTIONS)],
         ]);

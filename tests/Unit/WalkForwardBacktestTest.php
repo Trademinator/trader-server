@@ -36,6 +36,19 @@ it('supports an additional row gap and fixed rolling training windows', function
         ->and($folds[1]['train'])->toBe([4, 5, 6])->and($folds[0]['purged_or_gap_rows'])->toBe(4);
 });
 
+it('allows intelligence to evaluate all folds while preserving the research fold budget', function () {
+    $rows = researchRows(1007);
+    $count = 0;
+    foreach ((new WalkForward)->folds($rows, 3, 1, maxFolds: null) as $fold) {
+        $count++;
+    }
+
+    expect($count)->toBe(1002)
+        ->and($fold['test'])->toBe([1006])
+        ->and(fn () => iterator_to_array((new WalkForward)->folds($rows, 3, 1)))
+        ->toThrow(InvalidArgumentException::class, '1000 folds');
+});
+
 it('fits the majority baseline only to mature training labels', function () {
     $rows = researchRows();
     $original = (new BaselineBacktester)->run(researchManifest(), $rows, 'majority', 3, 4);

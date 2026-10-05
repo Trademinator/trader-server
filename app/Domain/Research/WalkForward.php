@@ -7,7 +7,7 @@ use InvalidArgumentException;
 final class WalkForward
 {
     /** Strictly prior, fully observed labels only. Test blocks never overlap. */
-    public function folds(array $rows, int $trainSize, int $testSize, int $gap = 0, bool $expanding = true): \Generator
+    public function folds(array $rows, int $trainSize, int $testSize, int $gap = 0, bool $expanding = true, ?int $maxFolds = 1000): \Generator
     {
         if ($trainSize < 1 || $testSize < 1 || $gap < 0) {
             throw new InvalidArgumentException('Train/test sizes must be positive; gap must be nonnegative.');
@@ -39,7 +39,7 @@ final class WalkForward
                 $train = array_slice($train, -$trainSize);
             }
             $test = range($start, min($start + $testSize, count($rows)) - 1);
-            if ($fold >= 1000) {
+            if ($maxFolds !== null && $fold >= $maxFolds) {
                 throw new InvalidArgumentException('Backtests are limited to 1000 folds; increase --test or reduce the dataset range.');
             }
             yield ['fold' => ++$fold, 'train' => $train, 'test' => $test,

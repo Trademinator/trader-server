@@ -91,7 +91,8 @@
                 <p>{{ $progress['action'] }}</p>
                 <div class="grid gap-4 lg:grid-cols-3 mt-4">
                     <div><h3>1. Usable history</h3>
-                        @if ($progress['history'])<x-intelligence-progress label="Potential training rows" :value="$progress['history']['potential']" :target="$progress['minimum']" native />
+                        @if ($progress['history'])<x-intelligence-progress :label="$progress['history']['sampled'] ? 'Potential training rows (checked sample)' : 'Potential training rows'" :value="$progress['history']['potential']" :target="$progress['minimum']" native />
+                            @if ($progress['history']['sampled'])<p class="guide-help">Checked the latest {{ number_format($progress['history']['checked']) }} of {{ number_format($progress['history']['closed']) }} rows in the age window. Older eligible rows are also available to training.</p>@endif
                         @else<p>Waiting for a selected candle period and complete features.</p>@endif
                         <p class="guide-help">Estimate before source checks and model-specific exclusions.</p></div>
                     <div><h3>2. Model build</h3><p>{{ $details['report'] ? 'A model build has completed.' : 'No model build recorded yet.' }}</p>

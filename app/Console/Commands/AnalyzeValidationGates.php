@@ -57,10 +57,7 @@ final class AnalyzeValidationGates extends Command
         foreach ($query->get() as $record) {
             try {
                 $artifact = $models->load((string) $record->model_id);
-                [, $rows] = $datasets->load(
-                    (string) $artifact['dataset_id'],
-                    (int) config('intelligence.max_rows')
-                );
+                [, $rows] = $datasets->load((string) $artifact['dataset_id']);
                 $analyses[] = $calibration->analyze($artifact, $rows);
             } catch (Throwable $error) {
                 $skipped[] = [

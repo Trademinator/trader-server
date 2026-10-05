@@ -41,7 +41,7 @@ final class LeadLagIntelligence
         }
         // All auxiliary model selection/evaluation ends before downstream KNN decisions.
         $cutoff = $rows[(int) floor(count($rows) * 0.4)]['decision_at_ms'] - 1;
-        $from = max(0, $cutoff - $settings['max_bars'] * $step);
+        $from = max(KnowledgeWindow::fromMs($manifest['as_of_ms']), $cutoff - $settings['max_bars'] * $step);
         $follower = $this->series->load($manifest['exchange'], $manifest['symbol'], $manifest['period'], $from, $cutoff);
         $peers = MarketFeed::query()->with('market.exchange')->whereNotNull('selected_period')
             ->whereHas('market', fn ($q) => $q->where('symbol', $manifest['symbol'])

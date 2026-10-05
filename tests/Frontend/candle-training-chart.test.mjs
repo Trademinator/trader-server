@@ -242,12 +242,115 @@ test('menu labels remain browser-only until Submit and cannot move to another ca
     assert.equal(requests.length, 0, 'a candle click must never write training data');
     assert.ok(markers.data.some(marker => marker.id === 'human-3' && marker.text === 'HOLD'));
     assert.equal(nodes.get('[data-submit-labels]').hidden, false);
-    assert.equal(nodes.get('[data-stat-count="hold"]').textContent, '1');
+    assert.equal(nodes.get('[data-stat-count="hold"]').textContent, '0', 'milestones count only submitted labels');
 
     await nodes.get('[data-submit-labels]').trigger('click');
     assert.equal(requests.length, 1);
     assert.equal(nodes.get('[data-submit-labels]').hidden, true);
+    assert.equal(nodes.get('[data-stat-count="hold"]').textContent, '1');
     assert.match(nodes.get('[data-status]').textContent, /submitted/i);
+});
+
+test('auto-label and repeated HOLD clicks preserve saved totals when Submit fails', async t => {
+    const { nodes, requests } = await mountedChart(t, async url => String(url).endsWith('/auto-label')
+        ? { ok: true, json: async () => ({ labels: [
+            { time: 1, decision_at_ms: 2000, action: 'buy' },
+            { time: 3, decision_at_ms: 4000, action: 'hold' },
+            { time: 4, decision_at_ms: 5000, action: 'sell' },
+        ] }) }
+        : { ok: false, status: 422, json: async () => ({ message: 'Please retry.' }) },
+    { stats: { counts: { buy: 1, hold: 1, sell: 1 } } });
+
+    await nodes.get('[data-auto-label]').trigger('click');
+    for (let i = 0; i < 2; i++) {
+        nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 30, clientY: 20, preventDefault() {} });
+        nodes.get('[data-menu-action="hold"]').trigger('click');
+    }
+    assert.equal(nodes.get('[data-stat-total]').textContent, '3');
+    for (const action of ['buy', 'hold', 'sell']) assert.equal(nodes.get(`[data-stat-count="${action}"]`).textContent, '1');
+    assert.match(nodes.get('[data-pending-status]').textContent, /3 staged candle changes/);
+
+    await nodes.get('[data-submit-labels]').trigger('click');
+    assert.equal(requests.length, 2);
+    assert.equal(nodes.get('[data-stat-total]').textContent, '3');
+    assert.match(nodes.get('[data-pending-status]').textContent, /3 staged candle changes/);
+    assert.equal(nodes.get('[data-submit-labels]').hidden, false);
+});
+
+test('batched Submit retries only unsaved changes and never repeats a committed delete-all', async t => {
+    let submissions = 0;
+    const batches = [];
+    const { root, nodes, requests } = await mountedChart(t, async (url, options) => {
+        if (String(url).endsWith('/auto-label')) return { ok: true, json: async () => ({ labels: [
+            { time: 1, decision_at_ms: 2000, action: 'buy' },
+            { time: 3, decision_at_ms: 4000, action: 'hold' },
+            { time: 4, decision_at_ms: 5000, action: 'sell' },
+        ] }) };
+        batches.push(JSON.parse(options.body));
+        if (++submissions === 2) return { ok: false, status: 500, json: async () => ({ message: 'Temporary failure.' }) };
+        return { ok: true, json: async () => ({ stats: { counts: { buy: 1, hold: 1, sell: submissions === 1 ? 0 : 1 } } }) };
+    }, { stats: { counts: { buy: 10, hold: 20, sell: 10 } } });
+    root.dataset.submitBatchSize = '2';
+    globalThis.window.confirm = () => true;
+
+    nodes.get('[data-delete-all-training]').trigger('click');
+    assert.equal(nodes.get('[data-stat-total]').textContent, '40', 'staging deletion does not alter saved milestones');
+    await nodes.get('[data-auto-label]').trigger('click');
+    await nodes.get('[data-submit-labels]').trigger('click');
+
+    assert.deepEqual(batches, [
+        { delete_all: true, changes: [{ decision_at_ms: 2000, action: 'buy' }, { decision_at_ms: 4000, action: 'hold' }] },
+        { delete_all: false, changes: [{ decision_at_ms: 5000, action: 'sell' }] },
+    ]);
+    assert.equal(nodes.get('[data-stat-total]').textContent, '2');
+    assert.match(nodes.get('[data-pending-status]').textContent, /1 staged candle change/);
+    assert.match(nodes.get('[data-status]').textContent, /2 of 3/);
+    await nodes.get('[data-submit-labels]').trigger('click');
+    assert.deepEqual(batches[2], { delete_all: false, changes: [{ decision_at_ms: 5000, action: 'sell' }] });
+    assert.equal(nodes.get('[data-stat-total]').textContent, '3');
+    assert.equal(nodes.get('[data-submit-labels]').hidden, true);
+    assert.equal(requests.length, 4);
+
+    nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 30, clientY: 20, preventDefault() {} });
+    nodes.get('[data-menu-action="hold"]').trigger('click');
+    assert.equal(nodes.get('[data-submit-labels]').hidden, true, 'saved batch labels become the editing baseline');
+});
+
+test('Submit respects Retry-After and resumes the same pending batch', async t => {
+    let attempts = 0;
+    const { nodes, requests } = await mountedChart(t, async () => ++attempts === 1
+        ? { ok: false, status: 429, headers: { get: name => name === 'Retry-After' ? '1' : null } }
+        : { ok: true, json: async () => ({ stats: { counts: { buy: 1, hold: 1, sell: 0 } } }) });
+    nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 30, clientY: 20, preventDefault() {} });
+    nodes.get('[data-menu-action="hold"]').trigger('click');
+
+    const submission = nodes.get('[data-submit-labels]').trigger('click');
+    await flushRequests();
+    assert.equal(requests.length, 1);
+    assert.equal(nodes.get('[data-submit-labels]').disabled, true);
+    assert.equal(nodes.get('[data-stat-total]').textContent, '1');
+    t.mock.timers.tick(1000);
+    await submission;
+
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].options.body, requests[1].options.body);
+    assert.equal(nodes.get('[data-stat-total]').textContent, '2');
+    assert.equal(nodes.get('[data-submit-labels]').hidden, true);
+});
+
+test('Submit commits a staged delete-all even when there are no replacement labels', async t => {
+    const { nodes, requests } = await mountedChart(t, async (_url, options) => {
+        assert.deepEqual(JSON.parse(options.body), { delete_all: true, changes: [] });
+        return { ok: true, json: async () => ({ stats: { counts: { buy: 0, hold: 0, sell: 0 } } }) };
+    });
+    globalThis.window.confirm = () => true;
+
+    nodes.get('[data-delete-all-training]').trigger('click');
+    await nodes.get('[data-submit-labels]').trigger('click');
+
+    assert.equal(requests.length, 1);
+    assert.equal(nodes.get('[data-stat-total]').textContent, '0');
+    assert.equal(nodes.get('[data-submit-labels]').hidden, true);
 });
 
 test('context-only candles still show an explanatory disabled menu', async t => {

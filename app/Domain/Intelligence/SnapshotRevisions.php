@@ -14,7 +14,7 @@ final class SnapshotRevisions
     /** @return array<int, HumanTrainingSnapshot|null> */
     public function resolve(array $manifest, array $payloads): array
     {
-        if (count($payloads) > (int) config('intelligence.max_rows')) {
+        if (count($payloads) > $manifest['rows']) {
             throw new InvalidArgumentException('Snapshot revision batch exceeds the dataset bound.');
         }
         $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);

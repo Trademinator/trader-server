@@ -101,7 +101,7 @@ final class DashboardData
         return $labels->map(fn ($label): array => [
             'time' => intdiv($this->timeframe->previous((int) $label->decision_at_ms, $period), 1000),
             'action' => $label->action,
-        ])->filter(fn (array $label): bool => $label['time'] * 1000 >= $fromMs && $label['time'] * 1000 <= $toMs)
+        ])->filter(fn (array $label): bool => $fromMs <= $label['time'] * 1000 && $toMs >= $label['time'] * 1000)
             ->unique('time')->sortBy('time')->values()->all();
     }
 
@@ -144,7 +144,7 @@ final class DashboardData
             $fresh = $this->fresh($market, $signal, $report);
             $current = $fresh ? $signal->payload : WeightedKnn::abstain($market->feed?->selected_period === null ? 'period_pending'
                 : ($report === null ? 'no_model' : ($this->ready($report) ? 'awaiting_recording' : ($report['reason'] ?? 'model_unavailable'))));
-            $cacheKey = 'trademinator:dashboard-readiness:'.hash('sha256', json_encode([
+            $cacheKey = 'trademinator:dashboard-readiness:v2:'.hash('sha256', json_encode([
                 $this->key($market), $report['model_id'] ?? null, $current['reason'], $market->feed?->updated_at?->getTimestamp(),
             ], JSON_THROW_ON_ERROR));
             $progress = Cache::remember($cacheKey, 60, fn () => $this->readiness->describe($market->exchange->class,

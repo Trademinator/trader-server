@@ -16,7 +16,7 @@ final class HistoryDepth
 
         $timeframe = new CandleTimeframe;
         $candles = max(1, min(10_000,
-            (int) config('intelligence.knn.train_size')
+            (int) config('intelligence.knn.min_train_size')
             + (int) config('intelligence.knn.test_size')
             + (int) config('intelligence.lookback')
             + (int) config('intelligence.horizon')));

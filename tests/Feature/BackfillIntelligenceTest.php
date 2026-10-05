@@ -6,6 +6,8 @@ use App\Domain\Intelligence\MarketIntelligence;
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\MarketData\ExchangeMetadata;
 use App\Domain\MarketData\MarketHistoryBackfill;
+use App\Domain\Research\DatasetSnapshotBuilder;
+use App\Domain\Research\SemanticLabels;
 use App\Jobs\BackfillMarketHistory;
 use App\Jobs\RebuildBackfilledIntelligence;
 use App\Jobs\TrainMarketIntelligence;
@@ -77,7 +79,7 @@ beforeEach(function () {
     $path = sys_get_temp_dir().'/trademinator-backfill-'.Str::uuid7();
     config(['research.path' => $path.'/research', 'intelligence.path' => $path.'/models',
         'queue.default' => 'database', 'history_backfill.enabled' => true, 'intelligence.enabled' => true,
-        'intelligence.schema' => 'core', 'intelligence.knn.train_size' => 36, 'intelligence.knn.test_size' => 12,
+        'intelligence.schema' => 'core', 'intelligence.knn.min_train_size' => 36, 'intelligence.knn.test_size' => 12,
         'intelligence.knn.min_validation_rows' => 5, 'intelligence.knn.min_directional_predictions' => 1,
         'intelligence.patterns.enabled' => false, 'intelligence.horizon' => 2, 'intelligence.lookback' => 3]);
 });
@@ -282,8 +284,8 @@ it('rejects a wrong or expired borrowed owner without unlocking another builder'
     }
 
     try {
-        expect(fn () => app(\App\Domain\Research\DatasetSnapshotBuilder::class)->build(
-            'kraken', 'BTC/USD', '1h', new \App\Domain\Research\SemanticLabels(2, 3), featureLockOwner: $token,
+        expect(fn () => app(DatasetSnapshotBuilder::class)->build(
+            'kraken', 'BTC/USD', '1h', new SemanticLabels(2, 3), featureLockOwner: $token,
         ))->toThrow(RuntimeException::class, 'Feature lock ownership was lost');
         expect($holder->isOwnedByCurrentProcess())->toBeTrue();
         $this->assertDatabaseCount('research_datasets', 0);
@@ -297,8 +299,8 @@ it('does not accept a borrowed feature lock belonging to another market', functi
     $lock = Cache::lock('trademinator:features:'.ModelStore::marketKey('kraken', 'BTC/USD', '1h'), 720);
     expect($lock->get())->toBeTrue();
     try {
-        expect(fn () => app(\App\Domain\Research\DatasetSnapshotBuilder::class)->build(
-            'kraken', 'ETH/USD', '1h', new \App\Domain\Research\SemanticLabels(2, 3), featureLockOwner: $lock->owner(),
+        expect(fn () => app(DatasetSnapshotBuilder::class)->build(
+            'kraken', 'ETH/USD', '1h', new SemanticLabels(2, 3), featureLockOwner: $lock->owner(),
         ))->toThrow(RuntimeException::class, 'Feature lock ownership was lost');
         expect($lock->isOwnedByCurrentProcess())->toBeTrue();
         $this->assertDatabaseCount('research_datasets', 0);
@@ -312,8 +314,8 @@ it('leaves a borrowed lock with its caller when dataset creation fails', functio
     $lock = Cache::lock('trademinator:features:'.ModelStore::marketKey('kraken', 'BTC/USD', '1h'), 720);
     expect($lock->get())->toBeTrue();
     try {
-        expect(fn () => app(\App\Domain\Research\DatasetSnapshotBuilder::class)->build(
-            'kraken', 'BTC/USD', '1h', new \App\Domain\Research\SemanticLabels(2, 3), featureLockOwner: $lock->owner(),
+        expect(fn () => app(DatasetSnapshotBuilder::class)->build(
+            'kraken', 'BTC/USD', '1h', new SemanticLabels(2, 3), featureLockOwner: $lock->owner(),
         ))->toThrow(RuntimeException::class, 'No M2 features in this range');
         expect($lock->isOwnedByCurrentProcess())->toBeTrue();
         expect(glob(config('research.path').'/*.tmp') ?: [])->toBe([]);
@@ -325,8 +327,8 @@ it('leaves a borrowed lock with its caller when dataset creation fails', functio
 
 it('still releases a dataset-owned lock when a normal dataset build fails', function () {
     $this->travelTo('2024-01-10 00:00:00 UTC');
-    expect(fn () => app(\App\Domain\Research\DatasetSnapshotBuilder::class)->build(
-        'kraken', 'BTC/USD', '1h', new \App\Domain\Research\SemanticLabels(2, 3),
+    expect(fn () => app(DatasetSnapshotBuilder::class)->build(
+        'kraken', 'BTC/USD', '1h', new SemanticLabels(2, 3),
     ))->toThrow(RuntimeException::class, 'No M2 features in this range');
     $lock = Cache::lock('trademinator:features:'.ModelStore::marketKey('kraken', 'BTC/USD', '1h'), 720);
     try {

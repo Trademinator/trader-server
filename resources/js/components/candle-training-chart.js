@@ -131,7 +131,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     let switchDataset;
     let chart, price, volume, measureLine, observer, markerPlugin, historyTimer, historyRequest, unsubscribeTime;
     let inspectedCandle;
-    let loadingHistory = false, historyFailed = false, disposed = false, submittingLabels = false;
+    let loadingHistory = false, historyFailed = false, disposed = false, submittingLabels = false, autoLabelling = false;
     let userInteracted = false;
     let lastVisibleRange = null, retryDirection = 'older';
     const data = candleTrainingChartData(JSON.parse(root.dataset.snapshot));
@@ -222,29 +222,21 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         const totalNode = root.querySelector('[data-stat-total]');
         if (totalNode) totalNode.textContent = String(total);
     };
-    const adjustStats = (oldAction, newAction) => {
-        if (!data.stats || oldAction === newAction) return;
-        if (oldAction && ACTIONS.includes(oldAction)) data.stats.counts[oldAction] = Math.max(0, Number(data.stats.counts[oldAction] ?? 0) - 1);
-        if (newAction && ACTIONS.includes(newAction)) data.stats.counts[newAction] = Number(data.stats.counts[newAction] ?? 0) + 1;
-        renderStats();
-    };
     const isDirty = () => deleteAllPending || stagedChanges.size > 0;
     const renderPending = () => {
         const dirty = isDirty();
         if (submitLabels) submitLabels.hidden = !dirty;
         if (pendingStatus) pendingStatus.textContent = dirty
-            ? `${stagedChanges.size} staged candle change${stagedChanges.size === 1 ? '' : 's'}${deleteAllPending ? ' · all previously saved labels will be deleted' : ''}. Nothing is stored until Submit.`
+            ? `${stagedChanges.size} staged candle change${stagedChanges.size === 1 ? '' : 's'}${deleteAllPending ? ' · all previously saved labels will be deleted' : ''}. Staged changes are not saved until Submit.`
             : 'No pending changes. Manual labels, deletions and auto-label suggestions stay only in this browser until Submit.';
     };
     const stageLabel = (time, decision, action) => {
         const labelTime = Number(time);
-        const oldAction = labels.get(labelTime) ?? null;
         const baseline = deleteAllPending ? null : (baselineLabels.get(labelTime) ?? null);
         if (action === null) labels.delete(labelTime);
         else labels.set(labelTime, action);
         if (action === baseline) stagedChanges.delete(Number(decision));
         else stagedChanges.set(Number(decision), { decision_at_ms: Number(decision), action });
-        adjustStats(oldAction, action);
         renderMarkers();
         renderPending();
     };
@@ -453,8 +445,11 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         closeMenu();
     };
     const requestAutoLabels = async () => {
-        if (submittingLabels || !autoLabel) return;
+        if (submittingLabels || autoLabelling || disposed || !autoLabel) return;
+        autoLabelling = true;
         autoLabel.disabled = true;
+        if (submitLabels) submitLabels.disabled = true;
+        if (deleteAllTraining) deleteAllTraining.disabled = true;
         status.textContent = 'Building auto-label suggestions for this frozen dataset…';
         try {
             const response = await fetch(root.dataset.autoUrl, {
@@ -464,14 +459,14 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             });
             const payload = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(payload.message ?? Object.values(payload.errors ?? {}).flat()[0] ?? `Request failed (${response.status}).`);
+            if (disposed) return;
             let staged = 0;
             for (const label of payload.labels ?? []) {
                 const time = Number(label.time), decision = Number(label.decision_at_ms);
                 if (!ACTIONS.includes(label.action) || !Number.isSafeInteger(decision) || stagedChanges.has(decision)) continue;
-                const oldAction = labels.get(time) ?? null;
+                data.decisions[String(time)] = decision;
                 labels.set(time, label.action);
                 stagedChanges.set(decision, { decision_at_ms: decision, action: label.action });
-                adjustStats(oldAction, label.action);
                 staged++;
             }
             renderMarkers();
@@ -480,47 +475,74 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         } catch (error) {
             status.textContent = error instanceof Error ? error.message : 'Auto-label suggestions could not be generated.';
         } finally {
+            autoLabelling = false;
             autoLabel.disabled = false;
+            if (submitLabels) submitLabels.disabled = false;
+            if (deleteAllTraining) deleteAllTraining.disabled = false;
         }
     };
     const stageDeleteAll = () => {
-        if (submittingLabels || deleteAllPending) return;
+        if (submittingLabels || autoLabelling || deleteAllPending) return;
         if (typeof window.confirm === 'function'
             && !window.confirm('Stage deletion of all your Candle Training labels for this market and period? The database will not change until Submit.')) return;
         deleteAllPending = true;
         labels.clear();
         stagedChanges.clear();
-        if (data.stats?.counts) for (const action of ACTIONS) data.stats.counts[action] = 0;
-        renderStats();
         renderMarkers();
         renderPending();
         status.textContent = 'Deletion of all saved labels is staged only. Press Submit to commit it, or reload the page to discard it.';
     };
     const submitStagedLabels = async () => {
-        if (submittingLabels || !isDirty()) return;
+        if (submittingLabels || autoLabelling || disposed || !isDirty()) return;
         submittingLabels = true;
         if (submitLabels) submitLabels.disabled = true;
         if (autoLabel) autoLabel.disabled = true;
         if (deleteAllTraining) deleteAllTraining.disabled = true;
-        status.textContent = 'Submitting reviewed Candle Training labels…';
+        const changes = [...stagedChanges.values()];
+        const batchSize = Math.max(1, Math.min(50, Math.floor(Number(root.dataset.submitBatchSize)) || 50));
+        const times = new Map(Object.entries(data.decisions).map(([time, decision]) => [Number(decision), Number(time)]));
+        let submitted = 0, rateLimitRetries = 0;
+        let message = 'Candle Training labels submitted.';
         try {
-            const response = await fetch(root.dataset.submitUrl, {
-                method: 'POST', credentials: 'same-origin',
-                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': root.dataset.csrf },
-                body: JSON.stringify({ delete_all: deleteAllPending, changes: [...stagedChanges.values()] }),
-            });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.message ?? Object.values(payload.errors ?? {}).flat()[0] ?? `Request failed (${response.status}).`);
-            deleteAllPending = false;
-            stagedChanges.clear();
-            baselineLabels.clear();
-            for (const [time, action] of labels.entries()) baselineLabels.set(time, action);
-            if (payload.stats) data.stats = payload.stats;
-            renderStats();
-            renderPending();
-            status.textContent = payload.message ?? 'Candle Training labels submitted.';
+            do {
+                if (disposed) return;
+                const batch = changes.slice(submitted, submitted + batchSize);
+                status.textContent = `Submitting reviewed labels… ${submitted} of ${changes.length} saved.`;
+                const response = await fetch(root.dataset.submitUrl, {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': root.dataset.csrf },
+                    body: JSON.stringify({ delete_all: deleteAllPending, changes: batch }),
+                });
+                if (response.status === 429 && rateLimitRetries++ < 3) {
+                    const seconds = Math.max(1, Math.min(60, Number(response.headers?.get('Retry-After')) || 5));
+                    status.textContent = `Saved ${submitted} of ${changes.length} changes. Continuing in ${seconds} seconds…`;
+                    await new Promise(resolve => window.setTimeout(resolve, seconds * 1000));
+                    continue;
+                }
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.message ?? Object.values(payload.errors ?? {}).flat()[0] ?? `Request failed (${response.status}).`);
+                if (disposed) return;
+                if (deleteAllPending) baselineLabels.clear();
+                deleteAllPending = false;
+                for (const change of batch) {
+                    const time = times.get(change.decision_at_ms);
+                    if (time !== undefined) {
+                        if (change.action === null) baselineLabels.delete(time);
+                        else baselineLabels.set(time, change.action);
+                    }
+                    stagedChanges.delete(change.decision_at_ms);
+                }
+                submitted += batch.length;
+                rateLimitRetries = 0;
+                if (payload.stats) data.stats = payload.stats;
+                message = payload.message ?? message;
+                renderStats();
+                renderPending();
+            } while (submitted < changes.length || deleteAllPending);
+            status.textContent = message;
         } catch (error) {
-            status.textContent = error instanceof Error ? error.message : 'The staged Candle Training labels could not be submitted.';
+            const reason = error instanceof Error ? error.message : 'The staged Candle Training labels could not be submitted.';
+            status.textContent = `Saved ${submitted} of ${changes.length} changes. ${reason} Press Submit to retry the remaining changes.`;
         } finally {
             submittingLabels = false;
             if (submitLabels) submitLabels.disabled = false;

@@ -12,20 +12,20 @@ final class KnnTuner
     public function tune(array $rows, array $settings, float $deadline): array
     {
         $rows = $this->knn->prepareRows($rows);
-        $trainSize = $settings['train_size'];
+        $trainSize = $settings['min_train_size'];
         $maximum = min($settings['k_cap'], (int) floor(sqrt($trainSize)));
         $candidates = array_values(array_unique(array_filter([1, 3, 5, 9, 17, 33, 65, $maximum],
             fn (int $k): bool => $k > 0 && $k <= $maximum)));
         sort($candidates);
         $cases = $folds = [];
-        foreach ((new WalkForward)->folds($rows, $trainSize, $settings['test_size'], $settings['gap'], false) as $fold) {
+        foreach ((new WalkForward)->folds($rows, $trainSize, $settings['test_size'], $settings['gap'], true, null) as $fold) {
             $training = array_map(fn (int $i): array => $rows[$i], $fold['train']);
             $folds[] = ['fold' => $fold['fold'], 'train_rows' => count($training),
                 'labels_available_by_ms' => max(array_column($training, 'label_available_at_ms')),
                 'test_from_ms' => $rows[$fold['test'][0]]['decision_at_ms']];
             foreach ($fold['test'] as $index) {
                 if (microtime(true) > $deadline) {
-                    throw new RuntimeException('K tuning time budget exceeded; reduce intelligence.max_rows or train_size.');
+                    throw new RuntimeException('K tuning time budget exceeded; reduce INTELLIGENCE_MAX_MODEL_AGE_DAYS or increase the build time budget.');
                 }
                 $row = $rows[$index];
                 $cases[] = ['row' => $row, 'fold' => $fold['fold'],

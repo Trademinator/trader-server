@@ -39,7 +39,7 @@ final class OptionalGuidance
             if (! in_array($error->getMessage(), [
                 'Human guidance training time budget exceeded.',
                 'Candle guidance training time budget exceeded.',
-                'K tuning time budget exceeded; reduce intelligence.max_rows or train_size.',
+                'K tuning time budget exceeded; reduce INTELLIGENCE_MAX_MODEL_AGE_DAYS or increase the build time budget.',
                 'KNN evaluation time budget exceeded.',
             ], true)) {
                 throw $error;

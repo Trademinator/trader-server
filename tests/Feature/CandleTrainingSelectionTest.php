@@ -7,11 +7,11 @@ use App\Domain\Intelligence\TrainingCandidateSelector;
 use App\Domain\Research\DatasetStore;
 use App\Models\Exchange;
 use App\Models\HumanCandleLabel;
-use App\Models\HumanTrainingReview;
 use App\Models\HumanTrainingSnapshot;
 use App\Models\Market;
 use App\Models\MarketSignal;
 use App\Models\User;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
@@ -30,7 +30,6 @@ beforeEach(function () {
         'human_training.trainer_uuids' => [],
         'operations.owner_uuid' => null,
         'operations.owner_uuids' => [],
-        'intelligence.max_rows' => 3000,
     ]);
     Http::preventStrayRequests();
 });
@@ -117,7 +116,7 @@ it('starts Candle Training without scanning labelled chart payloads or building 
         && str_contains($sql, 'human_training_snapshots'));
     expect($snapshotSelects->count())->toBeLessThanOrEqual(6);
     expect($queries->contains(fn (string $sql): bool => str_contains(strtolower($sql), 'row_number()')))->toBeFalse();
-    expect($queries->contains(fn (string $sql): bool => str_contains(strtolower($sql), 'offset')))->toBeFalse();
+    expect($snapshotSelects->contains(fn (string $sql): bool => str_contains(strtolower($sql), 'offset')))->toBeFalse();
     $this->assertDatabaseCount('human_candle_labels', 599);
     Http::assertNothingSent();
 });
@@ -134,6 +133,20 @@ it('uses the same bounded selection for Trend Training without rescanning all re
     expect($review->submitted_at)->toBeNull();
 });
 
+it('starts both human training modes with more than 3000 eligible examples', function () {
+    $trainer = candleSelectionOwner();
+    [$manifest, $rows] = candleSelectionDataset(3105);
+
+    $this->actingAs($trainer)->post(route('human-training.candles.start'), ['dataset' => $manifest['dataset_id']])
+        ->assertRedirect();
+    $review = app(HumanTraining::class)->assign($trainer, $manifest['dataset_id']);
+
+    expect($review->snapshot->decision_at_ms)->toBeIn(array_column($rows, 'decision_at_ms'));
+    expect($review->submitted_at)->toBeNull();
+    $this->assertDatabaseCount('human_training_reviews', 1);
+    $this->assertDatabaseCount('human_candle_labels', 0);
+});
+
 it('keeps all-labelled Candle Training usable with a bounded verified fallback', function () {
     $trainer = candleSelectionOwner();
     [$manifest, $rows] = candleSelectionDataset(60);
@@ -143,7 +156,9 @@ it('keeps all-labelled Candle Training usable with a bounded verified fallback',
             'trainer_id' => $trainer->user_id, 'action' => 'hold']);
     }
     $hydrated = 0;
-    HumanTrainingSnapshot::retrieved(function () use (&$hydrated): void { $hydrated++; });
+    HumanTrainingSnapshot::retrieved(function () use (&$hydrated): void {
+        $hydrated++;
+    });
 
     $decision = app(CandleTraining::class)->start($trainer, $manifest['dataset_id']);
 
@@ -164,7 +179,7 @@ it('treats a repaired chart as unlabelled without transferring the old opinion',
     DB::table('tickers')->where('exchange', 'kraken')->where('symbol', 'BTC/USD')->where('period', '1m')
         ->where('microtimestamp', IntelligenceFixtures::START - 60000)
         ->update(['payload' => json_encode(['open' => '10', 'high' => '11', 'low' => '9', 'close' => '10.5', 'volume' => '1'])]);
-    \Illuminate\Support\Facades\Cache::flush();
+    Cache::flush();
 
     $candidate = $service->candidateSnapshot($trainer, $manifest, $rows, 'candleLabels');
 
@@ -193,7 +208,7 @@ it('still rejects missing source history rather than choosing a stored chart bli
     HumanCandleLabel::factory()->create(['snapshot_id' => $snapshot->snapshot_id, 'trainer_id' => $trainer->user_id, 'action' => 'hold']);
     // Bypass read caches only after changing canonical storage, just as a repair must.
     DB::table('tickers')->delete();
-    \Illuminate\Support\Facades\Cache::flush();
+    Cache::flush();
 
     expect(fn () => app(CandleTraining::class)->start($trainer, $manifest['dataset_id']))
         ->toThrow(ValidationException::class);
@@ -236,7 +251,9 @@ it('limits historical signal hydration and preserves both causal cutoffs and UUI
         DB::table('market_signals')->insert($batch);
     }
     $hydrated = 0;
-    MarketSignal::retrieved(function () use (&$hydrated): void { $hydrated++; });
+    MarketSignal::retrieved(function () use (&$hydrated): void {
+        $hydrated++;
+    });
     DB::enableQueryLog();
 
     $method = new ReflectionMethod(HumanTraining::class, 'batchModelObservations');

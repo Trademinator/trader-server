@@ -3,6 +3,7 @@
 namespace App\Domain\Research;
 
 use App\Domain\Features\FeatureEngine;
+use App\Domain\Intelligence\KnowledgeWindow;
 use App\Domain\Intelligence\PatternCatalog;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\Operations\ActionLog;
@@ -33,6 +34,9 @@ final class DatasetSnapshotBuilder
         $asOfMs = min($asOfMs ?? PHP_INT_MAX, now()->getTimestampMs());
         $toMs = min($toMs ?? $asOfMs, $asOfMs);
         $fromMs ??= 0;
+        if ($definition instanceof SemanticLabels) {
+            $fromMs = max($fromMs, KnowledgeWindow::fromMs($asOfMs));
+        }
         if ($exchange === '' || $symbol === '' || $fromMs < 0 || $fromMs > $toMs) {
             throw new InvalidArgumentException('Invalid market or decision-time range.');
         }
@@ -208,7 +212,7 @@ final class DatasetSnapshotBuilder
                     $count++;
                     $firstDecision ??= $decision;
                     $lastDecision = $decision;
-                    if ($count > config('research.max_rows')) {
+                    if (! ($definition instanceof SemanticLabels) && $count > config('research.max_rows')) {
                         throw new RuntimeException('Dataset exceeds research.max_rows; choose a smaller --from/--to range.');
                     }
                 }

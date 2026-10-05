@@ -66,9 +66,9 @@ Candle workers install only the requested instrument into CCXT's market indexes,
 | --- | --- |
 | `default` | Live ingestion uses a 90-period window; period selection uses the recent 250-candle sample plus boundary allowance. Explicit queued synchronization processes one configured page per job and preserves its queue/connection on continuation. Feature replay streams 500 source candles at a time and writes batches of 100, retaining only indicator state and a 30-day close-price buffer. |
 | `history` | At most five 90-candle requests per pass, with transactional progress checkpoints and the existing 45-second work budget. |
-| `intelligence` | Feature replay uses the same streaming path. Training rejects datasets above `intelligence.max_rows` before reading their rows; KNN/Random Forest fitting uses that bounded training set. Human-review snapshots and their chart payloads are read 25 at a time. Signal recording loads one model and its recent feature window. |
+| `intelligence` | Feature replay uses the same streaming path. Training and retained KNN knowledge use every eligible example within `INTELLIGENCE_MAX_MODEL_AGE_DAYS` of the build cutoff; there is no row-count cap. Longer windows increase model memory and fitting time; application and worker time budgets still apply. Human-review snapshots and their chart payloads are read 25 at a time. Signal recording loads one model and its recent feature window. |
 
-After deploying these changes, update **all three** queue cron commands. Inspect `php artisan queue:failed` and the corresponding worker log if a job fails. Do not remove row caps or raise memory indefinitely to mask an oversized workload. These limits bound application work; they are not a benchmark of every exchange adapter or a guarantee about production RSS.
+After deploying these changes, update **all three** queue cron commands. Inspect `php artisan queue:failed` and the corresponding worker log if a job fails. Keep ingestion batches bounded and size the intelligence age window and worker resources together. These budgets are not a benchmark of every exchange adapter or a guarantee about production RSS.
 
 ## Deployment checks
 

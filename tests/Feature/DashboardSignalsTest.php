@@ -47,7 +47,7 @@ it('records the original model evidence, preserves its time and distinguishes su
     $this->travelTo('2024-01-01 04:05:00 UTC');
     $path = sys_get_temp_dir().'/trademinator-dashboard-'.Str::uuid7();
     config(['research.path' => $path.'/research', 'intelligence.path' => $path.'/models',
-        'intelligence.knn.train_size' => 36, 'intelligence.knn.test_size' => 12,
+        'intelligence.knn.min_train_size' => 36, 'intelligence.knn.test_size' => 12,
         'intelligence.knn.min_validation_rows' => 5, 'intelligence.knn.min_directional_predictions' => 1,
         'intelligence.patterns.enabled' => false, 'intelligence.horizon' => 2, 'intelligence.lookback' => 3]);
     $fixture = MarketSignal::factory()->create();

@@ -67,7 +67,7 @@ it('renders actual history counts and failed validation requirements for an abst
 
         $response = $this->actingAs($owner)->get(route('markets.intelligence', $subscription->getKey()));
 
-        $response->assertOk()->assertSee('227 out of 250 retained neighbors')
+        $response->assertOk()->assertSee('227 retained examples')
             ->assertSee('227 out of 380')->assertSee('K selection requirements')
             ->assertSee(route('human-training.index', [
                 'exchange' => $exchange->class, 'symbol' => $market->symbol, 'period' => '1m',

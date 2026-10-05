@@ -84,6 +84,7 @@
                  data-delete-url="{{ route('human-training.candles.destroy', $state['manifest']['dataset_id']) }}"
                  data-auto-url="{{ route('human-training.candles.auto-label', $state['manifest']['dataset_id']) }}"
                  data-submit-url="{{ route('human-training.candles.submit', $state['manifest']['dataset_id']) }}"
+                 data-submit-batch-size="{{ min(\App\Domain\Intelligence\CandleTraining::SUBMIT_BATCH_SIZE, \App\Domain\Intelligence\CandleTraining::submissionLimit()) }}"
                  data-csrf="{{ csrf_token() }}"
                  data-snapshot="{{ json_encode(['series' => $state['payload']['series'], 'decision_at_ms' => $state['payload']['decision_at_ms'], 'labels' => $state['visible_labels'], 'decisions' => $state['decisions'], 'allowed_actions' => $state['allowed_actions'], 'has_more' => $state['has_more'], 'has_newer' => $state['next_decision_at_ms'] !== null, 'latest_decision_at_ms' => $state['latest_decision_at_ms'], 'stats' => $state['label_stats'], 'taker_fee' => $state['taker_fee']], JSON_THROW_ON_ERROR) }}">
             <form method="POST" action="{{ route('human-training.candles.start') }}" data-candle-dataset-form>
@@ -113,7 +114,7 @@
                     </div>
                 @endforeach
             </div>
-            <p class="guide-help">Total labels: <strong data-stat-total>{{ $state['label_stats']['total'] }}</strong>. Milestones count each recorded candle once across revisions, not current model eligibility. The model report shows compatible training counts. There is no target BUY/HOLD/SELL percentage.</p>
+            <p class="guide-help">Saved labels: <strong data-stat-total>{{ $state['label_stats']['total'] }}</strong>. Milestones count each submitted candle once across revisions and update after a successful Submit. Pending changes are shown below. The model report shows compatible training counts. There is no target BUY/HOLD/SELL percentage.</p>
             <details class="candle-training-milestone-help">
                 <summary>What do the milestone colours mean?</summary>
                 <ul class="candle-training-milestone-list">

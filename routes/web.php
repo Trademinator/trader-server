@@ -9,8 +9,8 @@ use App\Http\Controllers\Markets\SubscriptionController;
 use App\Http\Controllers\Markets\SuggestionController;
 use App\Http\Controllers\Markets\SuggestionReviewController;
 use App\Http\Controllers\Owner\ArchiveController;
-use App\Http\Controllers\Owner\MarketEventController;
 use App\Http\Controllers\Owner\HistoryRecoveryController;
+use App\Http\Controllers\Owner\MarketEventController;
 use App\Http\Controllers\Owner\ReportController;
 use App\Http\Controllers\Owner\UserController;
 use App\Http\Controllers\Settings;
@@ -80,7 +80,7 @@ Route::prefix('human-training')->name('human-training.')->middleware(['auth', 'v
     Route::get('candles/{dataset}/history', [CandleTrainingController::class, 'history'])->whereUuid('dataset')->middleware('throttle:120,1,human-training-candles-history')->name('candles.history');
     Route::get('candles/{dataset}', [CandleTrainingController::class, 'show'])->whereUuid('dataset')->middleware('throttle:60,1,human-training-candles-show')->name('candles.show');
     Route::post('candles/{dataset}/auto-label', [CandleTrainingController::class, 'autoLabel'])->whereUuid('dataset')->middleware('throttle:12,1,human-training-candles-auto-label')->name('candles.auto-label');
-    Route::post('candles/{dataset}/submit', [CandleTrainingController::class, 'submitLabels'])->whereUuid('dataset')->middleware('throttle:12,1,human-training-candles-submit')->name('candles.submit');
+    Route::post('candles/{dataset}/submit', [CandleTrainingController::class, 'submitLabels'])->whereUuid('dataset')->middleware('throttle:120,1,human-training-candles-submit')->name('candles.submit');
     Route::put('candles/{dataset}', [CandleTrainingController::class, 'update'])->whereUuid('dataset')->middleware('throttle:60,1,human-training-candles-update')->name('candles.update');
     Route::delete('candles/{dataset}', [CandleTrainingController::class, 'destroy'])->whereUuid('dataset')->middleware('throttle:60,1,human-training-candles-destroy')->name('candles.destroy');
     Route::get('{review}', [HumanTrainingController::class, 'show'])->whereUuid('review')->name('show');

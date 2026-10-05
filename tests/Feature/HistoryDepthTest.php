@@ -6,7 +6,7 @@ it('uses the larger of the model training window and configured minimum calendar
     $depth = app(HistoryDepth::class);
     $until = strtotime('2026-09-30 00:00:00 UTC') * 1000;
     config(['history_backfill.minimum_days' => 7, 'history_backfill.depth_probe_candles' => 12,
-        'intelligence.knn.train_size' => 250, 'intelligence.knn.test_size' => 100,
+        'intelligence.knn.min_train_size' => 250, 'intelligence.knn.test_size' => 100,
         'intelligence.lookback' => 20, 'intelligence.horizon' => 12]);
 
     expect($depth->requiredStartMs('5m', $until))->toBe($until - 7 * 86_400_000);
@@ -22,7 +22,7 @@ it('recognizes whether stored candle span reaches the required training depth', 
     $depth = app(HistoryDepth::class);
     $latest = strtotime('2026-09-30 00:00:00 UTC') * 1000;
     config(['history_backfill.minimum_days' => 7,
-        'intelligence.knn.train_size' => 250, 'intelligence.knn.test_size' => 100,
+        'intelligence.knn.min_train_size' => 250, 'intelligence.knn.test_size' => 100,
         'intelligence.lookback' => 20, 'intelligence.horizon' => 12]);
 
     expect($depth->spanIsSufficient('5m', $latest - 8 * 86_400_000, $latest))->toBeTrue()

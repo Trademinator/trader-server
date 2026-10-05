@@ -16,9 +16,12 @@
         </ul>
     @endif
     @if ($progress['history'])
-        <x-intelligence-progress label="Potential training rows now (estimate)" :value="$progress['history']['potential']" :target="$progress['minimum']" native />
-        <p class="guide-help">{{ number_format($progress['history']['closed']) }} current-version closed feature rows in the recent build window; {{ number_format($progress['history']['complete']) }} contain every selected feature. {{ number_format($progress['history']['immature']) }} complete rows are reserved for inference or still waiting for their {{ $progress['horizon'] }}-candle outcome.</p>
-        <p class="guide-help">Potential rows are an upper bound before source-candle checks, semantic warm-up, pattern and lead/lag exclusions. The actual model counts below come from the last training run.</p>
+        <x-intelligence-progress :label="$progress['history']['sampled'] ? 'Potential training rows (checked sample)' : 'Potential training rows now (estimate)'" :value="$progress['history']['potential']" :target="$progress['minimum']" native />
+        <p class="guide-help">{{ number_format($progress['history']['closed']) }} current-version closed feature rows in the recent build window. Of the {{ number_format($progress['history']['checked']) }} rows checked, {{ number_format($progress['history']['complete']) }} contain every selected feature. {{ number_format($progress['history']['immature']) }} complete rows are reserved for inference or still waiting for their {{ $progress['horizon'] }}-candle outcome.</p>
+        @if ($progress['history']['sampled'])
+            <p class="guide-help">Only the latest {{ number_format($progress['history']['checked']) }} rows were checked for this estimate. Older eligible rows are also available to training, which uses the full age window.</p>
+        @endif
+        <p class="guide-help">Potential rows are counted before source-candle checks, semantic warm-up, pattern and lead/lag exclusions. The actual model counts below come from the last training run.</p>
         @if ($progress['history']['latest_ms'])
             <p>Latest closed feature: <x-display-time :value="$progress['history']['latest_ms']" unit="milliseconds" /></p>
         @endif

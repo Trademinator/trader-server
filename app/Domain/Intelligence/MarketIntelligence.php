@@ -63,8 +63,7 @@ final class MarketIntelligence
                 }
                 $asOfMs = min($asOfMs ?? $latest->microtimestamp, now()->getTimestampMs());
                 $toMs = min($toMs ?? $asOfMs, $asOfMs);
-                $fromMs ??= (clone $query)->where('available_at_ms', '<=', $toMs)->orderByDesc('microtimestamp')
-                    ->limit(config('intelligence.max_rows'))->pluck('available_at_ms')->last() ?? 0;
+                $fromMs = max($fromMs ?? 0, KnowledgeWindow::fromMs($asOfMs));
                 $definition = new SemanticLabels(config('intelligence.horizon'), config('intelligence.lookback'),
                     config('intelligence.minimum_move_bps'), config('intelligence.extreme_fraction'));
                 $manifest = $this->datasets->build($exchange, $symbol, $period, $definition, $schema,
@@ -108,7 +107,7 @@ final class MarketIntelligence
             || $model['patterns']['version'] !== PatternCatalog::VERSION) {
             return [...WeightedKnn::abstain('model_version_mismatch'), ...$context];
         }
-        if ($model['trained_as_of_ms'] < $asOfMs - config('intelligence.max_model_age_days') * 86400000) {
+        if ($model['trained_as_of_ms'] < KnowledgeWindow::fromMs($asOfMs)) {
             return [...WeightedKnn::abstain('stale_model'), ...$context];
         }
         $features = MarketFeature::query()->where('exchange', $exchange)->where('symbol', $symbol)->where('period', $period)

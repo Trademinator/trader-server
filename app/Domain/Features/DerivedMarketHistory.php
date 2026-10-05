@@ -2,6 +2,7 @@
 
 namespace App\Domain\Features;
 
+use App\Domain\Intelligence\KnowledgeWindow;
 use App\Domain\MarketData\ClosedCandleAggregator;
 use App\Models\MarketFeed;
 use App\Models\Ticker;
@@ -28,7 +29,7 @@ final class DerivedMarketHistory
             throw new InvalidArgumentException('Derived period must be a larger exact multiple of its base period.');
         }
         $asOfMs = min($asOfMs ?? now()->getTimestampMs(), now()->getTimestampMs());
-        $fromMs ??= max(0, $asOfMs - (config('intelligence.max_rows') + 60) * $targetMs);
+        $fromMs ??= max(0, KnowledgeWindow::fromMs($asOfMs) - 60 * $targetMs);
         if ($fromMs < 0 || $fromMs > $asOfMs) {
             throw new InvalidArgumentException('Invalid derivation range.');
         }
@@ -59,9 +60,10 @@ final class DerivedMarketHistory
                 (clone $target)->where('microtimestamp', '>=', $fromMs)->where('microtimestamp', '<', $toMs)->delete();
                 $pending = [];
                 foreach ($this->aggregator->rows($source, $base, $period, $asOfMs) as $bar) {
-                    if (++$count > config('intelligence.max_rows') + 60 || microtime(true) - $started > 240) {
-                        throw new RuntimeException('Derived history exceeds its bounded range or time budget.');
+                    if (microtime(true) - $started > 240) {
+                        throw new RuntimeException('Derived history time budget exceeded.');
                     }
+                    $count++;
                     $pending[] = $bar;
                     if (count($pending) === 100) {
                         $this->tickers->saveTickers($exchange, $symbol, $period, $pending);

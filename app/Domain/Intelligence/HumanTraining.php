@@ -8,8 +8,8 @@ use App\Domain\Research\DatasetStore;
 use App\Domain\Research\SemanticLabels;
 use App\Models\HumanTrainingReview;
 use App\Models\HumanTrainingSnapshot;
-use App\Models\MarketSignal;
 use App\Models\MarketFeature;
+use App\Models\MarketSignal;
 use App\Models\User;
 use App\Repositories\TickerRepository;
 use Illuminate\Support\Facades\Cache;
@@ -97,8 +97,8 @@ final class HumanTraining
             if ($manifest['feature_version'] !== FeatureEngine::VERSION
                 || ($manifest['label_definition']['version'] ?? null) !== SemanticLabels::VERSION
                 || $manifest['as_of_ms'] > now()->getTimestampMs()
-                || $rows === [] || count($rows) > config('intelligence.max_rows')) {
-                throw ValidationException::withMessages(['dataset' => 'Choose a current, bounded semantic dataset built from closed candles.']);
+                || $rows === []) {
+                throw ValidationException::withMessages(['dataset' => 'Choose a current semantic dataset built from closed candles.']);
             }
             $candidate = $this->candidateSnapshot($trainer, $manifest, $rows, 'reviews');
             if ($candidate !== null) {
@@ -130,7 +130,7 @@ final class HumanTraining
             'reviews' => 'human_training_reviews',
             default => throw new InvalidArgumentException('Unsupported human opinion relation.'),
         };
-        if (count($rows) > (int) config('intelligence.max_rows')) {
+        if (count($rows) > $manifest['rows']) {
             throw new InvalidArgumentException('Candidate selection exceeds the dataset bound.');
         }
         $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
@@ -227,7 +227,7 @@ final class HumanTraining
         if ($strictTimes === []) {
             return $ids;
         }
-        $rawRows ??= $this->datasets->load($manifest['dataset_id'], (int) config('intelligence.max_rows'))[1];
+        $rawRows ??= $this->datasets->load($manifest['dataset_id'])[1];
         $rows = array_filter($rawRows, fn (array $row): bool => isset($strictTimes[$row['decision_at_ms']]));
         $current = $this->snapshotIdsForRows($manifest, array_values($rows));
         foreach ($current as $snapshotId) {
@@ -253,7 +253,7 @@ final class HumanTraining
     }
 
     /**
-     * @param  array<int, array<string, mixed>>  $rows keyed by decision_at_ms
+     * @param  array<int, array<string, mixed>>  $rows  keyed by decision_at_ms
      * @return array<int, array<string, mixed>|null>
      */
     private function batchSnapshotPayloads(array $manifest, array $rows): array
@@ -303,6 +303,7 @@ final class HumanTraining
             if ($end === null || ($expectedFeatureDigest !== null
                 && $expectedFeatureDigest !== ($featureDigests[$timestamp] ?? null))) {
                 $payloads[$decision] = null;
+
                 continue;
             }
 

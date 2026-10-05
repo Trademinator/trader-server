@@ -69,7 +69,10 @@
                 <dl>
                     <dt>Status</dt><dd>{{ $report['status'] === 'ready' ? 'Validated' : 'Abstaining' }}</dd>
                     <dt>Selected K</dt><dd>{{ $report['k'] ?? 'No eligible value' }}</dd>
-                    <dt>Knowledge rows</dt><dd>{{ number_format($report['knowledge_rows']) }} out of {{ number_format($progress['settings']['train_size']) }} retained neighbors</dd>
+                    <dt>Knowledge rows</dt><dd>{{ number_format($report['knowledge_rows']) }} retained examples</dd>
+                    @if (isset($report['training_data']['window']))
+                        <dt>History window</dt><dd>{{ number_format($report['training_data']['window']['days']) }} days, starting <x-display-time :value="$report['training_data']['window']['from_ms']" unit="milliseconds" /></dd>
+                    @endif
                     <dt>Training cutoff</dt><dd><x-display-time :value="$report['trained_as_of_ms']" unit="milliseconds" /></dd>
                     @if ($report['holdout'])
                         <dt>Later-period precision</dt><dd>{{ number_format($report['holdout']['semantic_precision'] * 100, 1) }}%</dd>
@@ -77,8 +80,7 @@
                         <dt>Top/bottom contradictions</dt><dd>{{ number_format($report['holdout']['contradiction_rate'] * 100, 1) }}%</dd>
                     @endif
                 </dl>
-                <x-intelligence-progress label="Retained knowledge pool" :value="$report['knowledge_rows']" :target="$progress['settings']['train_size']" />
-                <p class="guide-help">This is the model's retained neighbor pool, not the total history required to validate it.</p>
+                <p class="guide-help">New builds retain every eligible example within the configured history window. The validation minimum does not cap the knowledge pool.</p>
                 @if ($progress['source'])
                     <p>Dataset schema: <strong>{{ $progress['source']['schema'] }}</strong>. Labeled source rows: <strong>{{ isset($progress['source']['source_rows']) ? number_format($progress['source']['source_rows']) : 'Not recorded' }}</strong>.</p>
                     @if (isset($progress['source']['usable_rows']))

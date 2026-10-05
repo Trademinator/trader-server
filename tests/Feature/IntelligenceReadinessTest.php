@@ -6,8 +6,14 @@ use App\Domain\Intelligence\IntelligenceTrainer;
 use App\Domain\Intelligence\WeightedKnn;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\Research\FeatureSchema;
+use App\Models\MarketFeature;
 use App\Models\MarketFeed;
+use App\Models\MarketSignal;
+use App\Models\MarketSubscription;
+use App\Models\User;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Tests\Support\IntelligenceFixtures;
@@ -62,7 +68,7 @@ it('shows configured row requirements and a conditional data ETA excluding open 
 
 it('makes the minimum match actual chronological tuning at the boundary', function (int $count, string $status) {
     $this->travelTo('2024-01-01 04:10:00 UTC');
-    config(['intelligence.knn.train_size' => 36, 'intelligence.knn.test_size' => 12,
+    config(['intelligence.knn.min_train_size' => 36, 'intelligence.knn.test_size' => 12,
         'intelligence.knn.min_validation_rows' => 5, 'intelligence.knn.min_directional_predictions' => 1]);
     $manifest = IntelligenceFixtures::snapshot($count);
 
@@ -97,17 +103,17 @@ it('names missing selected features and withholds a timer for schema warmup', fu
     expect($progress['history']['potential'])->toBe(0);
 });
 
-it('reports gaps and impossible row caps instead of extending the wait indefinitely', function () {
+it('reports gaps and an insufficient age window instead of extending the wait indefinitely', function () {
     $this->travelTo('2024-01-01 00:20:00 UTC');
     readinessFeatures(20);
     DB::table('market_features')->where('microtimestamp', IntelligenceFixtures::START + 10 * 60000)->delete();
-    config(['intelligence.max_rows' => 100]);
+    config(['intelligence.max_model_age_days' => 1, 'intelligence.knn.min_train_size' => 2000]);
 
     $progress = readiness();
 
     expect($progress['history']['gaps'])->toBe(1);
     expect($progress['eta'])->toBeNull();
-    expect(implode(' ', $progress['issues']))->toContain('max_rows cap is below');
+    expect(implode(' ', $progress['issues']))->toContain('INTELLIGENCE_MAX_MODEL_AGE_DAYS window is too short');
 });
 
 it('keeps unknown period, disabled scheduling and a nonpersistent queue explicit', function () {
@@ -123,7 +129,8 @@ it('keeps unknown period, disabled scheduling and a nonpersistent queue explicit
 it('uses calendar-month boundaries and the configured scheduler timezone', function () {
     $this->travelTo('2024-09-01 00:00:00 UTC');
     readinessFeatures(8, '1M');
-    config(['intelligence.horizon' => 2, 'intelligence.knn.train_size' => 3,
+    config(['intelligence.horizon' => 2, 'intelligence.knn.min_train_size' => 3,
+        'intelligence.max_model_age_days' => 730,
         'intelligence.knn.min_validation_rows' => 1, 'app.schedule_timezone' => 'America/Toronto']);
 
     $progress = readiness(period: '1M');
@@ -144,8 +151,91 @@ it('preserves legacy model counts without confusing the retained pool with total
 
     expect($progress['source']['source_rows'])->toBe(227);
     expect($progress['source']['usable_rows'])->toBe(227);
-    expect($progress['settings']['train_size'])->toBe(250);
+    expect($progress['settings']['min_train_size'])->toBe(250);
     expect($progress['tuning']['gates'][0]['passed'])->toBeFalse();
     $report['pattern_keys'] = ['pattern.bullish_engulfing.probability'];
     expect(readiness($report)['source']['usable_rows'])->toBeNull();
+});
+
+it('counts all recent features and removes only those outside the configured age window', function () {
+    $this->travelTo('2024-01-03 05:25:00 UTC');
+    readinessFeatures(3205);
+
+    expect(readiness()['history']['closed'])->toBe(3205);
+    config(['intelligence.max_model_age_days' => 1]);
+    $progress = readiness();
+
+    expect($progress['history']['closed'])->toBe(1442)
+        ->and($progress['history']['potential'])->toBe(1429);
+});
+
+it('bounds feature loading while reporting the full age window and the latest sample', function () {
+    $this->travelTo('2024-01-03 05:25:00 UTC');
+    readinessFeatures(3206);
+    $loaded = 0;
+    $queries = 0;
+    Event::listen('eloquent.retrieved: '.MarketFeature::class, function () use (&$loaded): void {
+        $loaded++;
+    });
+    DB::listen(function (QueryExecuted $query) use (&$queries): void {
+        if (str_contains($query->sql, 'market_features')) {
+            $queries++;
+        }
+    });
+
+    $progress = readiness();
+
+    expect($loaded)->toBeLessThanOrEqual(2001);
+    expect($queries)->toBeLessThanOrEqual(3);
+    expect($progress['history'])->toMatchArray([
+        'closed' => 3205, 'checked' => 2000, 'sampled' => true,
+        'complete' => 2000, 'potential' => 1987, 'immature' => 13,
+        'missing_keys' => [], 'invalid' => false, 'gaps' => 0, 'stale' => false,
+    ]);
+});
+
+it('does not invent a wait when unchecked rows may already meet the training requirement', function () {
+    $this->travelTo('2024-01-03 05:25:00 UTC');
+    readinessFeatures(3205);
+    config(['intelligence.knn.min_train_size' => 2000]);
+
+    $progress = readiness();
+
+    expect($progress['history']['sampled'])->toBeTrue();
+    expect($progress['eta'])->toBeNull();
+    expect($progress['eta_note'])->toContain('Older rows in the age window may already satisfy');
+});
+
+it('keeps recent gaps and invalid features visible when older history is not inspected', function () {
+    $this->travelTo('2024-01-03 05:25:00 UTC');
+    readinessFeatures(3205);
+    DB::table('market_features')->where('microtimestamp', IntelligenceFixtures::START + 3200 * 60000)->delete();
+    $latest = MarketFeature::query()->orderByDesc('microtimestamp')->firstOrFail();
+    $payload = $latest->payload;
+    $payload['features']['candle.body'] = 'not-a-number';
+    DB::table('market_features')->where('feature_id', $latest->getKey())->update(['payload' => json_encode($payload)]);
+
+    $progress = readiness();
+
+    expect($progress['history'])->toMatchArray(['closed' => 3204, 'checked' => 2000, 'sampled' => true, 'invalid' => true, 'gaps' => 1]);
+    expect($progress['eta'])->toBeNull();
+    expect($progress['full_schema']['invalid'])->toBeTrue();
+});
+
+it('labels sampled readiness counts on the dashboard and the intelligence page', function () {
+    $this->travelTo('2024-01-03 05:25:00 UTC');
+    readinessFeatures(3205);
+    $user = User::factory()->create();
+    $signal = MarketSignal::factory()->create();
+    MarketFeed::query()->create(['market_id' => $signal->market_id, 'selected_period' => '1m', 'status' => 'active']);
+    $subscription = MarketSubscription::query()->create([
+        'user_id' => $user->getKey(), 'market_id' => $signal->market_id, 'active' => true,
+    ]);
+
+    $this->actingAs($user)->get('/dashboard')
+        ->assertSee('Potential training rows (checked sample)')
+        ->assertSee('Checked the latest 2,000 of 3,205 rows in the age window.');
+    $this->get(route('markets.intelligence', $subscription->getKey()))
+        ->assertSee('Potential training rows (checked sample)')
+        ->assertSee('training, which uses the full age window.');
 });

@@ -11,7 +11,7 @@ use RuntimeException;
 
 final class IntelligenceTrainer
 {
-    public const VERSION = 'm4.1-chronological-v2';
+    public const VERSION = 'm4.1-age-window-v3';
 
     public function __construct(
         private DatasetStore $datasets,
@@ -28,11 +28,7 @@ final class IntelligenceTrainer
         $buildPerformance['started_monotonic_ns'] ??= hrtime(true);
         $buildPerformance['stages'] ??= [];
         $datasetLoadStarted = hrtime(true);
-        $manifest = $this->datasets->manifest($dataset);
-        if ($manifest['rows'] > config('intelligence.max_rows')) {
-            throw new InvalidArgumentException('Dataset exceeds intelligence.max_rows; use a smaller date range.');
-        }
-        [$manifest, $rows] = $this->datasets->load($dataset, (int) config('intelligence.max_rows'));
+        [$manifest, $rows] = $this->datasets->load($dataset);
         $buildPerformance['stages']['dataset_ms'] = (int) ($buildPerformance['stages']['dataset_ms'] ?? 0)
             + $this->elapsedMs($datasetLoadStarted);
         if ($manifest['feature_version'] !== FeatureEngine::VERSION
@@ -42,13 +38,17 @@ final class IntelligenceTrainer
         if ($manifest['as_of_ms'] > now()->getTimestampMs()) {
             throw new InvalidArgumentException('Knowledge cutoff cannot be in the future.');
         }
+        $window = KnowledgeWindow::metadata($manifest['as_of_ms']);
+        $snapshotRows = count($rows);
+        $rows = array_values(array_filter($rows, fn (array $row): bool => $row['decision_at_ms'] >= $window['from_ms']));
+        $ageExcluded = $snapshotRows - count($rows);
+        if ($rows === []) {
+            throw new InvalidArgumentException('No eligible history within INTELLIGENCE_MAX_MODEL_AGE_DAYS.');
+        }
         $rowAudit = TrainingRowAudit::inspect($rows);
         $rows = $rowAudit['rows'];
         unset($rowAudit['rows']);
         $settings = config('intelligence.knn');
-        if (count($rows) > config('intelligence.max_rows')) {
-            throw new InvalidArgumentException('Dataset exceeds intelligence.max_rows; use a smaller date range.');
-        }
         $deadline ??= microtime(true) + config('intelligence.max_seconds');
         $lock = Cache::lock('trademinator:intelligence:'.ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']), 720);
         if (! $lock->get()) {
@@ -123,7 +123,7 @@ final class IntelligenceTrainer
 
             $stageStarted = hrtime(true);
             $evaluation = $selection['k'] === null ? null
-                : $tuner->evaluate(array_slice($training, -$settings['train_size']), $test, $selection['k'], $settings, $deadline);
+                : $tuner->evaluate($training, $test, $selection['k'], $settings, $deadline);
             $buildPerformance['stages']['holdout_ms'] = $this->elapsedMs($stageStarted);
 
             $stageStarted = hrtime(true);
@@ -165,7 +165,7 @@ final class IntelligenceTrainer
             $knowledge = array_map(fn (array $row): array => [
                 'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
                 'vector' => $row['vector'], 'label' => $row['label'], 'feature_weights' => $row['feature_weights'] ?? [],
-            ], array_slice($rows, -$settings['train_size']));
+            ], $rows);
             $artifact = [
                 'validation_version' => self::VERSION,
                 'generation_key' => $generation, 'dataset_id' => $dataset, 'exchange' => $manifest['exchange'], 'symbol' => $manifest['symbol'],
@@ -183,6 +183,7 @@ final class IntelligenceTrainer
                 'k' => $selection['k'], 'settings' => $settings,
                 'pattern_settings' => $patternSettings,
                 'training_data' => [
+                    'window' => $window, 'snapshot_rows' => $snapshotRows, 'age_excluded_rows' => $ageExcluded,
                     'deduplication' => $rowAudit,
                     'schema' => $manifest['schema'], 'source_rows' => $sourceRows,
                     'usable_rows' => count($rows),

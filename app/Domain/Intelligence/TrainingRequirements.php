@@ -9,7 +9,7 @@ final class TrainingRequirements
     {
         $validation = max(1, (int) $settings['min_validation_rows']);
         $tuning = $fullFold ? max($validation, (int) $settings['test_size']) : $validation;
-        $training = $settings['train_size'] + max($settings['gap'], $horizon) + $tuning;
+        $training = ($settings['min_train_size'] ?? $settings['train_size']) + max($settings['gap'], $horizon) + $tuning;
         // Both the outer holdout and the inner walk-forward split purge unobserved labels.
         $rows = (int) ceil(($training + $horizon) / 0.8);
         while (floor($rows * 0.8) - $horizon < $training || $rows - floor($rows * 0.8) < $validation) {

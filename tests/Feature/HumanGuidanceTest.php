@@ -17,7 +17,7 @@ use Tests\Support\IntelligenceFixtures;
 beforeEach(function () {
     $path = sys_get_temp_dir().'/human-guidance-'.Str::uuid7();
     config(['research.path' => $path.'/research', 'intelligence.path' => $path.'/models',
-        'intelligence.knn.train_size' => 36, 'intelligence.knn.test_size' => 12,
+        'intelligence.knn.min_train_size' => 36, 'intelligence.knn.test_size' => 12,
         'intelligence.knn.min_validation_rows' => 5, 'intelligence.knn.min_directional_predictions' => 1,
         'intelligence.patterns.enabled' => false, 'human_training.min_samples' => 20,
         'human_training.enabled' => true]);
@@ -118,7 +118,7 @@ it('rejects promotion without meaningful improvement or with reduced coverage or
 
 it('publishes improved combined intelligence and blocks inference before the human reviews existed', function () {
     $this->travelTo('2024-01-01 09:00:00 UTC');
-    config(['human_training.k' => 1, 'intelligence.knn.train_size' => 18,
+    config(['human_training.k' => 1, 'intelligence.knn.min_train_size' => 18,
         'intelligence.knn.min_effective_neighbors' => 1.0, 'intelligence.knn.max_distance' => 1.0]);
     $trainer = User::factory()->create();
     config(['operations.owner_uuid' => $trainer->user_id]);

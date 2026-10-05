@@ -4,6 +4,7 @@ namespace Tests\Support;
 
 use App\Domain\Features\FeatureBuilder;
 use App\Domain\Features\FeatureEngine;
+use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\Research\DatasetStore;
 use App\Domain\Research\SemanticLabels;
 use App\Models\Ticker;
@@ -14,28 +15,33 @@ final class IntelligenceFixtures
 {
     public const START = 1704067200000;
 
-    public static function snapshot(int $count = 240, bool $contradictory = false, bool $patterns = false): array
+    public static function snapshot(int $count = 240, bool $contradictory = false, bool $patterns = false, string $period = '1m'): array
     {
         $rows = [];
+        $timeframe = new CandleTimeframe;
+        $timestamp = self::START;
         for ($i = 0; $i < $count; $i++) {
             $state = $i % 3;
-            $rows[] = ['microtimestamp' => self::START + $i * 60000,
-                'decision_at_ms' => self::START + ($i + 1) * 60000,
-                'label_available_at_ms' => self::START + ($i + 3) * 60000,
+            $decision = $timeframe->next($timestamp, $period);
+            $patternAvailable = $timeframe->next($decision, $period);
+            $rows[] = ['microtimestamp' => $timestamp,
+                'decision_at_ms' => $decision,
+                'label_available_at_ms' => $timeframe->next($patternAvailable, $period),
                 'vector' => [$state / 2], 'label' => ['buy', 'hodl', 'sell'][$state],
                 'semantic' => ['bottom' => $contradictory ? $state === 2 : $state === 0,
                     'top' => $contradictory ? $state === 0 : $state === 2],
                 'patterns' => $patterns ? [['type' => 'bullish_engulfing', 'length' => 2, 'stage' => 1,
                     'progress' => 0.5, 'similarity' => 0.8, 'label' => $state === 0 ? 'completed' : 'failed',
-                    'label_available_at_ms' => self::START + ($i + 2) * 60000]] : []];
+                    'label_available_at_ms' => $patternAvailable]] : []];
+            $timestamp = $decision;
         }
         $id = (string) Str::uuid7();
         $bytes = implode('', array_map(fn (array $row): string => json_encode($row)."\n", $rows));
         $manifest = ['dataset_id' => $id, 'format_version' => 'm3-dataset-v1',
-            'exchange' => 'kraken', 'symbol' => 'BTC/USD', 'period' => '1m', 'keys' => ['candle.body'],
+            'exchange' => 'kraken', 'symbol' => 'BTC/USD', 'period' => $period, 'keys' => ['candle.body'],
             'feature_version' => FeatureEngine::VERSION, 'schema' => 'custom',
             'label_definition' => (new SemanticLabels(2, 3))->metadata(),
-            'as_of_ms' => self::START + ($count + 3) * 60000, 'rows' => $count,
+            'as_of_ms' => $timeframe->next($timeframe->next($timeframe->next($timestamp, $period), $period), $period), 'rows' => $count,
             'rows_sha256' => hash('sha256', $bytes)];
         $path = app(DatasetStore::class)->directory($id);
         mkdir($path, 0700, true);

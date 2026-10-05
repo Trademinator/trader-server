@@ -18,7 +18,7 @@ function tuningRows(int $count = 180, bool $contradictory = false): array
 
 function tuningSettings(): array
 {
-    return ['train_size' => 36, 'test_size' => 12, 'gap' => 2, 'k_cap' => 99,
+    return ['min_train_size' => 36, 'test_size' => 12, 'gap' => 2, 'k_cap' => 99,
         'min_validation_rows' => 10, 'min_directional_predictions' => 3,
         'min_semantic_precision' => 0.55, 'min_coverage' => 0.01, 'max_contradiction_rate' => 0.05];
 }
@@ -28,6 +28,9 @@ it('selects K within the training-only square-root cap and purges unfinished lab
 
     expect($report['k_max'])->toBe(6);
     expect($report['k'])->toBeGreaterThanOrEqual(3)->toBeLessThanOrEqual(6);
+    expect($report['folds'][0]['train_rows'])->toBe(36);
+    expect($report['folds'][1]['train_rows'])->toBe(48);
+    expect(end($report['folds'])['train_rows'])->toBeGreaterThan(100);
     foreach ($report['folds'] as $fold) {
         expect($fold['labels_available_by_ms'])->toBeLessThan($fold['test_from_ms']);
     }

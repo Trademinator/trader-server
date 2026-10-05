@@ -2,6 +2,7 @@
 
 namespace App\Domain\Intelligence;
 
+use App\Domain\Research\DatasetStore;
 use App\Models\HumanTrainingSnapshot;
 use App\Models\User;
 use Carbon\CarbonImmutable;
@@ -105,15 +106,15 @@ final class HumanGuidance
         }
         $byTime = array_column($rows, null, 'decision_at_ms');
         $snapshots = HumanTrainingSnapshot::query()->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
-            ->where('version', HumanTraining::VERSION)->whereIn('decision_at_ms', array_keys($byTime))
+            ->where('version', HumanTraining::VERSION)->whereBetween('decision_at_ms', [array_key_first($byTime), array_key_last($byTime)])
             ->whereHas('reviews', fn ($query) => $query->whereIn('trainer_id', $trainers))
             ->with(['reviews' => fn ($query) => $query->whereIn('trainer_id', $trainers)->whereIn('label', HumanTraining::LABELS)
                 ->whereNotNull('submitted_at')->where('submitted_at', '<=', CarbonImmutable::createFromTimestampMs($annotationCutoff)->format('Y-m-d H:i:s.v'))->orderBy('trainer_id')])
-            ->orderBy('decision_at_ms')->orderByDesc('snapshot_id')->lazy(25)->take((int) config('intelligence.max_rows'));
+            ->orderBy('decision_at_ms')->orderByDesc('snapshot_id')->lazy(25);
         $opinions = [];
         $rawRows = null;
         foreach ($snapshots->chunk(25) as $batch) {
-            $rawRows ??= app(\App\Domain\Research\DatasetStore::class)->load($manifest['dataset_id'], (int) config('intelligence.max_rows'))[1];
+            $rawRows ??= app(DatasetStore::class)->load($manifest['dataset_id'])[1];
             $compatible = app(HumanTraining::class)->compatibleSnapshotIds($manifest, $batch, $rawRows);
             foreach ($batch as $snapshot) {
                 if (! isset($compatible[$snapshot->snapshot_id])) {
@@ -158,7 +159,7 @@ final class HumanGuidance
         $score = collect($selection['candidates'])->firstWhere('k', $selection['k']);
         $holdout = $selection['k'] === null
             ? $tuner->evaluatePredictions($test, array_fill(0, count($test), WeightedKnn::abstain('no_eligible_k')), $settings)
-            : $tuner->evaluate(array_slice($training, -$settings['train_size']), $test, $selection['k'], $settings, $deadline);
+            : $tuner->evaluate($training, $test, $selection['k'], $settings, $deadline);
 
         return ['selection' => $selection, 'selected_score' => $score, 'holdout' => $holdout,
             'test' => $test, 'training' => $training, 'cutoff' => $cutoff];

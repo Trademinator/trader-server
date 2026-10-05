@@ -23,9 +23,9 @@ connection defect.
 1. Select candidates before loading charts. A metadata-only query obtains distinct
    recorded candle times, scoped to the requesting trainer, market, snapshot
    version and exact dataset decision times. Queries contain at most 500 decision
-   values. With the existing default `intelligence.max_rows=3000`, at most six
-   metadata queries are needed. No chart payloads or revision payloads are
-   hydrated by those metadata queries.
+   values. Dataset history is limited by `INTELLIGENCE_MAX_MODEL_AGE_DAYS`,
+   so the number of metadata queries grows with the eligible dataset size.
+   No chart payloads or revision payloads are hydrated by those metadata queries.
 2. The metadata is a prioritization hint only. Previously unrecorded times are
    tried first. `TrainingCandidateSelector` verifies at most 24 candidate candles,
    rechecks the opinion on the **resolved current snapshot**, and stops at the

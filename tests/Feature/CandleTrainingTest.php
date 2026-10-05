@@ -116,6 +116,52 @@ it('supports chart-menu JSON save and delete without a page reload', function ()
     $this->assertDatabaseCount('human_candle_labels', 0);
 });
 
+it('submits several staged labels when a cached configuration lacks the annotation limit', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $user = User::factory()->create();
+    config(['operations.owner_uuid' => $user->user_id, 'human_training.candle_max_changes' => null]);
+    $manifest = candleTrainingDataset(count: 3);
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+
+    $this->actingAs($user)->postJson(route('human-training.candles.submit', $manifest['dataset_id']), [
+        'changes' => array_map(fn (array $row): array => ['decision_at_ms' => $row['decision_at_ms'], 'action' => 'hold'], $rows),
+    ])->assertOk()->assertJsonPath('saved', 3)->assertJsonPath('stats.counts.hold', 3);
+
+    $this->assertDatabaseCount('human_candle_labels', 3);
+});
+
+it('rejects an oversized annotation request before storing any staged labels', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $user = User::factory()->create();
+    config(['operations.owner_uuid' => $user->user_id, 'human_training.candle_max_changes' => 1]);
+    $manifest = candleTrainingDataset(count: 2);
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+
+    $this->actingAs($user)->postJson(route('human-training.candles.submit', $manifest['dataset_id']), [
+        'changes' => array_map(fn (array $row): array => ['decision_at_ms' => $row['decision_at_ms'], 'action' => 'hold'], $rows),
+    ])->assertUnprocessable()->assertJsonValidationErrors('changes');
+
+    $this->assertDatabaseCount('human_candle_labels', 0);
+    $this->assertDatabaseCount('human_training_snapshots', 0);
+});
+
+it('accepts successive submission batches and retries without duplicating labels', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $user = User::factory()->create();
+    config(['operations.owner_uuid' => $user->user_id]);
+    $manifest = candleTrainingDataset();
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    $this->actingAs($user);
+
+    for ($batch = 0; $batch < 13; $batch++) {
+        $this->postJson(route('human-training.candles.submit', $manifest['dataset_id']), [
+            'changes' => [['decision_at_ms' => $rows[0]['decision_at_ms'], 'action' => 'hold']],
+        ])->assertOk()->assertJsonPath('stats.counts.hold', 1);
+    }
+
+    $this->assertDatabaseCount('human_candle_labels', 1);
+});
+
 it('validates candle actions and prevents a trainer from changing another trainers label', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     $users = User::factory()->count(2)->create();
@@ -342,5 +388,3 @@ it('preselects the dashboard market in both Human Training selectors', function 
 
     expect(substr_count($response->getContent(), 'value="'.$manifest['dataset_id'].'" selected'))->toBe(2);
 });
-
-

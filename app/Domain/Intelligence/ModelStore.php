@@ -20,7 +20,7 @@ final class ModelStore
     {
         return $report !== null && ($report['status'] ?? null) === 'ready'
             && ($report['validation_version'] ?? null) === IntelligenceTrainer::VERSION
-            && ($report['trained_as_of_ms'] ?? 0) >= now()->getTimestampMs() - config('intelligence.max_model_age_days') * 86400000;
+            && ($report['trained_as_of_ms'] ?? 0) >= KnowledgeWindow::fromMs(now()->getTimestampMs());
     }
 
     public function path(string $id): string

@@ -19,7 +19,7 @@ use Tests\Support\LeadLagFixtures;
 beforeEach(function () {
     $path = sys_get_temp_dir().'/trademinator-lead-lag-'.Str::uuid7();
     config(['research.path' => $path.'/research', 'intelligence.path' => $path.'/models',
-        'intelligence.patterns.enabled' => false, 'intelligence.knn.train_size' => 36,
+        'intelligence.patterns.enabled' => false, 'intelligence.knn.min_train_size' => 36,
         'intelligence.knn.test_size' => 12, 'intelligence.knn.min_validation_rows' => 5,
         'intelligence.knn.min_directional_predictions' => 1]);
 });
@@ -77,6 +77,19 @@ it('neutralizes missing stale disabled and changed-timezone evidence', function 
     config(['lead_lag.enabled' => true]);
     Exchange::query()->where('class', 'bitso')->update(['timezone' => 'America/Mexico_City', 'timezone_source' => 'operator']);
     expect($engine->current($bundle, $at)['vector'])->toBe([0.5]);
+});
+
+it('keeps auxiliary lead lag training observations inside the intelligence age window', function () {
+    $this->travelTo('2024-01-02 00:00:00 UTC');
+    config(['intelligence.max_model_age_days' => 1]);
+    LeadLagFixtures::market('kraken');
+    LeadLagFixtures::market('bitso');
+    LeadLagFixtures::candles();
+    $manifest = IntelligenceFixtures::snapshot(900);
+
+    $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+
+    expect($report['lead_lag']['report']['bitso']['samples'])->toBeGreaterThan(160)->toBeLessThan(900);
 });
 
 it('reports incompatible periods and excludes different quotes without blocking core intelligence', function () {
