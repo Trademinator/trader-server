@@ -2,9 +2,12 @@
 
 namespace App\Jobs;
 
+use App\Domain\Archive\FeatureCheckpointStore;
 use App\Domain\Features\FeatureBuilder;
 use App\Domain\Features\FeatureEngine;
+use App\Domain\Features\FeatureReplayTimeout;
 use App\Domain\MarketData\CandleTimeframe;
+use App\Domain\Operations\ActionLog;
 use App\Repositories\TickerRepository;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -22,6 +25,15 @@ final class BuildMarketFeatures implements ShouldBeUnique, ShouldQueue
     public int $uniqueFor = 3600;
 
     public array $backoff = [60, 300];
+
+    // Defaults also apply to jobs serialized before continuation support existed.
+    public ?int $replayFromMs = null;
+
+    public ?int $replayCutoffMs = null;
+
+    public ?int $checkpointBeforeMs = null;
+
+    public ?int $chunkCandles = null;
 
     public function __construct(public string $exchange, public string $symbol, public string $period)
     {
@@ -48,21 +60,93 @@ final class BuildMarketFeatures implements ShouldBeUnique, ShouldQueue
             ->max('microtimestamp');
 
         // A previous queued build may have caught up before this job started.
-        if ($latestFeature !== null && (int) $latestFeature >= $latestCandle) {
+        if ($this->replayCutoffMs === null && $latestFeature !== null && (int) $latestFeature >= $latestCandle) {
             return;
         }
 
-        $fromMs = null;
-        if ($latestFeature !== null) {
+        $timeframe = new CandleTimeframe;
+        $fromMs = $this->replayFromMs;
+        if ($this->replayCutoffMs === null && $latestFeature !== null) {
             // Rebuild a small overlap so any recent exchange correction is folded
             // into the new feature rows while the checkpoint preserves older state.
-            $timeframe = new CandleTimeframe;
             $fromMs = (int) $latestFeature;
             for ($i = 0; $i < 3; $i++) {
                 $fromMs = max(0, $timeframe->previous($fromMs, $this->period));
             }
         }
 
-        $builder->build($this->exchange, $this->symbol, $this->period, fromMs: $fromMs);
+        $cutoffMs = $this->replayCutoffMs ?? (int) floor(microtime(true) * 1000);
+        $checkpointBeforeMs = $this->checkpointBeforeMs ?? $fromMs;
+        $checkpoint = $checkpointBeforeMs === null ? null : app(FeatureCheckpointStore::class)
+            ->before($this->exchange, $this->symbol, $this->period, $checkpointBeforeMs);
+        $resumeThroughMs = isset($checkpoint['through_ms']) ? (int) $checkpoint['through_ms'] : null;
+        $chunkCandles = max(1, $this->chunkCandles ?? (int) config('features.queue_chunk_candles', 1000));
+        $chunkCutoffMs = $cutoffMs;
+        $candles = 0;
+
+        // Bound the actual source replay, including any warmup before fromMs.
+        // streamHistory includes archived candles as well as live database rows.
+        foreach ($tickers->streamHistory($this->exchange, $this->symbol, $this->period,
+            $resumeThroughMs === null ? 0 : $resumeThroughMs + 1, $cutoffMs) as $timestamp => $_) {
+            $closeMs = $timeframe->next((int) $timestamp, $this->period);
+            if ($closeMs > $cutoffMs) {
+                break;
+            }
+            if (++$candles >= $chunkCandles) {
+                $chunkCutoffMs = $closeMs;
+                break;
+            }
+        }
+        if ($candles === 0) {
+            return;
+        }
+
+        $started = hrtime(true);
+        try {
+            $rows = $builder->build($this->exchange, $this->symbol, $this->period,
+                cutoffMs: $chunkCutoffMs, fromMs: $fromMs, checkpointBeforeMs: $checkpointBeforeMs);
+        } catch (FeatureReplayTimeout $timeout) {
+            $advanced = $timeout->throughMs !== null
+                && ($resumeThroughMs === null || $timeout->throughMs > $resumeThroughMs);
+            if (! $advanced && $chunkCandles === 1) {
+                throw $timeout;
+            }
+
+            $this->continueReplay($fromMs, $cutoffMs,
+                $advanced ? $timeout->throughMs + 1 : $checkpointBeforeMs,
+                max(1, intdiv($chunkCandles, 2)));
+            $this->logContinuation($timeout->rowsProcessed, $timeout->throughMs, $started, 'time_budget');
+
+            return;
+        }
+
+        if ($chunkCutoffMs < $cutoffMs) {
+            $this->continueReplay($fromMs, $cutoffMs, $chunkCutoffMs, $chunkCandles);
+            $this->logContinuation($rows, $timeframe->previous($chunkCutoffMs, $this->period), $started, 'chunk_limit');
+        }
+    }
+
+    private function continueReplay(?int $fromMs, int $cutoffMs, ?int $checkpointBeforeMs, int $chunkCandles): void
+    {
+        $next = (new self($this->exchange, $this->symbol, $this->period))
+            ->onConnection($this->connection)->onQueue($this->queue);
+        $next->replayFromMs = $fromMs;
+        $next->replayCutoffMs = $cutoffMs;
+        $next->checkpointBeforeMs = $checkpointBeforeMs;
+        $next->chunkCandles = $chunkCandles;
+
+        // Dispatch after successful completion releases this job's unique lock.
+        // Fresh jobs preserve retries for real failures and keep recursive state sequential.
+        $this->prependToChain($next);
+    }
+
+    private function logContinuation(int $rows, ?int $throughMs, int $started, string $reason): void
+    {
+        app(ActionLog::class)->write('features.continued', [
+            'exchange' => $this->exchange, 'symbol' => $this->symbol, 'period' => $this->period,
+            'queue' => $this->queue, 'rows' => $rows, 'candle_ms' => $throughMs,
+            'duration_ms' => (int) ((hrtime(true) - $started) / 1_000_000),
+            'reason' => $reason, 'outcome' => 'continued',
+        ]);
     }
 }

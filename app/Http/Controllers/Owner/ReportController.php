@@ -13,6 +13,7 @@ use App\Models\MarketFeed;
 use App\Models\MarketSubscription;
 use App\Models\Ticker;
 use App\Models\User;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -96,12 +97,47 @@ class ReportController extends Controller
 
     public function intelligence(Request $request, CoinGeckoReadiness $contextReadiness): View
     {
-        $filters = $request->validate(['history' => ['nullable', 'boolean'], 'status' => ['nullable', 'string', 'max:32']]);
+        $filters = $request->validate([
+            'q' => ['nullable', 'string', 'max:120'],
+            'history' => ['nullable', 'boolean'],
+            'status' => ['nullable', 'string', 'max:32'],
+            'sort' => ['nullable', Rule::in(['market', 'reason', 'knowledge_rows', 'k', 'created_at'])],
+            'direction' => ['nullable', Rule::in(['asc', 'desc'])],
+        ]);
+        $filters['q'] = trim($filters['q'] ?? '');
+        $sort = $filters['sort'] = $filters['sort'] ?? 'created_at';
+        $direction = $filters['direction'] = $filters['direction'] ?? ($sort === 'created_at' ? 'desc' : 'asc');
         $query = DB::table('intelligence_models as models')->leftJoin('intelligence_heads as heads', 'heads.model_id', '=', 'models.model_id')
             ->select('models.model_id', 'models.dataset_id', 'models.status', 'models.created_at', 'models.report', 'heads.model_id as current_id')
             ->when(! ($filters['history'] ?? false), fn ($q) => $q->whereNotNull('heads.model_id'))
             ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('models.status', $status));
-        $models = $query->orderByDesc('models.created_at')->orderBy('models.model_id')->paginate(25)->withQueryString();
+        $grammar = $query->getGrammar();
+        foreach (preg_split('/\s+/u', $filters['q'], flags: PREG_SPLIT_NO_EMPTY) as $term) {
+            $pattern = '%'.strtr(Str::lower($term), ['!' => '!!', '%' => '!%', '_' => '!_']).'%';
+            $query->where(function (Builder $search) use ($grammar, $pattern): void {
+                foreach (['models.report->exchange', 'models.report->symbol', 'models.report->period',
+                    'models.report->reason', 'models.status', 'models.model_id'] as $column) {
+                    $search->orWhereRaw('LOWER('.$grammar->wrap($column).") LIKE ? ESCAPE '!'", [$pattern]);
+                }
+            });
+        }
+        if (in_array($sort, ['knowledge_rows', 'k'], true)) {
+            $value = 'NULLIF('.$grammar->wrap('models.report->'.$sort).", 'null')";
+            if ($sort === 'knowledge_rows') {
+                $value = 'COALESCE('.$value.', 0)';
+            }
+            $query->orderByRaw($value.' IS NULL')->orderByRaw('CAST('.$value.' AS DECIMAL(20, 0)) '.$direction);
+        } else {
+            $columns = match ($sort) {
+                'market' => ['models.report->exchange', 'models.report->symbol', 'models.report->period'],
+                'reason' => ['models.report->reason'],
+                default => ['models.created_at'],
+            };
+            foreach ($columns as $column) {
+                $query->orderBy($column, $direction);
+            }
+        }
+        $models = $query->orderBy('models.model_id')->paginate(25)->appends($filters);
         $models->through(function ($row) {
             $row->summary = json_decode($row->report, true, flags: JSON_THROW_ON_ERROR);
             unset($row->report);
@@ -116,7 +152,7 @@ class ReportController extends Controller
             return $row;
         });
 
-        return view('owner.intelligence', compact('models'));
+        return view('owner.intelligence', compact('models', 'filters', 'sort', 'direction'));
     }
 
     public function model(string $model, ModelStore $store, CoinGeckoReadiness $contextReadiness): View

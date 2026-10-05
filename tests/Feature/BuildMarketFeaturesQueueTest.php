@@ -1,6 +1,10 @@
 <?php
 
+use App\Domain\Archive\FeatureCheckpointStore;
+use App\Domain\Features\FeatureBuilder;
 use App\Domain\Features\FeatureEngine;
+use App\Domain\Features\FeatureReplayTimeout;
+use App\Domain\Operations\ActionLog;
 use App\Jobs\BuildMarketFeatures;
 use App\Models\Exchange;
 use App\Models\Market;
@@ -8,9 +12,37 @@ use App\Models\MarketFeed;
 use App\Models\MarketSubscription;
 use App\Models\User;
 use App\Repositories\TickerRepository;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+
+function featureQueueCandles(int $count): array
+{
+    $candles = [];
+    for ($i = 0; $i < $count; $i++) {
+        $close = 100 + $i % 7;
+        $candles[] = [
+            'microtimestamp' => 1_700_000_000_000 + $i * 60_000,
+            'open' => (string) $close, 'high' => (string) ($close + 2),
+            'low' => (string) ($close - 2), 'close' => (string) $close, 'volume' => '10',
+        ];
+    }
+
+    return $candles;
+}
+
+function drainFeatureQueue(string $queue = 'features'): int
+{
+    $count = 0;
+    while ($count < 20 && ($job = Queue::connection('database')->pop($queue)) !== null) {
+        expect($job->attempts())->toBe(1);
+        $job->fire();
+        $count++;
+    }
+
+    return $count;
+}
 
 it('queues feature work separately and only while the current feature version is behind', function () {
     config(['features.enabled' => true, 'features.queue' => 'features', 'archive.enabled' => false]);
@@ -60,4 +92,107 @@ it('queues feature work separately and only while the current feature version is
         ->expectsOutput('Dispatched 0 shared-market feature builds.')
         ->assertSuccessful();
     Queue::assertNothingPushed();
+});
+
+it('finishes more than three chunks from an older queued payload without changing feature values', function () {
+    config(['features.queue_chunk_candles' => 40, 'archive.enabled' => false]);
+    app(TickerRepository::class)->saveTickers('kraken', 'BTC/USD', '1m', featureQueueCandles(211));
+    app(FeatureBuilder::class)->build('kraken', 'BTC/USD', '1m');
+    $expected = DB::table('market_features')->orderBy('microtimestamp')->pluck('payload')->all();
+    DB::table('market_features')->delete();
+    app(FeatureCheckpointStore::class)->clear('kraken', 'BTC/USD', '1m');
+    $job = (new BuildMarketFeatures('kraken', 'BTC/USD', '1m'))->onConnection('database')->onQueue('feature-replay');
+    unset($job->replayFromMs, $job->replayCutoffMs, $job->checkpointBeforeMs, $job->chunkCandles);
+
+    dispatch($job);
+    $jobs = drainFeatureQueue('feature-replay');
+
+    expect($jobs)->toBe(6);
+    expect(DB::table('market_features')->orderBy('microtimestamp')->pluck('payload')->all())->toBe($expected);
+    $this->assertDatabaseCount('jobs', 0);
+    $this->assertDatabaseCount('failed_jobs', 0);
+});
+
+it('continues checkpoint warmup even when early chunks produce no new feature rows', function () {
+    config(['features.queue_chunk_candles' => 40, 'archive.enabled' => false]);
+    app(TickerRepository::class)->saveTickers('kraken', 'BTC/USD', '1m', featureQueueCandles(230));
+    app(FeatureBuilder::class)->build('kraken', 'BTC/USD', '1m');
+    $expected = DB::table('market_features')->orderBy('microtimestamp')->pluck('payload')->all();
+    DB::table('market_features')->where('microtimestamp', '>=', 1_700_009_600_000)->delete();
+    app(FeatureCheckpointStore::class)->clear('kraken', 'BTC/USD', '1m');
+
+    BuildMarketFeatures::dispatch('kraken', 'BTC/USD', '1m')->onConnection('database');
+    $jobs = drainFeatureQueue();
+
+    expect($jobs)->toBe(6);
+    expect(DB::table('market_features')->orderBy('microtimestamp')->pluck('payload')->all())->toBe($expected);
+    $this->assertDatabaseCount('jobs', 0);
+});
+
+it('resumes a timed out replay from its safe checkpoint and logs the continuation', function () {
+    config(['features.queue_chunk_candles' => 1000, 'archive.enabled' => false]);
+    app(TickerRepository::class)->saveTickers('kraken', 'BTC/USD', '1m', featureQueueCandles(1200));
+    app(FeatureBuilder::class)->build('kraken', 'BTC/USD', '1m');
+    $expected = DB::table('market_features')->orderBy('microtimestamp')->pluck('payload')->all();
+    DB::table('market_features')->delete();
+    app(FeatureCheckpointStore::class)->clear('kraken', 'BTC/USD', '1m');
+    $log = Mockery::spy(ActionLog::class);
+    $this->app->instance(ActionLog::class, $log);
+    $timedOut = false;
+    DB::listen(function (QueryExecuted $query) use (&$timedOut): void {
+        if (! $timedOut && str_starts_with($query->sql, 'insert into "market_features"')
+            && DB::table('market_features')->count() === 700) {
+            $timedOut = true;
+            throw new FeatureReplayTimeout(1_700_029_940_000, 700);
+        }
+    });
+
+    BuildMarketFeatures::dispatch('kraken', 'BTC/USD', '1m')->onConnection('database');
+    $jobs = drainFeatureQueue();
+
+    expect($timedOut)->toBeTrue();
+    expect($jobs)->toBe(3);
+    expect(DB::table('market_features')->orderBy('microtimestamp')->pluck('payload')->all())->toBe($expected);
+    $this->assertDatabaseCount('jobs', 0);
+    $this->assertDatabaseCount('failed_jobs', 0);
+    $log->shouldHaveReceived('write')->with('features.continued', Mockery::on(fn (array $fields): bool => $fields['reason'] === 'time_budget' && $fields['rows'] === 700
+        && $fields['candle_ms'] === 1_700_029_940_000 && $fields['queue'] === 'features'))->once();
+});
+
+it('shrinks a chunk when the time budget expires before the first checkpoint', function () {
+    config(['features.queue_chunk_candles' => 8, 'archive.enabled' => false]);
+    app(TickerRepository::class)->saveTickers('kraken', 'BTC/USD', '1m', featureQueueCandles(10));
+    $timedOut = false;
+    DB::listen(function (QueryExecuted $query) use (&$timedOut): void {
+        if (! $timedOut && str_contains($query->sql, '"coin_gecko_market_mappings"')) {
+            $timedOut = true;
+            throw new FeatureReplayTimeout;
+        }
+    });
+
+    BuildMarketFeatures::dispatch('kraken', 'BTC/USD', '1m')->onConnection('database');
+    $jobs = drainFeatureQueue();
+
+    expect($timedOut)->toBeTrue();
+    expect($jobs)->toBe(4);
+    $this->assertDatabaseCount('market_features', 10);
+    $this->assertDatabaseCount('jobs', 0);
+});
+
+it('does not endlessly replace a replay that cannot process even one candle', function () {
+    config(['features.queue_chunk_candles' => 2, 'archive.enabled' => false]);
+    app(TickerRepository::class)->saveTickers('kraken', 'BTC/USD', '1m', featureQueueCandles(3));
+    DB::listen(function (QueryExecuted $query): void {
+        if (str_contains($query->sql, '"coin_gecko_market_mappings"')) {
+            throw new FeatureReplayTimeout;
+        }
+    });
+    BuildMarketFeatures::dispatch('kraken', 'BTC/USD', '1m')->onConnection('database');
+    Queue::connection('database')->pop('features')->fire();
+    $last = Queue::connection('database')->pop('features');
+
+    expect(fn () => $last->fire())->toThrow(FeatureReplayTimeout::class);
+
+    $this->assertDatabaseCount('market_features', 0);
+    $this->assertDatabaseCount('jobs', 1);
 });
