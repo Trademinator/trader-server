@@ -16,10 +16,10 @@ class CandleTrainingController extends Controller
     public function store(Request $request, CandleTraining $training): RedirectResponse
     {
         $data = $request->validate(['dataset' => ['required', 'uuid', 'exists:research_datasets,dataset_id']]);
-        $state = $training->review($request->user(), $data['dataset']);
+        $decision = $training->start($request->user(), $data['dataset']);
 
         return redirect()->route('human-training.candles.show', [
-            'dataset' => $data['dataset'], 'decision_at_ms' => $state['payload']['decision_at_ms'],
+            'dataset' => $data['dataset'], 'decision_at_ms' => $decision,
         ]);
     }
 

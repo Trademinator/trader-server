@@ -40,17 +40,30 @@ final class CandleTraining
         return HumanCandleLabel::query()->where('trainer_id', $trainer->user_id)->count();
     }
 
+    /** The start POST only chooses its redirect; the GET prepares the chart. */
+    public function start(User $trainer, string $dataset): int
+    {
+        Gate::forUser($trainer)->authorize('train-intelligence');
+        [$manifest, $rows] = $this->load($dataset);
+
+        return (int) $this->unseenSnapshot($trainer, $manifest, $rows)['row']['decision_at_ms'];
+    }
+
     public function review(User $trainer, string $dataset, ?int $decisionAtMs = null): array
     {
         Gate::forUser($trainer)->authorize('train-intelligence');
         [$manifest, $rows] = $this->load($dataset);
-        $row = $decisionAtMs === null
-            ? $this->unseenRow($trainer, $manifest, $rows)
-            : collect($rows)->firstWhere('decision_at_ms', $decisionAtMs);
-        if ($row === null) {
-            throw ValidationException::withMessages(['decision_at_ms' => 'Choose a candle contained in this dataset.']);
+        if ($decisionAtMs === null) {
+            $candidate = $this->unseenSnapshot($trainer, $manifest, $rows);
+            $row = $candidate['row'];
+            $snapshot = $candidate['snapshot'];
+        } else {
+            $row = collect($rows)->firstWhere('decision_at_ms', $decisionAtMs);
+            if ($row === null) {
+                throw ValidationException::withMessages(['decision_at_ms' => 'Choose a candle contained in this dataset.']);
+            }
+            $snapshot = $this->snapshots->snapshotForRow($manifest, $row);
         }
-        $snapshot = $this->snapshots->snapshotForRow($manifest, $row);
         if ($snapshot === null) {
             throw CandleTrainingRecovery::exception($trainer, $manifest, 'decision_at_ms',
                 'That candle no longer matches the current source history and cannot be used for training.');
@@ -407,31 +420,12 @@ final class CandleTraining
         return [$manifest, $rows];
     }
 
-    private function unseenRow(User $trainer, array $manifest, array $rows): array
+    /** @return array{row: array, snapshot: HumanTrainingSnapshot} */
+    private function unseenSnapshot(User $trainer, array $manifest, array $rows): array
     {
-        $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
-        $labelled = HumanTrainingSnapshot::query()->where('market_key', $marketKey)
-            ->whereBetween('decision_at_ms', [min(array_column($rows, 'decision_at_ms')), max(array_column($rows, 'decision_at_ms'))])
-            ->whereHas('candleLabels', fn ($query) => $query->where('trainer_id', $trainer->user_id))
-            ->orderBy('snapshot_id')->lazy(25);
-        $seen = collect();
-        foreach ($labelled->chunk(25) as $batch) {
-            $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $batch, $rows);
-            foreach ($batch as $snapshot) {
-                if (isset($compatible[$snapshot->snapshot_id])) {
-                    $seen->put($snapshot->decision_at_ms, true);
-                }
-            }
-        }
-        $candidates = array_values(array_filter($rows, fn (array $row): bool => ! $seen->has($row['decision_at_ms'])));
-        if ($candidates === []) {
-            $candidates = $rows;
-        }
-        shuffle($candidates);
-        foreach (array_slice($candidates, 0, config('human_training.candidate_attempts')) as $row) {
-            if ($this->snapshots->snapshotForRow($manifest, $row) !== null) {
-                return $row;
-            }
+        $candidate = $this->snapshots->candidateSnapshot($trainer, $manifest, $rows, 'candleLabels', allowReviewed: true);
+        if ($candidate !== null) {
+            return $candidate;
         }
 
         throw ValidationException::withMessages(['dataset' => 'No intact candle was found in this bounded search. Retry, choose another dataset or collect more history.']);

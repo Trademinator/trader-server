@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
+use InvalidArgumentException;
 
 final class HumanTraining
 {
@@ -99,29 +100,10 @@ final class HumanTraining
                 || $rows === [] || count($rows) > config('intelligence.max_rows')) {
                 throw ValidationException::withMessages(['dataset' => 'Choose a current, bounded semantic dataset built from closed candles.']);
             }
-            $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
-            $reviewed = HumanTrainingSnapshot::query()->where('market_key', $marketKey)
-                ->whereBetween('decision_at_ms', [min(array_column($rows, 'decision_at_ms')), max(array_column($rows, 'decision_at_ms'))])
-                ->whereHas('reviews', fn ($query) => $query->where('trainer_id', $trainer->user_id))
-                ->orderBy('snapshot_id')->lazy(25);
-            $seen = collect();
-            foreach ($reviewed->chunk(25) as $batch) {
-                $compatible = $this->compatibleSnapshotIds($manifest, $batch, $rows);
-                foreach ($batch as $snapshot) {
-                    if (isset($compatible[$snapshot->snapshot_id])) {
-                        $seen->put($snapshot->decision_at_ms, true);
-                    }
-                }
-            }
-            $indices = array_keys(array_filter($rows, fn (array $row): bool => ! $seen->has($row['decision_at_ms'])));
-            shuffle($indices);
-            foreach (array_slice($indices, 0, config('human_training.candidate_attempts')) as $index) {
-                $snapshot = $this->snapshotForRow($manifest, $rows[$index]);
-                if ($snapshot === null) {
-                    continue;
-                }
+            $candidate = $this->candidateSnapshot($trainer, $manifest, $rows, 'reviews');
+            if ($candidate !== null) {
                 $review = new HumanTrainingReview;
-                $review->forceFill(['snapshot_id' => $snapshot->snapshot_id, 'trainer_id' => $trainer->user_id,
+                $review->forceFill(['snapshot_id' => $candidate['snapshot']->snapshot_id, 'trainer_id' => $trainer->user_id,
                     'shown_at' => now(), 'expires_at' => now()->addMinutes(config('human_training.assignment_minutes'))]);
                 $review->save();
 
@@ -130,6 +112,48 @@ final class HumanTraining
 
             throw ValidationException::withMessages(['dataset' => 'No unseen, intact snapshot was found in this bounded search. Retry, choose another dataset or collect more history.']);
         });
+    }
+
+    /**
+     * Select before hydrating charts. Query only distinct candle timestamps for
+     * this trainer and the bounded dataset, then verify at most 24 candidates.
+     * A previous revision's label is a hint, never proof that a row is reviewed.
+     *
+     * @return array{row: array, snapshot: HumanTrainingSnapshot}|null
+     */
+    public function candidateSnapshot(User $trainer, array $manifest, array $rows, string $relation,
+        bool $allowReviewed = false): ?array
+    {
+        Gate::forUser($trainer)->authorize('train-intelligence');
+        $table = match ($relation) {
+            'candleLabels' => 'human_candle_labels',
+            'reviews' => 'human_training_reviews',
+            default => throw new InvalidArgumentException('Unsupported human opinion relation.'),
+        };
+        if (count($rows) > (int) config('intelligence.max_rows')) {
+            throw new InvalidArgumentException('Candidate selection exceeds the dataset bound.');
+        }
+        $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
+        $seen = [];
+        $decisions = array_values(array_unique(array_map('intval', array_column($rows, 'decision_at_ms'))));
+        foreach (array_chunk($decisions, 500) as $chunk) {
+            $recorded = DB::table('human_training_snapshots as snapshots')
+                ->where('snapshots.market_key', $marketKey)->where('snapshots.version', self::VERSION)
+                ->whereIn('snapshots.decision_at_ms', $chunk)
+                ->whereExists(fn ($query) => $query->selectRaw('1')->from($table.' as opinions')
+                    ->whereColumn('opinions.snapshot_id', 'snapshots.snapshot_id')
+                    ->where('opinions.trainer_id', $trainer->user_id))
+                ->distinct()->pluck('snapshots.decision_at_ms');
+            foreach ($recorded as $decision) {
+                $seen[(int) $decision] = true;
+            }
+        }
+
+        return (new TrainingCandidateSelector)->select($rows, $seen,
+            fn (array $row): ?HumanTrainingSnapshot => $this->snapshotForRow($manifest, $row),
+            fn (HumanTrainingSnapshot $snapshot): bool => DB::table($table)
+                ->where('snapshot_id', $snapshot->snapshot_id)->where('trainer_id', $trainer->user_id)->exists(),
+            (int) config('human_training.candidate_attempts'), $allowReviewed);
     }
 
     public function snapshotForRow(array $manifest, array $row): ?HumanTrainingSnapshot
@@ -300,8 +324,9 @@ final class HumanTraining
     }
 
     /**
-     * Resolve the same latest historical Server observation used by snapshot(),
-     * but for all requested decisions in one query.
+     * One indexed, limited lookup per cutoff, never a hydration of all historical
+     * signals. Both timestamps must be known by the decision. Preserve the
+     * recorded-time / UUID tie-break used by the original replay contract.
      *
      * @param  list<int>  $decisions
      * @return array<int, array<string, mixed>|null>
@@ -313,49 +338,26 @@ final class HumanTraining
         if ($decisions === []) {
             return [];
         }
-
-        $maximum = max($decisions);
-        $signals = MarketSignal::query()
-            ->whereHas('market', fn ($query) => $query->where('symbol', $manifest['symbol'])
-                ->whereHas('exchange', fn ($query) => $query->where('class', $manifest['exchange'])))
-            ->where('period', $manifest['period'])
-            ->whereNotNull('decision_at_ms')
-            ->where('recorded_at_ms', '<=', $maximum)
-            ->where('decision_at_ms', '<=', $maximum)
-            ->get(['market_signal_id', 'model_id', 'recorded_at_ms', 'decision_at_ms', 'action', 'reason'])
-            ->all();
-
-        usort($signals, function (MarketSignal $a, MarketSignal $b): int {
-            $availableA = max((int) $a->recorded_at_ms, (int) $a->decision_at_ms);
-            $availableB = max((int) $b->recorded_at_ms, (int) $b->decision_at_ms);
-
-            return $availableA <=> $availableB
-                ?: ((int) $a->recorded_at_ms <=> (int) $b->recorded_at_ms)
-                ?: strcmp((string) $a->market_signal_id, (string) $b->market_signal_id);
-        });
-
-        $result = [];
-        $cursor = 0;
-        $best = null;
+        $marketIds = DB::table('markets')->join('exchanges', 'exchanges.exchange_id', '=', 'markets.exchange_id')
+            ->where('exchanges.class', $manifest['exchange'])->where('markets.symbol', $manifest['symbol'])
+            ->pluck('markets.market_id')->all();
+        $result = array_fill_keys($decisions, null);
+        if ($marketIds === []) {
+            return $result;
+        }
+        $columns = ['market_signal_id', 'model_id', 'recorded_at_ms', 'decision_at_ms', 'action', 'reason'];
         foreach ($decisions as $decision) {
-            while ($cursor < count($signals)
-                && max((int) $signals[$cursor]->recorded_at_ms, (int) $signals[$cursor]->decision_at_ms) <= $decision) {
-                $candidate = $signals[$cursor++];
-                if ($best === null
-                    || (int) $candidate->recorded_at_ms > (int) $best->recorded_at_ms
-                    || ((int) $candidate->recorded_at_ms === (int) $best->recorded_at_ms
-                        && strcmp((string) $candidate->market_signal_id, (string) $best->market_signal_id) > 0)) {
-                    $best = $candidate;
-                }
+            $signal = MarketSignal::query()->whereIn('market_id', $marketIds)->where('period', $manifest['period'])
+                ->where('recorded_at_ms', '<=', $decision)->where('decision_at_ms', '<=', $decision)
+                ->orderByDesc('recorded_at_ms')->orderByDesc('market_signal_id')->first($columns);
+            if ($signal !== null) {
+                $result[$decision] = [
+                    'model_id' => $signal->model_id,
+                    'recorded_at_ms' => (int) $signal->recorded_at_ms,
+                    'decision_at_ms' => (int) $signal->decision_at_ms,
+                    'action' => $signal->action, 'reason' => $signal->reason,
+                ];
             }
-
-            $result[$decision] = $best === null ? null : [
-                'model_id' => $best->model_id,
-                'recorded_at_ms' => (int) $best->recorded_at_ms,
-                'decision_at_ms' => (int) $best->decision_at_ms,
-                'action' => $best->action,
-                'reason' => $best->reason,
-            ];
         }
 
         return $result;
