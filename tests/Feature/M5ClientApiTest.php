@@ -1,5 +1,7 @@
 <?php
 
+use App\Domain\Client\ClientMarketAccess;
+use App\Domain\Client\ClientPaperTrading;
 use App\Domain\Intelligence\ModelStore;
 use App\Models\ClientApiKey;
 use App\Models\ClientExecutionReport;
@@ -11,6 +13,7 @@ use App\Models\MarketFeed;
 use App\Models\MarketSignal;
 use App\Models\MarketSubscription;
 use App\Models\User;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -162,6 +165,66 @@ it('executes a paper signal at most once even when a retry uses a new idempotenc
         ->and(ClientPaperEvent::query()->where('market_signal_id', $signal->getKey())
             ->where('event', 'executed')->count())->toBe(1);
 });
+
+it('reuses one account without a second fill when first paper calls interleave', function (
+    string $competingKey,
+    string $expectedEvent,
+    string $expectedReason,
+    int $expectedEvents,
+) {
+    $this->freezeTime();
+    $user = User::factory()->create();
+    [$secret, $subscription, $signal] = m5PaperMarket($user);
+    $subscription->clientSetting->update(['paper_slippage_bps' => 0]);
+    $competingSubscription = app(ClientMarketAccess::class)->active($user, $subscription->getKey());
+    $input = [
+        'idempotency_key' => 'paper-f12-shared',
+        'reported_at_ms' => now()->getTimestampMs(),
+        'best_bid' => 100, 'best_ask' => 100, 'taker_fee_bps' => 0, 'fee_asset' => 'quote',
+    ];
+    $transactionLevel = DB::transactionLevel();
+    $interleaved = false;
+    $competingResult = null;
+
+    // SQLite has no row locks. Complete a competing call after the first transactional
+    // read has fetched its result, reproducing a stale account lookup without sleeps.
+    DB::listen(function (QueryExecuted $query) use (
+        $transactionLevel, &$interleaved, &$competingResult, $competingSubscription, $input, $competingKey,
+    ): void {
+        if ($interleaved || $query->connection->transactionLevel() <= $transactionLevel
+            || ! str_starts_with($query->sql, 'select ')) {
+            return;
+        }
+
+        $interleaved = true;
+        $competingResult = app(ClientPaperTrading::class)->execute($competingSubscription, [
+            ...$input, 'idempotency_key' => $competingKey,
+        ]);
+    });
+
+    $response = $this->withToken($secret)->postJson(
+        '/api/v1/client/markets/'.$subscription->getKey().'/paper', $input,
+    );
+
+    $response->assertOk()->assertJsonPath('event', $expectedEvent)->assertJsonPath('reason', $expectedReason);
+    expect($interleaved)->toBeTrue();
+    expect($competingResult['event'])->toBe('executed');
+    $response->assertJsonPath('paper.account_id', $competingResult['paper']['account_id']);
+    expect((float) $response->json('paper.quote_balance'))->toBe(900.0);
+    expect((float) $response->json('paper.base_balance'))->toBe(1.0);
+    $this->assertDatabaseCount('client_paper_accounts', 1);
+    $this->assertDatabaseCount('client_paper_events', $expectedEvents);
+    $this->assertDatabaseHas('client_paper_accounts', [
+        'market_subscription_id' => $subscription->getKey(),
+        'quote_balance' => 900,
+        'base_balance' => 1,
+    ]);
+    expect(ClientPaperEvent::query()->where('market_signal_id', $signal->getKey())
+        ->where('event', 'executed')->count())->toBe(1);
+})->with([
+    'same idempotency key replays the fill' => ['paper-f12-shared', 'executed', 'paper_fill', 1],
+    'different idempotency key skips the filled signal' => ['paper-f12-other', 'skipped', 'signal_already_acted', 2],
+]);
 
 it('allows a skipped paper signal to be reevaluated before any paper fill executes', function () {
     $this->freezeTime();

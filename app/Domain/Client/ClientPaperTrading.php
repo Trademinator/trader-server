@@ -18,6 +18,10 @@ final class ClientPaperTrading
     public function execute(MarketSubscription $subscription, array $input): array
     {
         return DB::transaction(function () use ($subscription, $input): array {
+            // Serialize first calls on the existing parent before reading settings or an absent account.
+            $subscription = MarketSubscription::query()->where('user_id', $subscription->user_id)
+                ->whereKey($subscription->getKey())->lockForUpdate()->firstOrFail();
+
             $subscription->loadMissing('clientSetting', 'market.latestSignal');
             $setting = $subscription->clientSetting;
             abort_if($setting === null || ! $setting->paper_enabled, 409, 'Paper trading is disabled for this market.');
