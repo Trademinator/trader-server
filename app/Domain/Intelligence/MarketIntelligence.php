@@ -33,7 +33,7 @@ final class MarketIntelligence
 
     public function build(string $exchange, string $symbol, string $period, ?string $dataset = null,
         string $schema = 'core', ?int $fromMs = null, ?int $toMs = null, ?int $asOfMs = null,
-        ?string $generation = null, array $buildPerformance = []): array
+        ?string $generation = null, array $buildPerformance = [], ?string $featureLockOwner = null): array
     {
         $buildPerformance['started_at'] ??= now()->toIso8601String();
         $buildPerformance['started_monotonic_ns'] = hrtime(true);
@@ -68,7 +68,7 @@ final class MarketIntelligence
                 $definition = new SemanticLabels(config('intelligence.horizon'), config('intelligence.lookback'),
                     config('intelligence.minimum_move_bps'), config('intelligence.extreme_fraction'));
                 $manifest = $this->datasets->build($exchange, $symbol, $period, $definition, $schema,
-                    fromMs: (int) $fromMs, toMs: $toMs, asOfMs: $asOfMs);
+                    fromMs: (int) $fromMs, toMs: $toMs, asOfMs: $asOfMs, featureLockOwner: $featureLockOwner);
                 $dataset = $manifest['dataset_id'];
             }
 

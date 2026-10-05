@@ -65,6 +65,7 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
 
             return;
         }
+        $featureLockAcquired = false;
         try {
             // Refresh after taking the lock: a repair may have completed while queued.
             $state = $builds->owned($this->historyId, $this->leaseToken)->first();
@@ -76,11 +77,7 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
             if ($expectedRevision !== null && $expectedRevision !== (int) $state->history_revision) {
                 // A changed prefix invalidates checkpoints from this split chain.
                 // Releasing the token makes all remaining old children harmless.
-                $builds->release($this->historyId, $this->leaseToken, [
-                    'build_stage' => 'features', 'build_revision' => null,
-                    'build_performance' => null, 'build_error' => null,
-                ]);
-                $builds->dispatchDue($exchange, $symbol, $state->period);
+                $this->restartChangedHistory($builds, $exchange, $symbol, $state->period);
 
                 return;
             }
@@ -155,8 +152,20 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
                 ]);
             } elseif ($state->build_stage === 'knn' && (int) $state->build_revision > 0) {
                 $featureLock = Cache::lock('trademinator:features:'.$key, 720);
-                if (! $featureLock->get()) {
+                $featureLockAcquired = $featureLock->get();
+                if (! $featureLockAcquired) {
                     $this->release(30);
+
+                    return;
+                }
+                // A repair/import may finish between the first revision check
+                // and acquiring this lock. Do not snapshot stale feature state.
+                $state = $builds->owned($this->historyId, $this->leaseToken)->first();
+                if ($state === null) {
+                    return;
+                }
+                if ((int) $state->build_revision !== (int) $state->history_revision) {
+                    $this->restartChangedHistory($builds, $exchange, $symbol, $state->period);
 
                     return;
                 }
@@ -167,7 +176,7 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
                 $report = $intelligence->build($exchange, $symbol, $state->period,
                     schema: $state->recovery_schema ?? $this->schema ?? (string) config('intelligence.schema'),
                     generation: hash('sha256', 'history:'.$this->historyId.':'.$revision),
-                    buildPerformance: $performance);
+                    buildPerformance: $performance, featureLockOwner: $featureLock->owner());
                 $builds->release($this->historyId, $this->leaseToken, [
                     'trained_revision' => $revision, 'build_stage' => null, 'build_revision' => null,
                     'build_failures' => 0, 'build_error' => null, 'recovery_schema' => null, 'model_id' => $report['model_id'], 'last_trained_at' => now(),
@@ -180,11 +189,20 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
             $builds->failure($this->historyId, $this->leaseToken, $error);
             report($error);
         } finally {
-            if (isset($featureLock)) {
+            if ($featureLockAcquired) {
                 $featureLock->release();
             }
             $lock->release();
         }
+    }
+
+    private function restartChangedHistory(BackfillIntelligence $builds, string $exchange, string $symbol, string $period): void
+    {
+        $builds->release($this->historyId, $this->leaseToken, [
+            'build_stage' => 'features', 'build_revision' => null,
+            'build_performance' => null, 'build_error' => null,
+        ]);
+        $builds->dispatchDue($exchange, $symbol, $period);
     }
 
     private function splitFeatureReplay(BackfillIntelligence $builds, int $startMs, int $cutoffMs,

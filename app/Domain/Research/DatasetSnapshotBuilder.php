@@ -19,8 +19,13 @@ final class DatasetSnapshotBuilder
 {
     public function __construct(private DatasetStore $store, private TickerRepository $tickers) {}
 
+    /**
+     * An internal caller may lend an already-held feature lock. The owner is
+     * checked against this exact market; only the acquiring caller releases it.
+     */
     public function build(string $exchange, string $symbol, string $period, LabelDefinition|SemanticLabels $definition,
-        string $schema = 'core', array $custom = [], ?int $fromMs = null, ?int $toMs = null, ?int $asOfMs = null): array
+        string $schema = 'core', array $custom = [], ?int $fromMs = null, ?int $toMs = null, ?int $asOfMs = null,
+        ?string $featureLockOwner = null): array
     {
         $keys = FeatureSchema::keys($schema, $custom);
         $timeframe = new CandleTimeframe;
@@ -35,8 +40,16 @@ final class DatasetSnapshotBuilder
         $directory = $this->store->directory($id);
         $temporary = $directory.'.tmp';
         // Share M2's lock: a snapshot must not capture a partially rebuilt feature series.
-        $lock = Cache::lock('trademinator:features:'.hash('sha256', "$exchange|$symbol|$period"), 720);
-        if (! $lock->get()) {
+        $lockName = 'trademinator:features:'.hash('sha256', "$exchange|$symbol|$period");
+        $borrowedLock = $featureLockOwner !== null;
+        $lock = $borrowedLock ? Cache::restoreLock($lockName, $featureLockOwner) : Cache::lock($lockName, 720);
+        if ($borrowedLock) {
+            // Never reacquire or release a parent's lock. A token alone is not
+            // permission: it must still own the lock for this exact market.
+            if (! $lock->isOwnedByCurrentProcess()) {
+                throw new RuntimeException('Feature lock ownership was lost before building the dataset. Retry the history rebuild.');
+            }
+        } elseif (! $lock->get()) {
             throw new RuntimeException('Features or a dataset are already being built for this market and period. Retry after that build finishes.');
         }
         $file = null;
@@ -246,7 +259,9 @@ final class DatasetSnapshotBuilder
             if (is_resource($file)) {
                 fclose($file);
             }
-            $lock->release();
+            if (! $borrowedLock) {
+                $lock->release();
+            }
         }
     }
 

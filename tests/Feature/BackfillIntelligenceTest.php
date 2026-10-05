@@ -141,7 +141,7 @@ it('rebuilds after a successful backfill even when the weekly generation is alre
     Bus::assertDispatchedTimes(RebuildBackfilledIntelligence::class, 2);
 });
 
-it('keeps imports arriving after feature preparation pending until one follow-up rebuild completes', function () {
+it('restarts stale prepared features without publishing an obsolete revision', function () {
     $this->travelTo('2024-01-10 00:00:00 UTC');
     backfillTrainingFeed();
     Bus::fake([BackfillMarketHistory::class, RebuildBackfilledIntelligence::class]);
@@ -152,12 +152,17 @@ it('keeps imports arriving after feature preparation pending until one follow-up
 
     runBackfillTrainingStep($id);
 
-    $this->assertDatabaseHas('market_history_backfills', ['trained_revision' => 1, 'history_revision' => 2, 'build_stage' => 'features']);
+    $this->assertDatabaseHas('market_history_backfills', ['trained_revision' => 0, 'history_revision' => 2, 'build_stage' => 'features']);
+    $this->assertDatabaseCount('intelligence_models', 0);
+    $this->assertDatabaseCount('research_datasets', 0);
     expect(app(BackfillIntelligence::class)->dispatchDue())->toBe(0);
     runBackfillTrainingStep($id);
     runBackfillTrainingStep($id);
     $this->assertDatabaseHas('market_history_backfills', ['trained_revision' => 2, 'history_revision' => 2, 'build_stage' => null]);
-    $this->assertDatabaseCount('intelligence_models', 2);
+    $this->assertDatabaseCount('intelligence_models', 1);
+    $this->assertDatabaseCount('research_datasets', 1);
+    $this->assertDatabaseHas('intelligence_models', ['generation_key' => hash('sha256', 'history:'.$id.':2')]);
+    $this->assertDatabaseMissing('intelligence_models', ['generation_key' => hash('sha256', 'history:'.$id.':1')]);
     Bus::assertDispatchedTimes(RebuildBackfilledIntelligence::class, 4);
 });
 
@@ -223,4 +228,171 @@ it('retains pending training while intelligence is disabled and recovers stale b
     $this->assertDatabaseHas('market_history_backfills', ['trained_revision' => 1, 'build_stage' => null]);
     $this->assertDatabaseCount('intelligence_models', 1);
     Bus::assertDispatchedTimes(RebuildBackfilledIntelligence::class, 3);
+});
+
+it('lends the feature lock through dataset creation and keeps it held until model publication completes', function () {
+    $this->travelTo('2024-01-10 00:00:00 UTC');
+    backfillTrainingFeed();
+    app(FeatureBuilder::class)->build('kraken', 'BTC/USD', '1h');
+    $name = 'trademinator:features:'.ModelStore::marketKey('kraken', 'BTC/USD', '1h');
+    $lock = Cache::lock($name, 720);
+    expect($lock->get())->toBeTrue();
+    $protectedDuringPublication = null;
+    DB::listen(function ($query) use ($name, &$protectedDuringPublication): void {
+        if (str_starts_with(strtolower(ltrim($query->sql)), 'insert') && str_contains($query->sql, 'intelligence_models')) {
+            $contender = Cache::lock($name, 720);
+            $protectedDuringPublication = ! $contender->get();
+            if (! $protectedDuringPublication) {
+                $contender->release();
+            }
+        }
+    });
+
+    try {
+        $report = app(MarketIntelligence::class)->build('kraken', 'BTC/USD', '1h', featureLockOwner: $lock->owner());
+        expect($lock->isOwnedByCurrentProcess())->toBeTrue();
+        expect($protectedDuringPublication)->toBeTrue();
+        $this->assertDatabaseHas('intelligence_models', ['model_id' => $report['model_id']]);
+        $this->assertDatabaseCount('research_datasets', 1);
+    } finally {
+        $lock->release();
+    }
+
+    $next = Cache::lock($name, 720);
+    try {
+        expect($next->get())->toBeTrue();
+    } finally {
+        $next->release();
+    }
+});
+
+it('rejects a wrong or expired borrowed owner without unlocking another builder', function (bool $expired) {
+    $this->travelTo('2024-01-10 00:00:00 UTC');
+    $name = 'trademinator:features:'.ModelStore::marketKey('kraken', 'BTC/USD', '1h');
+    $old = Cache::lock($name, 1);
+    expect($old->get())->toBeTrue();
+    if ($expired) {
+        $this->travel(2)->seconds();
+        $holder = Cache::lock($name, 720);
+        expect($holder->get())->toBeTrue();
+        $token = $old->owner();
+    } else {
+        $holder = $old;
+        $token = (string) Str::uuid7();
+    }
+
+    try {
+        expect(fn () => app(\App\Domain\Research\DatasetSnapshotBuilder::class)->build(
+            'kraken', 'BTC/USD', '1h', new \App\Domain\Research\SemanticLabels(2, 3), featureLockOwner: $token,
+        ))->toThrow(RuntimeException::class, 'Feature lock ownership was lost');
+        expect($holder->isOwnedByCurrentProcess())->toBeTrue();
+        $this->assertDatabaseCount('research_datasets', 0);
+    } finally {
+        $holder->release();
+    }
+})->with([false, true]);
+
+it('does not accept a borrowed feature lock belonging to another market', function () {
+    $this->travelTo('2024-01-10 00:00:00 UTC');
+    $lock = Cache::lock('trademinator:features:'.ModelStore::marketKey('kraken', 'BTC/USD', '1h'), 720);
+    expect($lock->get())->toBeTrue();
+    try {
+        expect(fn () => app(\App\Domain\Research\DatasetSnapshotBuilder::class)->build(
+            'kraken', 'ETH/USD', '1h', new \App\Domain\Research\SemanticLabels(2, 3), featureLockOwner: $lock->owner(),
+        ))->toThrow(RuntimeException::class, 'Feature lock ownership was lost');
+        expect($lock->isOwnedByCurrentProcess())->toBeTrue();
+        $this->assertDatabaseCount('research_datasets', 0);
+    } finally {
+        $lock->release();
+    }
+});
+
+it('leaves a borrowed lock with its caller when dataset creation fails', function () {
+    $this->travelTo('2024-01-10 00:00:00 UTC');
+    $lock = Cache::lock('trademinator:features:'.ModelStore::marketKey('kraken', 'BTC/USD', '1h'), 720);
+    expect($lock->get())->toBeTrue();
+    try {
+        expect(fn () => app(\App\Domain\Research\DatasetSnapshotBuilder::class)->build(
+            'kraken', 'BTC/USD', '1h', new \App\Domain\Research\SemanticLabels(2, 3), featureLockOwner: $lock->owner(),
+        ))->toThrow(RuntimeException::class, 'No M2 features in this range');
+        expect($lock->isOwnedByCurrentProcess())->toBeTrue();
+        expect(glob(config('research.path').'/*.tmp') ?: [])->toBe([]);
+        $this->assertDatabaseCount('research_datasets', 0);
+    } finally {
+        $lock->release();
+    }
+});
+
+it('still releases a dataset-owned lock when a normal dataset build fails', function () {
+    $this->travelTo('2024-01-10 00:00:00 UTC');
+    expect(fn () => app(\App\Domain\Research\DatasetSnapshotBuilder::class)->build(
+        'kraken', 'BTC/USD', '1h', new \App\Domain\Research\SemanticLabels(2, 3),
+    ))->toThrow(RuntimeException::class, 'No M2 features in this range');
+    $lock = Cache::lock('trademinator:features:'.ModelStore::marketKey('kraken', 'BTC/USD', '1h'), 720);
+    try {
+        expect($lock->get())->toBeTrue();
+    } finally {
+        $lock->release();
+    }
+});
+
+it('retries KNN lock contention without releasing the competing owner or recording a build failure', function () {
+    $this->travelTo('2024-01-10 00:00:00 UTC');
+    backfillTrainingFeed();
+    Bus::fake([BackfillMarketHistory::class, RebuildBackfilledIntelligence::class]);
+    $id = importTrainingHistory();
+    runBackfillTrainingStep($id);
+    $lock = Cache::lock('trademinator:features:'.ModelStore::marketKey('kraken', 'BTC/USD', '1h'), 720);
+    expect($lock->get())->toBeTrue();
+    try {
+        runBackfillTrainingStep($id);
+        expect($lock->isOwnedByCurrentProcess())->toBeTrue();
+        $this->assertDatabaseHas('market_history_backfills', ['history_id' => $id, 'build_stage' => 'knn',
+            'build_failures' => 0, 'trained_revision' => 0]);
+        $this->assertDatabaseCount('intelligence_models', 0);
+    } finally {
+        $lock->release();
+    }
+
+    runBackfillTrainingStep($id);
+    $this->assertDatabaseCount('intelligence_models', 1);
+    $this->assertDatabaseHas('market_history_backfills', ['history_id' => $id, 'trained_revision' => 1,
+        'build_stage' => null, 'build_failures' => 0, 'build_error' => null]);
+});
+
+it('rechecks the revision after acquiring the feature lock before making a dataset', function () {
+    $this->travelTo('2024-01-10 00:00:00 UTC');
+    backfillTrainingFeed();
+    Bus::fake([BackfillMarketHistory::class, RebuildBackfilledIntelligence::class]);
+    $id = importTrainingHistory();
+    runBackfillTrainingStep($id);
+    $state = DB::table('market_history_backfills')->where('history_id', $id)->first();
+    $job = new RebuildBackfilledIntelligence($id, $state->build_lease_token);
+    $reads = 0;
+    $changed = false;
+    DB::listen(function ($query) use ($id, &$reads, &$changed): void {
+        if (! $changed && str_starts_with(strtolower(ltrim($query->sql)), 'select')
+            && str_contains($query->sql, 'market_history_backfills')) {
+            // The second owned-state read follows the history lock. Its result
+            // is already read: emulate a repair before acquiring the feature lock.
+            if (++$reads === 2) {
+                $changed = true;
+                DB::table('market_history_backfills')->where('history_id', $id)->increment('history_revision');
+            }
+        }
+    });
+
+    $job->handle(app(BackfillIntelligence::class), app(FeatureBuilder::class), app(MarketIntelligence::class));
+
+    expect($changed)->toBeTrue();
+    $this->assertDatabaseCount('research_datasets', 0);
+    $this->assertDatabaseCount('intelligence_models', 0);
+    $this->assertDatabaseHas('market_history_backfills', ['history_id' => $id,
+        'trained_revision' => 0, 'history_revision' => 2, 'build_stage' => 'features', 'build_error' => null]);
+    $lock = Cache::lock('trademinator:features:'.ModelStore::marketKey('kraken', 'BTC/USD', '1h'), 720);
+    try {
+        expect($lock->get())->toBeTrue();
+    } finally {
+        $lock->release();
+    }
 });
