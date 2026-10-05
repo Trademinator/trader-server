@@ -1,5 +1,9 @@
 <section class="guide-panel">
     <h2>What is missing?</h2>
+    <p class="guide-help">Trend Training and Candle Training are optional enhancements. Missing human reviews do not block the ordinary intelligence model.</p>
+    @can('manage-server')
+        <p><a class="review-control" href="{{ route('owner.history-recovery.show', $item->market) }}">Repair history and rebuild</a></p>
+    @endcan
     <p class="guide-notice">{{ $progress['action'] }}</p>
     @if (!$progress['evidence_evaluated'])
         <p>The current candle has not reached KNN voting. Confidence and effective neighbors are fallback zeros, not measured trading evidence.</p>

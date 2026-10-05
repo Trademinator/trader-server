@@ -64,7 +64,7 @@ final class CandleTraining
             ->where('trainer_id', $trainer->user_id)->first();
 
         return ['manifest' => $manifest, 'snapshot' => $snapshot, 'payload' => $payload,
-            'label' => $label, 'visible_labels' => $chart['labels'], 'decisions' => $chart['decisions'],
+            'label' => $label, 'review_required' => $label === null && ($payload['revision']['requires_review'] ?? false), 'visible_labels' => $chart['labels'], 'decisions' => $chart['decisions'],
             'allowed_actions' => $chart['allowed_actions'],
             'earliest_time' => intdiv($rows[0]['microtimestamp'], 1000),
             'earliest_window_decision_at_ms' => $rows[min(count($rows) - 1,
@@ -205,12 +205,20 @@ final class CandleTraining
 
         $existing = collect();
         if (! $includeExisting) {
-            $existing = HumanTrainingSnapshot::query()
+            $labelled = HumanTrainingSnapshot::query()
                 ->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
                 ->where('version', HumanTraining::VERSION)
                 ->whereIn('decision_at_ms', array_column($rows, 'decision_at_ms'))
                 ->whereHas('candleLabels', fn ($query) => $query->where('trainer_id', $trainer->user_id))
-                ->pluck('decision_at_ms')->flip();
+                ->orderBy('snapshot_id')->lazy(25);
+            foreach ($labelled->chunk(25) as $batch) {
+                $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $batch, $rows);
+                foreach ($batch as $snapshot) {
+                    if (isset($compatible[$snapshot->snapshot_id])) {
+                        $existing->put($snapshot->decision_at_ms, true);
+                    }
+                }
+            }
         }
 
         $labels = [];
@@ -259,46 +267,37 @@ final class CandleTraining
             $prepared[$decision] = ['row' => $row, 'action' => $action];
         }
 
-        // Snapshot verification is the expensive part. Resolve all non-null
-        // staged actions in one chronological history pass before DB writes.
+        // Verify staged changes in bounded chronological batches before label
+        // writes; retain IDs rather than thousands of hydrated chart payloads.
         $snapshotRows = [];
         foreach ($prepared as $decision => $change) {
-            if ($change['action'] !== null) {
-                $snapshotRows[$decision] = $change['row'];
-            }
+            $snapshotRows[$decision] = $change['row'];
         }
-        $snapshots = $this->snapshots->snapshotsForRows($manifest, array_values($snapshotRows));
+        $snapshotIds = $this->snapshots->snapshotIdsForRows($manifest, array_values($snapshotRows));
         foreach ($snapshotRows as $decision => $_row) {
-            if (($snapshots[$decision] ?? null) === null) {
+            if (($snapshotIds[$decision] ?? null) === null) {
                 throw CandleTrainingRecovery::exception($trainer, $manifest, 'changes',
                     'A staged candle no longer matches the current source history and cannot be submitted.');
             }
         }
 
         $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
-        $saved = DB::transaction(function () use ($trainer, $prepared, $deleteAll, $marketKey, $snapshots): int {
+        $saved = DB::transaction(function () use ($trainer, $prepared, $deleteAll, $marketKey, $snapshotIds): int {
             if ($deleteAll) {
                 HumanCandleLabel::query()->where('trainer_id', $trainer->user_id)
                     ->whereHas('snapshot', fn ($query) => $query->where('market_key', $marketKey)
                         ->where('version', HumanTraining::VERSION))
                     ->delete();
             } else {
-                $deleteDecisions = array_keys(array_filter($prepared,
-                    fn (array $change): bool => $change['action'] === null));
-                foreach (array_chunk($deleteDecisions, 500) as $chunk) {
-                    if ($chunk === []) {
-                        continue;
+                $deleteIds = [];
+                foreach ($prepared as $decision => $change) {
+                    if ($change['action'] === null) {
+                        $deleteIds[] = $snapshotIds[$decision];
                     }
-                    $snapshotIds = HumanTrainingSnapshot::query()
-                        ->where('market_key', $marketKey)
-                        ->where('version', HumanTraining::VERSION)
-                        ->whereIn('decision_at_ms', $chunk)
-                        ->pluck('snapshot_id')
-                        ->all();
-                    if ($snapshotIds !== []) {
-                        HumanCandleLabel::query()->where('trainer_id', $trainer->user_id)
-                            ->whereIn('snapshot_id', $snapshotIds)->delete();
-                    }
+                }
+                foreach (array_chunk($deleteIds, 500) as $chunk) {
+                    HumanCandleLabel::query()->where('trainer_id', $trainer->user_id)
+                        ->whereIn('snapshot_id', $chunk)->delete();
                 }
             }
 
@@ -308,10 +307,10 @@ final class CandleTraining
                 if ($change['action'] === null) {
                     continue;
                 }
-                $snapshot = $snapshots[$decision];
+                $snapshotId = $snapshotIds[$decision];
                 $upserts[] = [
                     'candle_label_id' => (string) \Illuminate\Support\Str::uuid7(),
-                    'snapshot_id' => $snapshot->snapshot_id,
+                    'snapshot_id' => $snapshotId,
                     'trainer_id' => $trainer->user_id,
                     'action' => $change['action'],
                     'created_at' => $now,
@@ -354,7 +353,9 @@ final class CandleTraining
             ->whereBetween('decision_at_ms', [$fromDecision, $decisionValues === [] ? 0 : max($decisionValues)])
             ->whereHas('candleLabels', fn ($query) => $query->where('trainer_id', $trainer->user_id))
             ->with(['candleLabels' => fn ($query) => $query->where('trainer_id', $trainer->user_id)])
-            ->orderBy('decision_at_ms')->get()
+            ->orderBy('decision_at_ms')->get();
+        $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $visibleLabels, $rows);
+        $visibleLabels = $visibleLabels->filter(fn (HumanTrainingSnapshot $snapshot): bool => isset($compatible[$snapshot->snapshot_id]))
             ->map(function (HumanTrainingSnapshot $item) use ($available, $manifest, $visibleTimes): ?array {
                 $label = $item->candleLabels->first();
                 if ($label === null || ! in_array($label->action, self::ACTIONS, true)) {
@@ -374,7 +375,7 @@ final class CandleTraining
                 }
 
                 return ['time' => intdiv($itemPayload['microtimestamp'], 1000), 'action' => $label->action];
-            })->filter()->values()->all();
+            })->filter()->unique('time')->values()->all();
 
         return ['labels' => $visibleLabels, 'decisions' => $decisions, 'allowed_actions' => $allowedActions];
     }
@@ -409,10 +410,19 @@ final class CandleTraining
     private function unseenRow(User $trainer, array $manifest, array $rows): array
     {
         $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
-        $seen = HumanTrainingSnapshot::query()->where('market_key', $marketKey)
+        $labelled = HumanTrainingSnapshot::query()->where('market_key', $marketKey)
             ->whereBetween('decision_at_ms', [min(array_column($rows, 'decision_at_ms')), max(array_column($rows, 'decision_at_ms'))])
             ->whereHas('candleLabels', fn ($query) => $query->where('trainer_id', $trainer->user_id))
-            ->pluck('decision_at_ms')->flip();
+            ->orderBy('snapshot_id')->lazy(25);
+        $seen = collect();
+        foreach ($labelled->chunk(25) as $batch) {
+            $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $batch, $rows);
+            foreach ($batch as $snapshot) {
+                if (isset($compatible[$snapshot->snapshot_id])) {
+                    $seen->put($snapshot->decision_at_ms, true);
+                }
+            }
+        }
         $candidates = array_values(array_filter($rows, fn (array $row): bool => ! $seen->has($row['decision_at_ms'])));
         if ($candidates === []) {
             $candidates = $rows;
@@ -427,19 +437,21 @@ final class CandleTraining
         throw ValidationException::withMessages(['dataset' => 'No intact candle was found in this bounded search. Retry, choose another dataset or collect more history.']);
     }
 
-    /** Counts this trainer's recorded labels for the exact exchange/symbol/period. */
+    /** Counts this trainer's distinct recorded candle opinions, not model eligibility. */
     private function labelStats(User $trainer, array $manifest): array
     {
         $counts = array_fill_keys(self::ACTIONS, 0);
-        $stored = HumanCandleLabel::query()
-            ->join('human_training_snapshots', 'human_training_snapshots.snapshot_id', '=', 'human_candle_labels.snapshot_id')
-            ->where('human_candle_labels.trainer_id', $trainer->user_id)
-            ->where('human_training_snapshots.market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
-            ->where('human_training_snapshots.version', HumanTraining::VERSION)
-            ->whereIn('human_candle_labels.action', self::ACTIONS)
-            ->selectRaw('human_candle_labels.action, COUNT(*) AS aggregate')
-            ->groupBy('human_candle_labels.action')
-            ->pluck('aggregate', 'action');
+        // Count a trainer/candle once across revisions without loading chart payloads.
+        // These are recorded-opinion milestones, not current KNN eligibility counts.
+        $ranked = DB::table('human_candle_labels as labels')
+            ->join('human_training_snapshots as snapshots', 'snapshots.snapshot_id', '=', 'labels.snapshot_id')
+            ->where('labels.trainer_id', $trainer->user_id)
+            ->where('snapshots.market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
+            ->where('snapshots.version', HumanTraining::VERSION)->whereIn('labels.action', self::ACTIONS)
+            ->select('labels.action')
+            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY snapshots.decision_at_ms ORDER BY labels.updated_at DESC, labels.candle_label_id DESC) AS opinion_rank');
+        $stored = DB::query()->fromSub($ranked, 'recorded_opinions')->where('opinion_rank', 1)
+            ->selectRaw('action, COUNT(*) AS aggregate')->groupBy('action')->pluck('aggregate', 'action');
         foreach (self::ACTIONS as $action) {
             $counts[$action] = (int) ($stored[$action] ?? 0);
         }
@@ -454,6 +466,9 @@ final class CandleTraining
             'counts' => $counts,
             'percentages' => $percentages,
             'total' => $total,
+            'recorded_distinct_candles' => $total,
+            'sampling' => 'all_eligible_distinct_candles',
+            // Kept as a legacy UI statistic, never used to cap training.
             'balanced_per_action' => $minimum,
             'balanced_samples' => $minimum * count(self::ACTIONS),
             'least_represented' => array_values(array_keys(array_filter($counts, fn (int $count): bool => $count === $minimum))),

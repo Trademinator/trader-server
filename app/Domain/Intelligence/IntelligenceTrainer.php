@@ -42,6 +42,9 @@ final class IntelligenceTrainer
         if ($manifest['as_of_ms'] > now()->getTimestampMs()) {
             throw new InvalidArgumentException('Knowledge cutoff cannot be in the future.');
         }
+        $rowAudit = TrainingRowAudit::inspect($rows);
+        $rows = $rowAudit['rows'];
+        unset($rowAudit['rows']);
         $settings = config('intelligence.knn');
         if (count($rows) > config('intelligence.max_rows')) {
             throw new InvalidArgumentException('Dataset exceeds intelligence.max_rows; use a smaller date range.');
@@ -124,7 +127,8 @@ final class IntelligenceTrainer
             $buildPerformance['stages']['holdout_ms'] = $this->elapsedMs($stageStarted);
 
             $stageStarted = hrtime(true);
-            $human = $this->humanGuidance->compare($manifest, $rows, $settings, $deadline);
+            $human = OptionalGuidance::compare('trend', HumanGuidance::VERSION, $deadline,
+                fn (float $auxiliaryDeadline): array => $this->humanGuidance->compare($manifest, $rows, $settings, $auxiliaryDeadline));
             $buildPerformance['stages']['human_guidance_ms'] = $this->elapsedMs($stageStarted);
             $humanExcluded = 0;
             if ($human['bundle']['influence']) {
@@ -137,7 +141,8 @@ final class IntelligenceTrainer
                 $cutoff = $human['cutoff'];
             }
             $stageStarted = hrtime(true);
-            $candle = $this->candleGuidance->compare($manifest, $rows, $settings, $deadline);
+            $candle = OptionalGuidance::compare('candle', CandleGuidance::VERSION, $deadline,
+                fn (float $auxiliaryDeadline): array => $this->candleGuidance->compare($manifest, $rows, $settings, $auxiliaryDeadline));
             $buildPerformance['stages']['candle_guidance_ms'] = $this->elapsedMs($stageStarted);
             $candleExcluded = 0;
             if ($candle['bundle']['influence']) {
@@ -178,6 +183,7 @@ final class IntelligenceTrainer
                 'k' => $selection['k'], 'settings' => $settings,
                 'pattern_settings' => $patternSettings,
                 'training_data' => [
+                    'deduplication' => $rowAudit,
                     'schema' => $manifest['schema'], 'source_rows' => $sourceRows,
                     'usable_rows' => count($rows),
                     'pattern_excluded_rows' => $sourceRows - count($rows) - $leadLagExcluded - $humanExcluded - $candleExcluded,

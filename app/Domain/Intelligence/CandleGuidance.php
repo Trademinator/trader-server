@@ -14,36 +14,42 @@ use RuntimeException;
 /** Per-candle human actions are auxiliary inputs. Objective market outcomes remain the evaluation target. */
 final class CandleGuidance
 {
-    public const VERSION = 'm4.4-candle-guidance-v2';
+    public const VERSION = 'm4.4-candle-guidance-v3';
+
+    public const READABLE_VERSIONS = ['m4.4-candle-guidance-v2', self::VERSION];
 
     public function compare(array $manifest, array $rows, array $settings, float $deadline): array
     {
-        $bundle = ['version' => self::VERSION, 'status' => 'insufficient_balanced_candle_labels', 'keys' => [],
-            'samples' => 0, 'training_samples' => 0, 'class_counts' => array_fill_keys(CandleTraining::ACTIONS, 0),
-            'balanced_class_counts' => array_fill_keys(CandleTraining::ACTIONS, 0),
+        $bundle = ['version' => self::VERSION, 'status' => 'insufficient_candle_labels', 'keys' => [],
+            'optional' => true, 'samples' => 0, 'training_samples' => 0,
+            'class_counts' => array_fill_keys(CandleTraining::ACTIONS, 0),
+            'training_class_counts' => array_fill_keys(CandleTraining::ACTIONS, 0),
             'evaluation_mode' => 'retrospective_chronological_research',
             'annotation_cutoff_ms' => now()->getTimestampMs(), 'influence' => false];
-        if (! config('human_training.enabled') || count($rows) < 5) {
-            $bundle['status'] = 'disabled_or_insufficient_history';
+        if (! OptionalGuidance::enabled('candle') || count($rows) < 5) {
+            $bundle['status'] = ! OptionalGuidance::enabled('candle') ? 'disabled' : 'insufficient_history';
 
             return ['bundle' => $bundle];
         }
         $prefixEnd = (int) floor(count($rows) * 0.4);
         $later = array_slice($rows, $prefixEnd);
-        if ($later === []) {
-            return ['bundle' => $bundle];
-        }
         $cutoff = $later[0]['decision_at_ms'];
         $prefix = array_values(array_filter(array_slice($rows, 0, $prefixEnd),
             fn (array $row): bool => $row['label_available_at_ms'] < $cutoff));
         $rawOpinions = $this->opinions($manifest, $prefix, $bundle['annotation_cutoff_ms']);
-        $bundle['samples'] = count($rawOpinions);
-        $bundle['class_counts'] = $this->classCounts($rawOpinions);
-        $opinions = $this->balanced($rawOpinions);
-        $bundle['training_samples'] = count($opinions);
-        $bundle['balanced_class_counts'] = $this->classCounts($opinions);
-        $bundle['minimum_samples'] = config('human_training.candle_min_samples');
+        $audit = TrainingRowAudit::inspect($rawOpinions);
+        $opinions = $audit['rows'];
+        unset($audit['rows']);
+        $counts = $this->classCounts($opinions);
+        $bundle = [...$bundle, 'samples' => count($rawOpinions), 'class_counts' => $this->classCounts($rawOpinions),
+            'training_samples' => count($opinions), 'training_class_counts' => $counts, 'deduplication' => $audit,
+            'sampling' => 'all_eligible_distinct_candles', 'minimum_samples' => config('human_training.candle_min_samples')];
         if (count($opinions) < config('human_training.candle_min_samples')) {
+            return ['bundle' => $bundle];
+        }
+        if (count(array_filter($counts)) < 2) {
+            $bundle['status'] = 'insufficient_action_diversity';
+
             return ['bundle' => $bundle];
         }
         $this->deadline($deadline);
@@ -58,47 +64,93 @@ final class CandleGuidance
             'labels_updated_by_ms' => max(array_column($opinions, 'updated_at_ms')),
             'downstream_from_ms' => $cutoff,
             'label_provenance_sha256' => HumanTrainingSnapshot::digest(array_column($opinions, 'provenance'))];
-        $combined = [];
+
+        $tuner = new KnnTuner(new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']));
+        $machine = $this->tuneOnly($later, $settings, $tuner, $deadline);
+        $rawShares = [];
         foreach ($later as $row) {
             $this->deadline($deadline);
-            $probabilities = $this->features($bundle, array_slice($row['vector'], 0, count($manifest['keys'])));
-            $combined[] = [...$row,
-                'feature_weights' => [...($row['feature_weights'] ?? array_fill(0, count($row['vector']), 1.0)), ...array_fill(0, count($probabilities), 1.0)],
-                'vector' => [...$row['vector'], ...$probabilities]];
+            $rawShares[] = $estimator->proba(new Unlabeled([array_slice($row['vector'], 0, count($manifest['keys']))]))[0];
         }
-        $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
-        $tuner = new KnnTuner($knn);
-        $machine = $this->validate($later, $settings, $tuner, $deadline);
-        $hybrid = $this->validate($combined, $settings, $tuner, $deadline);
-        $humanPredictions = [];
-        foreach ($machine['test'] as $row) {
-            $probabilities = $this->features($bundle, array_slice($row['vector'], 0, count($manifest['keys'])));
-            $votes = ['buy' => $probabilities[0], 'hodl' => $probabilities[1], 'sell' => $probabilities[2]];
-            arsort($votes);
-            $values = array_values($votes);
-            $supported = $values[0] >= $settings['min_confidence'] && $values[0] - $values[1] > 1e-12;
-            $humanPredictions[] = ['action' => $supported ? array_key_first($votes) : 'hodl', 'confidence' => $supported ? $values[0] : 0.0];
+        $policies = [
+            'natural' => ClassPriorWeights::fit($counts),
+            'target_priors' => ClassPriorWeights::fit($counts, config('human_training.candle_target_weights', ClassPriorWeights::TARGET)),
+        ];
+        $selected = null;
+        foreach ($policies as $policy => $classWeights) {
+            $combined = [];
+            foreach ($later as $index => $row) {
+                $this->deadline($deadline);
+                $shares = array_values(ClassPriorWeights::apply($rawShares[$index], $classWeights));
+                $combined[] = [...$row,
+                    'feature_weights' => [...($row['feature_weights'] ?? array_fill(0, count($row['vector']), 1.0)), ...array_fill(0, count($shares), 1.0)],
+                    'vector' => [...$row['vector'], ...$shares]];
+            }
+            // No final holdout is evaluated until the policy has been fixed.
+            $candidate = $this->tuneOnly($combined, $settings, $tuner, $deadline);
+            $improved = $this->improves($machine['selected_score'], $candidate['selected_score']);
+            $bundle['weight_candidates'][$policy] = ['class_weights' => $classWeights,
+                'selection' => $candidate['selection'], 'selected_score' => $candidate['selected_score'],
+                'tuning_improved' => $improved];
+            if ($improved && ($selected === null || $this->betterTuning($candidate['selected_score'], $selected['selected_score']))) {
+                $selected = [...$candidate, 'rows' => $combined, 'policy' => $policy, 'class_weights' => $classWeights];
+            }
         }
-        $humanReport = $tuner->evaluatePredictions($machine['test'], $humanPredictions, $settings);
-        $selectionPassed = $this->improves($machine['selected_score'], $hybrid['selected_score']);
-        $holdoutPassed = $this->improves($machine['holdout'], $hybrid['holdout']);
-        $accepted = $selectionPassed && $holdoutPassed;
-        $bundle = [...$bundle, 'influence' => $accepted,
-            'status' => $accepted ? 'validated' : ($selectionPassed ? 'holdout_did_not_improve' : 'tuning_did_not_improve'),
-            'selection_passed' => $selectionPassed, 'holdout_passed' => $holdoutPassed,
-            'minimum_precision_gain' => config('human_training.candle_min_precision_gain'),
-            'holdout_from_ms' => $machine['cutoff'],
-            'comparison' => ['baseline_without_candle' => ['selection' => $machine['selection'], 'holdout' => $machine['holdout']],
-                'candle_human_only' => ['holdout' => $humanReport, 'production_eligible' => false],
-                'combined' => ['selection' => $hybrid['selection'], 'holdout' => $hybrid['holdout']]]];
-        if (! $accepted) {
+
+        $machine['holdout'] = $this->holdout($machine, $settings, $tuner, $deadline);
+        $bundle['minimum_precision_gain'] = config('human_training.candle_min_precision_gain');
+        $bundle['holdout_from_ms'] = $machine['cutoff'];
+        $bundle['selection_passed'] = $selected !== null;
+        $bundle['holdout_passed'] = false;
+        $bundle['comparison'] = [
+            'baseline_without_candle' => ['selection' => $machine['selection'], 'holdout' => $machine['holdout']],
+            'candle_human_only' => ['holdout' => null, 'production_eligible' => false],
+            'combined' => ['selection' => $selected['selection'] ?? null, 'holdout' => null],
+        ];
+        if ($selected === null) {
+            $bundle['status'] = 'tuning_did_not_improve';
             unset($bundle['estimator']);
             $bundle['keys'] = [];
 
             return ['bundle' => $bundle];
         }
 
-        return ['bundle' => $bundle, 'rows' => $combined, ...$hybrid];
+        $bundle['weight_policy'] = $selected['policy'];
+        $bundle['class_weights'] = $selected['class_weights'];
+        $selected['holdout'] = $this->holdout($selected, $settings, $tuner, $deadline);
+        $bundle['comparison']['combined']['holdout'] = $selected['holdout'];
+        $accepted = $this->improves($machine['holdout'], $selected['holdout']);
+        $bundle['holdout_passed'] = $accepted;
+        $bundle['influence'] = $accepted;
+        $bundle['status'] = $accepted ? 'validated' : 'holdout_did_not_improve';
+
+        $humanPredictions = [];
+        foreach ($machine['test'] as $row) {
+            $this->deadline($deadline);
+            $shares = $this->features($bundle, array_slice($row['vector'], 0, count($manifest['keys'])));
+            $votes = ['buy' => $shares[0], 'hodl' => $shares[1], 'sell' => $shares[2]];
+            arsort($votes);
+            $values = array_values($votes);
+            $supported = $values[0] >= $settings['min_confidence'] && $values[0] - $values[1] > 1e-12;
+            $humanPredictions[] = ['action' => $supported ? array_key_first($votes) : 'hodl', 'confidence' => $supported ? $values[0] : 0.0];
+        }
+        $bundle['comparison']['candle_human_only']['holdout'] = $tuner->evaluatePredictions($machine['test'], $humanPredictions, $settings);
+        if (! $accepted) {
+            // Never try the runner-up after looking at the final holdout.
+            unset($bundle['estimator']);
+            $bundle['keys'] = [];
+
+            return ['bundle' => $bundle];
+        }
+
+        return ['bundle' => $bundle, ...$selected];
+    }
+
+    /** Natural weighting wins exact tuning ties; holdout fields are never inspected. */
+    private function betterTuning(array $candidate, array $selected): bool
+    {
+        return [$candidate['semantic_precision'], $candidate['coverage'], -$candidate['contradiction_rate'], $candidate['mean_confidence']]
+            > [$selected['semantic_precision'], $selected['coverage'], -$selected['contradiction_rate'], $selected['mean_confidence']];
     }
 
     private function opinions(array $manifest, array $rows, int $annotationCutoff): array
@@ -117,63 +169,46 @@ final class CandleGuidance
         $snapshots = HumanTrainingSnapshot::query()
             ->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
             ->where('version', HumanTraining::VERSION)->whereIn('decision_at_ms', array_keys($byTime))
+            ->whereHas('candleLabels', fn ($query) => $query->whereIn('trainer_id', $trainers))
             ->with(['candleLabels' => fn ($query) => $query->whereIn('trainer_id', $trainers)
                 ->whereIn('action', CandleTraining::ACTIONS)->where('updated_at', '<=', $cutoff)->orderBy('trainer_id')])
-            ->orderBy('decision_at_ms')->orderBy('snapshot_id')->lazy(25)->take((int) config('intelligence.max_rows'));
+            ->orderBy('decision_at_ms')->orderByDesc('snapshot_id')->lazy(25)->take((int) config('intelligence.max_rows'));
         $opinions = [];
-        foreach ($snapshots as $snapshot) {
-            $row = $byTime[$snapshot->decision_at_ms] ?? null;
-            $payload = $snapshot->verifiedPayload();
-            if ($row === null || $payload['feature_version'] !== $manifest['feature_version']
-                || $payload['keys'] !== $manifest['keys'] || $payload['normalization'] !== NormalizedVector::VERSION
-                || $payload['horizon_candles'] !== $manifest['label_definition']['horizon']
-                || $payload['vector'] != array_slice($row['vector'], 0, count($manifest['keys']))
-                || ($payload['feature_sha256'] ?? null) !== ($row['source']['feature_sha256'] ?? null)) {
-                continue;
+        $rawRows = null;
+        foreach ($snapshots->chunk(25) as $batch) {
+            $rawRows ??= app(\App\Domain\Research\DatasetStore::class)->load($manifest['dataset_id'], (int) config('intelligence.max_rows'))[1];
+            $compatible = app(HumanTraining::class)->compatibleSnapshotIds($manifest, $batch, $rawRows);
+            foreach ($batch as $snapshot) {
+                if (! isset($compatible[$snapshot->snapshot_id])) {
+                    continue;
+                }
+                $row = $byTime[$snapshot->decision_at_ms] ?? null;
+                $payload = $snapshot->verifiedPayload();
+                if ($row === null || $payload['feature_version'] !== $manifest['feature_version']
+                    || $payload['keys'] !== $manifest['keys'] || $payload['normalization'] !== NormalizedVector::VERSION
+                    || $payload['horizon_candles'] !== $manifest['label_definition']['horizon']
+                    || $payload['vector'] != array_slice($row['vector'], 0, count($manifest['keys']))
+                    || ($payload['feature_sha256'] ?? null) !== ($row['source']['feature_sha256'] ?? null)) {
+                    continue;
+                }
+                $votes = $snapshot->candleLabels->countBy('action')->sortDesc();
+                $count = $snapshot->candleLabels->count();
+                $top = $votes->first() ?? 0;
+                if ($count < config('human_training.min_reviewers') || $top / max(1, $count) < config('human_training.min_agreement')
+                    || $votes->values()->get(1) === $top) {
+                    continue;
+                }
+                $opinions[] = ['vector' => $payload['vector'], 'action' => $votes->keys()->first(),
+                    'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
+                    'updated_at_ms' => $snapshot->candleLabels->max(fn ($label) => $label->updated_at->getTimestampMs()),
+                    'provenance' => ['snapshot_id' => $snapshot->snapshot_id, 'sha256' => $snapshot->sha256,
+                        'labels' => $snapshot->candleLabels->map(fn ($label): array => ['id' => $label->candle_label_id,
+                            'trainer_id' => $label->trainer_id, 'action' => $label->action,
+                            'updated_at_ms' => $label->updated_at->getTimestampMs()])->all()]];
             }
-            $votes = $snapshot->candleLabels->countBy('action')->sortDesc();
-            $count = $snapshot->candleLabels->count();
-            $top = $votes->first() ?? 0;
-            if ($count < config('human_training.min_reviewers') || $top / max(1, $count) < config('human_training.min_agreement')
-                || $votes->values()->get(1) === $top) {
-                continue;
-            }
-            $opinions[] = ['vector' => $payload['vector'], 'action' => $votes->keys()->first(),
-                'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
-                'updated_at_ms' => $snapshot->candleLabels->max(fn ($label) => $label->updated_at->getTimestampMs()),
-                'provenance' => ['snapshot_id' => $snapshot->snapshot_id, 'sha256' => $snapshot->sha256,
-                    'labels' => $snapshot->candleLabels->map(fn ($label): array => ['id' => $label->candle_label_id,
-                        'trainer_id' => $label->trainer_id, 'action' => $label->action,
-                        'updated_at_ms' => $label->updated_at->getTimestampMs()])->all()]];
         }
 
         return $opinions;
-    }
-
-    /**
-     * Keep an equal deterministic number of BUY/HOLD/SELL opinions. We retain the
-     * most recent eligible rows from each class, then restore chronological order.
-     */
-    private function balanced(array $opinions): array
-    {
-        $groups = array_fill_keys(CandleTraining::ACTIONS, []);
-        foreach ($opinions as $opinion) {
-            if (isset($groups[$opinion['action']])) {
-                $groups[$opinion['action']][] = $opinion;
-            }
-        }
-        $perAction = min(array_map('count', $groups));
-        if ($perAction < 1) {
-            return [];
-        }
-        $balanced = [];
-        foreach (CandleTraining::ACTIONS as $action) {
-            array_push($balanced, ...array_slice($groups[$action], -$perAction));
-        }
-        usort($balanced, fn (array $a, array $b): int => $a['decision_at_ms'] <=> $b['decision_at_ms']
-            ?: strcmp($a['action'], $b['action']));
-
-        return $balanced;
     }
 
     private function classCounts(array $opinions): array
@@ -188,7 +223,7 @@ final class CandleGuidance
         return $counts;
     }
 
-    private function validate(array $rows, array $settings, KnnTuner $tuner, float $deadline): array
+    private function tuneOnly(array $rows, array $settings, KnnTuner $tuner, float $deadline): array
     {
         $start = (int) floor(count($rows) * 0.8);
         $test = array_slice($rows, $start);
@@ -196,12 +231,16 @@ final class CandleGuidance
         $training = array_values(array_filter(array_slice($rows, 0, $start), fn (array $row): bool => $row['label_available_at_ms'] < $cutoff));
         $selection = $tuner->tune($training, $settings, $deadline);
         $score = collect($selection['candidates'])->firstWhere('k', $selection['k']);
-        $holdout = $selection['k'] === null
-            ? $tuner->evaluatePredictions($test, array_fill(0, count($test), WeightedKnn::abstain('no_eligible_k')), $settings)
-            : $tuner->evaluate(array_slice($training, -$settings['train_size']), $test, $selection['k'], $settings, $deadline);
 
-        return ['selection' => $selection, 'selected_score' => $score, 'holdout' => $holdout,
+        return ['selection' => $selection, 'selected_score' => $score,
             'test' => $test, 'training' => $training, 'cutoff' => $cutoff];
+    }
+
+    private function holdout(array $candidate, array $settings, KnnTuner $tuner, float $deadline): array
+    {
+        return $candidate['selection']['k'] === null
+            ? $tuner->evaluatePredictions($candidate['test'], array_fill(0, count($candidate['test']), WeightedKnn::abstain('no_eligible_k')), $settings)
+            : $tuner->evaluate(array_slice($candidate['training'], -$settings['train_size']), $candidate['test'], $candidate['selection']['k'], $settings, $deadline);
     }
 
     public function improves(?array $machine, ?array $combined): bool
@@ -217,7 +256,11 @@ final class CandleGuidance
     {
         $probabilities = $bundle['estimator']->proba(new Unlabeled([$vector]))[0];
 
-        return array_map(fn (string $action): float => (float) ($probabilities[$action] ?? 0.0), CandleTraining::ACTIONS);
+        if (($bundle['version'] ?? self::VERSION) === 'm4.4-candle-guidance-v2') {
+            return array_map(fn (string $action): float => (float) ($probabilities[$action] ?? 0.0), CandleTraining::ACTIONS);
+        }
+
+        return array_values(ClassPriorWeights::apply($probabilities, $bundle['class_weights'] ?? array_fill_keys(CandleTraining::ACTIONS, 1.0)));
     }
 
     private function deadline(float $deadline): void

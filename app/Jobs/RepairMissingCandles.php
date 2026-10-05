@@ -70,10 +70,16 @@ final class RepairMissingCandles implements ShouldQueue
 
             return;
         }
+        $historyLock = Cache::lock('trademinator:history-intelligence:'.hash('sha256', "$exchange->class|$market->symbol|$state->period"), 180);
         $exchangeLock = Cache::lock('trademinator:history-exchange:'.$exchange->class, 180);
         $featureLock = Cache::lock('trademinator:features:'.hash('sha256', "$exchange->class|$market->symbol|$state->period"), 180);
 
         try {
+            if (! $historyLock->get()) {
+                $this->release(30);
+
+                return;
+            }
             if (! $exchangeLock->get()) {
                 $this->release(30);
 
@@ -144,12 +150,17 @@ final class RepairMissingCandles implements ShouldQueue
 
                 $before = $tickers->timestamps($exchange->class, $market->symbol, $state->period, $fromMs, $toMs);
                 $beforeMissing = $repairs->missingCount($state->period, $fromMs, $toMs, $before);
-                $tickers->saveTickers($exchange->class, $market->symbol, $state->period, array_values($closed));
+                // A gap job only inserts missing candles; it must not silently revise
+                // already stored candles returned in an overlapping exchange page.
+                $missing = array_diff_key($closed, array_fill_keys($before, true));
+                $tickers->saveTickers($exchange->class, $market->symbol, $state->period, array_values($missing));
                 $after = $tickers->timestamps($exchange->class, $market->symbol, $state->period, $fromMs, $toMs);
                 $afterMissing = $repairs->missingCount($state->period, $fromMs, $toMs, $after);
                 $changed = $afterMissing < $beforeMissing;
                 if ($changed) {
-                    $repairs->markHistoryChanged($state->market_id, $state->period);
+                    $recovered = array_values(array_diff($after, $before));
+                    $repairs->markHistoryChanged($state->market_id, $state->period,
+                        (int) min($recovered), (int) max($recovered));
                 }
 
                 return true;
@@ -200,6 +211,7 @@ final class RepairMissingCandles implements ShouldQueue
             $repairs->failure($this->gapId, $this->leaseToken, $error);
             report($error);
         } finally {
+            $historyLock->release();
             $featureLock->release();
             $exchangeLock->release();
             $marketLock->release();

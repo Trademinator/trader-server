@@ -21,7 +21,7 @@ final class HumanGuidance
         $bundle = ['version' => self::VERSION, 'status' => 'insufficient_human_labels', 'keys' => [],
             'samples' => 0, 'evaluation_mode' => 'retrospective_chronological_research',
             'annotation_cutoff_ms' => now()->getTimestampMs(), 'influence' => false];
-        if (! config('human_training.enabled') || count($rows) < 5) {
+        if (! OptionalGuidance::enabled('trend') || count($rows) < 5) {
             $bundle['status'] = 'disabled_or_insufficient_history';
 
             return ['bundle' => $bundle];
@@ -106,34 +106,43 @@ final class HumanGuidance
         $byTime = array_column($rows, null, 'decision_at_ms');
         $snapshots = HumanTrainingSnapshot::query()->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
             ->where('version', HumanTraining::VERSION)->whereIn('decision_at_ms', array_keys($byTime))
+            ->whereHas('reviews', fn ($query) => $query->whereIn('trainer_id', $trainers))
             ->with(['reviews' => fn ($query) => $query->whereIn('trainer_id', $trainers)->whereIn('label', HumanTraining::LABELS)
                 ->whereNotNull('submitted_at')->where('submitted_at', '<=', CarbonImmutable::createFromTimestampMs($annotationCutoff)->format('Y-m-d H:i:s.v'))->orderBy('trainer_id')])
-            ->orderBy('decision_at_ms')->orderBy('snapshot_id')->lazy(25)->take((int) config('intelligence.max_rows'));
+            ->orderBy('decision_at_ms')->orderByDesc('snapshot_id')->lazy(25)->take((int) config('intelligence.max_rows'));
         $opinions = [];
-        foreach ($snapshots as $snapshot) {
-            $row = $byTime[$snapshot->decision_at_ms] ?? null;
-            $payload = $snapshot->verifiedPayload();
-            if ($row === null || $payload['feature_version'] !== $manifest['feature_version']
-                || $payload['keys'] !== $manifest['keys'] || $payload['normalization'] !== NormalizedVector::VERSION
-                || $payload['horizon_candles'] !== $manifest['label_definition']['horizon']
-                || $payload['vector'] != array_slice($row['vector'], 0, count($manifest['keys']))
-                || ($payload['feature_sha256'] ?? null) !== ($row['source']['feature_sha256'] ?? null)) {
-                continue;
+        $rawRows = null;
+        foreach ($snapshots->chunk(25) as $batch) {
+            $rawRows ??= app(\App\Domain\Research\DatasetStore::class)->load($manifest['dataset_id'], (int) config('intelligence.max_rows'))[1];
+            $compatible = app(HumanTraining::class)->compatibleSnapshotIds($manifest, $batch, $rawRows);
+            foreach ($batch as $snapshot) {
+                if (! isset($compatible[$snapshot->snapshot_id])) {
+                    continue;
+                }
+                $row = $byTime[$snapshot->decision_at_ms] ?? null;
+                $payload = $snapshot->verifiedPayload();
+                if ($row === null || $payload['feature_version'] !== $manifest['feature_version']
+                    || $payload['keys'] !== $manifest['keys'] || $payload['normalization'] !== NormalizedVector::VERSION
+                    || $payload['horizon_candles'] !== $manifest['label_definition']['horizon']
+                    || $payload['vector'] != array_slice($row['vector'], 0, count($manifest['keys']))
+                    || ($payload['feature_sha256'] ?? null) !== ($row['source']['feature_sha256'] ?? null)) {
+                    continue;
+                }
+                $votes = $snapshot->reviews->countBy('label')->sortDesc();
+                $count = $snapshot->reviews->count();
+                $top = $votes->first() ?? 0;
+                if ($count < config('human_training.min_reviewers') || $top / max(1, $count) < config('human_training.min_agreement')
+                    || $votes->values()->get(1) === $top) {
+                    continue;
+                }
+                $opinions[] = ['vector' => $payload['vector'], 'label' => $votes->keys()->first(),
+                    'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
+                    'submitted_at_ms' => $snapshot->reviews->max(fn ($review) => $review->submitted_at->getTimestampMs()),
+                    'provenance' => ['snapshot_id' => $snapshot->snapshot_id, 'sha256' => $snapshot->sha256,
+                        'reviews' => $snapshot->reviews->map(fn ($review): array => ['id' => $review->review_id,
+                            'trainer_id' => $review->trainer_id, 'label' => $review->label,
+                            'submitted_at_ms' => $review->submitted_at->getTimestampMs()])->all()]];
             }
-            $votes = $snapshot->reviews->countBy('label')->sortDesc();
-            $count = $snapshot->reviews->count();
-            $top = $votes->first() ?? 0;
-            if ($count < config('human_training.min_reviewers') || $top / max(1, $count) < config('human_training.min_agreement')
-                || $votes->values()->get(1) === $top) {
-                continue;
-            }
-            $opinions[] = ['vector' => $payload['vector'], 'label' => $votes->keys()->first(),
-                'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
-                'submitted_at_ms' => $snapshot->reviews->max(fn ($review) => $review->submitted_at->getTimestampMs()),
-                'provenance' => ['snapshot_id' => $snapshot->snapshot_id, 'sha256' => $snapshot->sha256,
-                    'reviews' => $snapshot->reviews->map(fn ($review): array => ['id' => $review->review_id,
-                        'trainer_id' => $review->trainer_id, 'label' => $review->label,
-                        'submitted_at_ms' => $review->submitted_at->getTimestampMs()])->all()]];
         }
 
         return $opinions;

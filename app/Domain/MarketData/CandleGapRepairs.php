@@ -286,18 +286,9 @@ final class CandleGapRepairs
         return $found;
     }
 
-    public function markHistoryChanged(string $marketId, string $period): void
+    public function markHistoryChanged(string $marketId, string $period, ?int $fromMs = null, ?int $toMs = null): void
     {
-        DB::table('market_history_backfills')->insertOrIgnore([
-            'history_id' => (string) Str::uuid7(),
-            'market_id' => $marketId,
-            'period' => $period,
-            'next_attempt_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-        DB::table('market_history_backfills')->where('market_id', $marketId)->where('period', $period)
-            ->increment('history_revision', 1, ['updated_at' => now()]);
+        app(HistoryChanges::class)->record($marketId, $period, $fromMs, $toMs);
     }
 
     public function emptyRetryDelay(int $emptyAttempts): int

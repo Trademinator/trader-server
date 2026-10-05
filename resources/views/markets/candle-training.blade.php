@@ -73,6 +73,10 @@
         @if(session('status'))<p class="guide-notice" role="status">{{ session('status') }}</p>@endif
         @if($errors->any())<div class="guide-notice guide-error" role="alert"><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
 
+        @if($state['review_required'] ?? false)
+            <p class="guide-notice" role="status">This candle has a replacement snapshot after its inputs changed. Your earlier label remains attached to the old snapshot; review this version before submitting a new label.</p>
+        @endif
+        <p class="guide-help">Trend Training and Candle Training are optional enhancements. No manual training quota is required for the ordinary model.</p>
         <section class="guide-panel" data-candle-training-chart
                  data-replay-url="{{ route('human-training.candles.show', $state['manifest']['dataset_id']) }}"
                  data-history-url="{{ route('human-training.candles.history', $state['manifest']['dataset_id']) }}"
@@ -94,7 +98,7 @@
             <p class="guide-notice"><strong>Left-click</strong> candles to measure A→B. The third click discards A and shifts B→A. <strong>Right-click</strong> a candle for BUY/HOLD/SELL/Delete; on touch, long-press it.</p>
             @if($state['payload']['gaps'])<p class="guide-notice guide-error">{{ $state['payload']['gaps'] }} gaps in history. Missing candles are not filled.</p>@endif
 
-            <h2>Your label milestones for this market and period</h2>
+            <h2>Your recorded label milestones for this market and period</h2>
             <div class="candle-training-stats" aria-label="Candle Training label milestone counts">
                 @foreach(['buy' => 'BUY', 'hold' => 'HOLD', 'sell' => 'SELL'] as $action => $title)
                     @php
@@ -109,7 +113,7 @@
                     </div>
                 @endforeach
             </div>
-            <p class="guide-help">Total labels: <strong data-stat-total>{{ $state['label_stats']['total'] }}</strong>. Milestones use absolute counts per action; there is no target BUY/HOLD/SELL percentage.</p>
+            <p class="guide-help">Total labels: <strong data-stat-total>{{ $state['label_stats']['total'] }}</strong>. Milestones count each recorded candle once across revisions, not current model eligibility. The model report shows compatible training counts. There is no target BUY/HOLD/SELL percentage.</p>
             <details class="candle-training-milestone-help">
                 <summary>What do the milestone colours mean?</summary>
                 <ul class="candle-training-milestone-list">
@@ -118,7 +122,7 @@
                     <li><span class="candle-training-milestone-swatch" data-milestone="green" aria-hidden="true"></span><strong>Green:</strong> 300–749 labels — useful volume, but broader market conditions still help.</li>
                     <li><span class="candle-training-milestone-swatch" data-milestone="blue" aria-hidden="true"></span><strong>Blue:</strong> 750+ labels — strong evidence volume for that action.</li>
                 </ul>
-                <p class="guide-help"><strong>Do not try to make the three bars equal.</strong> Real decisions may naturally contain many more HOLD labels. Record the action you would genuinely take; artificially balancing the labels would make the human signal less representative. The auxiliary guidance model balances BUY/HOLD/SELL internally when it builds its training subset.</p>
+                <p class="guide-help"><strong>Do not try to make the three bars equal.</strong> Real decisions may naturally contain many more HOLD labels. Record the action you would genuinely take; artificially balancing the labels would make the human signal less representative. The auxiliary model retains every eligible distinct labelled candle. It compares natural class frequencies against 25% BUY / 50% HOLD / 25% SELL vote weights during chronological tuning; those are not label quotas.</p>
                 <p class="guide-help">These colours measure quantity only. Diversity across market regimes, volatility and historical periods still matters.</p>
             </details>
 

@@ -8,6 +8,7 @@ use App\Domain\Features\FeatureReplayTimeout;
 use App\Domain\Intelligence\BackfillIntelligence;
 use App\Domain\Intelligence\MarketIntelligence;
 use App\Domain\Intelligence\ModelStore;
+use App\Domain\MarketData\HistoryChanges;
 use App\Models\MarketFeed;
 use App\Repositories\TickerRepository;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -65,6 +66,24 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
             return;
         }
         try {
+            // Refresh after taking the lock: a repair may have completed while queued.
+            $state = $builds->owned($this->historyId, $this->leaseToken)->first();
+            if ($state === null) {
+                return;
+            }
+            $expectedRevision = $this->featureRevision
+                ?? ($state->build_stage === 'knn' ? (int) $state->build_revision : null);
+            if ($expectedRevision !== null && $expectedRevision !== (int) $state->history_revision) {
+                // A changed prefix invalidates checkpoints from this split chain.
+                // Releasing the token makes all remaining old children harmless.
+                $builds->release($this->historyId, $this->leaseToken, [
+                    'build_stage' => 'features', 'build_revision' => null,
+                    'build_performance' => null, 'build_error' => null,
+                ]);
+                $builds->dispatchDue($exchange, $symbol, $state->period);
+
+                return;
+            }
             if ($state->build_stage === 'features') {
                 // Coalesce imports that completed before the root rebuild actually
                 // started. Split children then carry this exact revision so imports
@@ -81,9 +100,9 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
                 }
 
                 $cutoffMs = $this->featureCutoffMs ?? (int) floor(microtime(true) * 1000);
-                $startMs = $this->featureStartMs ?? ($state->oldest_candle_ms === null
-                    ? $this->firstCandleMs($exchange, $symbol, $state->period, $cutoffMs)
-                    : (int) $state->oldest_candle_ms);
+                $changedFromMs = app(HistoryChanges::class)->replayStart($state, $revision);
+                $startMs = $this->featureStartMs ?? $changedFromMs
+                    ?? $this->firstCandleMs($exchange, $symbol, $state->period, $cutoffMs);
 
                 $checkpoints = app(FeatureCheckpointStore::class);
                 if ($rootReplay) {
@@ -97,6 +116,9 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
                                 'duration_ms' => 0, 'rows_processed' => 0, 'chunks' => 0,
                                 'from_ms' => $startMs, 'through_ms' => $startMs,
                                 'checkpoint_used' => false,
+                                'history_revision' => $revision,
+                                'changed_from_ms' => $changedFromMs,
+                                'range_tracking' => $changedFromMs === null ? 'legacy_full_replay' : 'exact_changed_range',
                             ],
                         ], JSON_THROW_ON_ERROR),
                         'updated_at' => now(),
@@ -132,17 +154,23 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
                     'build_stage' => 'knn', 'build_revision' => $revision, 'build_error' => null,
                 ]);
             } elseif ($state->build_stage === 'knn' && (int) $state->build_revision > 0) {
+                $featureLock = Cache::lock('trademinator:features:'.$key, 720);
+                if (! $featureLock->get()) {
+                    $this->release(30);
+
+                    return;
+                }
                 $revision = (int) $state->build_revision;
                 $performance = is_string($state->build_performance)
                     ? json_decode($state->build_performance, true, flags: JSON_THROW_ON_ERROR)
                     : (array) ($state->build_performance ?? []);
                 $report = $intelligence->build($exchange, $symbol, $state->period,
-                    schema: $this->schema ?? (string) config('intelligence.schema'),
+                    schema: $state->recovery_schema ?? $this->schema ?? (string) config('intelligence.schema'),
                     generation: hash('sha256', 'history:'.$this->historyId.':'.$revision),
                     buildPerformance: $performance);
                 $builds->release($this->historyId, $this->leaseToken, [
                     'trained_revision' => $revision, 'build_stage' => null, 'build_revision' => null,
-                    'build_failures' => 0, 'build_error' => null, 'model_id' => $report['model_id'], 'last_trained_at' => now(),
+                    'build_failures' => 0, 'build_error' => null, 'recovery_schema' => null, 'model_id' => $report['model_id'], 'last_trained_at' => now(),
                 ]);
             } else {
                 throw new RuntimeException('Invalid backfill intelligence checkpoint.');
@@ -152,6 +180,9 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
             $builds->failure($this->historyId, $this->leaseToken, $error);
             report($error);
         } finally {
+            if (isset($featureLock)) {
+                $featureLock->release();
+            }
             $lock->release();
         }
     }

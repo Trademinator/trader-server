@@ -9,6 +9,7 @@ use App\Domain\Research\SemanticLabels;
 use App\Models\HumanTrainingReview;
 use App\Models\HumanTrainingSnapshot;
 use App\Models\MarketSignal;
+use App\Models\MarketFeature;
 use App\Models\User;
 use App\Repositories\TickerRepository;
 use Illuminate\Support\Facades\Cache;
@@ -99,10 +100,19 @@ final class HumanTraining
                 throw ValidationException::withMessages(['dataset' => 'Choose a current, bounded semantic dataset built from closed candles.']);
             }
             $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
-            $seen = HumanTrainingSnapshot::query()->where('market_key', $marketKey)
+            $reviewed = HumanTrainingSnapshot::query()->where('market_key', $marketKey)
                 ->whereBetween('decision_at_ms', [min(array_column($rows, 'decision_at_ms')), max(array_column($rows, 'decision_at_ms'))])
                 ->whereHas('reviews', fn ($query) => $query->where('trainer_id', $trainer->user_id))
-                ->pluck('decision_at_ms')->flip();
+                ->orderBy('snapshot_id')->lazy(25);
+            $seen = collect();
+            foreach ($reviewed->chunk(25) as $batch) {
+                $compatible = $this->compatibleSnapshotIds($manifest, $batch, $rows);
+                foreach ($batch as $snapshot) {
+                    if (isset($compatible[$snapshot->snapshot_id])) {
+                        $seen->put($snapshot->decision_at_ms, true);
+                    }
+                }
+            }
             $indices = array_keys(array_filter($rows, fn (array $row): bool => ! $seen->has($row['decision_at_ms'])));
             shuffle($indices);
             foreach (array_slice($indices, 0, config('human_training.candidate_attempts')) as $index) {
@@ -124,139 +134,85 @@ final class HumanTraining
 
     public function snapshotForRow(array $manifest, array $row): ?HumanTrainingSnapshot
     {
-        $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
-        $key = hash('sha256', $marketKey.'|'.$row['decision_at_ms'].'|'.self::VERSION);
-        $snapshot = HumanTrainingSnapshot::query()->where('snapshot_key', $key)->first();
-        if ($snapshot !== null) {
-            $payload = $snapshot->verifiedPayload();
-            $vector = NormalizedVector::from($row['vector'], $manifest['keys']);
-            if (($payload['feature_version'] ?? null) !== $manifest['feature_version']
-                || ($payload['keys'] ?? null) !== $manifest['keys']
-                || ($payload['normalization'] ?? null) !== NormalizedVector::VERSION
-                || ($payload['horizon_candles'] ?? null) !== $manifest['label_definition']['horizon']
-                || ($payload['vector'] ?? null) != $vector
-                || ($payload['feature_sha256'] ?? null) !== ($row['source']['feature_sha256'] ?? null)) {
-                return null;
-            }
-
-            return $snapshot;
-        }
-        $payload = $this->snapshot($manifest, $row);
-        if ($payload === null) {
-            return null;
-        }
-
-        return HumanTrainingSnapshot::unguarded(fn (): HumanTrainingSnapshot => HumanTrainingSnapshot::query()->firstOrCreate(
-            ['snapshot_key' => $key], ['market_key' => $marketKey,
-                'dataset_id' => $manifest['dataset_id'], 'decision_at_ms' => $row['decision_at_ms'],
-                'version' => self::VERSION, 'payload' => $payload,
-                'sha256' => HumanTrainingSnapshot::digest($payload), 'created_at' => now()]));
+        return $this->snapshotsForRows($manifest, [$row])[(int) $row['decision_at_ms']] ?? null;
     }
 
-
-    /**
-     * Build or reuse immutable snapshots for many Candle Training rows with one
-     * chronological OHLCV history read. This avoids repeating the chart-history
-     * query once for every staged auto-label.
-     *
-     * @param  array<int, array<string, mixed>>  $rows
-     * @return array<int, HumanTrainingSnapshot|null> keyed by decision_at_ms
-     */
+    /** Bounded chronological batches; old snapshots and labels remain immutable. */
     public function snapshotsForRows(array $manifest, array $rows): array
     {
+        $rows = TrainingRowAudit::inspect($rows)['rows'];
         if ($rows === []) {
             return [];
         }
-
-        $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
-        $requested = [];
-        $keys = [];
-        foreach ($rows as $row) {
-            $decision = (int) ($row['decision_at_ms'] ?? 0);
-            if ($decision < 1) {
-                continue;
-            }
-            $requested[$decision] = $row;
-            $keys[$decision] = hash('sha256', $marketKey.'|'.$decision.'|'.self::VERSION);
-        }
-        if ($requested === []) {
-            return [];
-        }
-        ksort($requested, SORT_NUMERIC);
-
-        $existingByKey = [];
-        foreach (array_chunk(array_values($keys), 250) as $chunk) {
-            foreach (HumanTrainingSnapshot::query()->whereIn('snapshot_key', $chunk)->get() as $snapshot) {
-                $existingByKey[$snapshot->snapshot_key] = $snapshot;
-            }
-        }
-
         $result = [];
-        $missing = [];
-        foreach ($requested as $decision => $row) {
-            $snapshot = $existingByKey[$keys[$decision]] ?? null;
-            if ($snapshot !== null) {
-                $result[$decision] = $this->snapshotMatchesRow($snapshot, $manifest, $row) ? $snapshot : null;
-            } else {
-                $missing[$decision] = $row;
-            }
-        }
-        if ($missing === []) {
-            return $result;
-        }
-
-        $payloads = $this->batchSnapshotPayloads($manifest, $missing);
-        $createdAt = now()->format('Y-m-d H:i:s');
-        $inserts = [];
-        foreach ($missing as $decision => $row) {
-            $payload = $payloads[$decision] ?? null;
-            if ($payload === null) {
-                $result[$decision] = null;
-                continue;
-            }
-            $inserts[] = [
-                'snapshot_id' => (string) \Illuminate\Support\Str::uuid7(),
-                'snapshot_key' => $keys[$decision],
-                'market_key' => $marketKey,
-                'dataset_id' => $manifest['dataset_id'],
-                'decision_at_ms' => $decision,
-                'version' => self::VERSION,
-                'sha256' => HumanTrainingSnapshot::digest($payload),
-                'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
-                'created_at' => $createdAt,
-            ];
-        }
-
-        // Snapshot payloads contain chart history, so use small bounded inserts.
-        foreach (array_chunk($inserts, 25) as $chunk) {
-            DB::table('human_training_snapshots')->insertOrIgnore($chunk);
-        }
-
-        $missingKeys = [];
-        foreach (array_keys($missing) as $decision) {
-            if (isset($keys[$decision])) {
-                $missingKeys[] = $keys[$decision];
-            }
-        }
-
-        $createdByKey = [];
-        foreach (array_chunk($missingKeys, 250) as $chunk) {
-            foreach (HumanTrainingSnapshot::query()->whereIn('snapshot_key', $chunk)->get() as $snapshot) {
-                $createdByKey[$snapshot->snapshot_key] = $snapshot;
-            }
-        }
-
-        foreach ($missing as $decision => $row) {
-            if (($payloads[$decision] ?? null) === null) {
-                $result[$decision] = null;
-                continue;
-            }
-            $snapshot = $createdByKey[$keys[$decision]] ?? null;
-            $result[$decision] = $snapshot !== null && $this->snapshotMatchesRow($snapshot, $manifest, $row)
-                ? $snapshot : null;
+        foreach (array_chunk($rows, 50) as $batch) {
+            $requested = array_column($batch, null, 'decision_at_ms');
+            $result += app(SnapshotRevisions::class)->resolve($manifest, $this->batchSnapshotPayloads($manifest, $requested));
         }
 
         return $result;
+    }
+
+    /** Resolve large submissions without retaining thousands of hydrated charts. */
+    public function snapshotIdsForRows(array $manifest, array $rows): array
+    {
+        $ids = [];
+        foreach (array_chunk(TrainingRowAudit::inspect($rows)['rows'], 50) as $batch) {
+            foreach ($this->snapshotsForRows($manifest, $batch) as $decision => $snapshot) {
+                $ids[$decision] = $snapshot?->snapshot_id;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Source repairs also invalidate reviewed chart context, even if selected
+     * feature values happen to be unchanged. Read raw immutable dataset vectors
+     * here: the trainer's downstream rows may already be normalized/augmented.
+     * Source-less legacy records without a known history revision retain their
+     * prior caller checks. Provenance-bearing and new snapshots are verified.
+     *
+     * @return array<string, true> compatible snapshot IDs
+     */
+    public function compatibleSnapshotIds(array $manifest, iterable $snapshots, ?array $rawRows = null): array
+    {
+        $snapshots = collect($snapshots);
+        if ($snapshots->isEmpty()) {
+            return [];
+        }
+        $legacyIds = [];
+        $strictTimes = [];
+        $legacyHistory = app(SnapshotRevisions::class)->historyRevision($manifest) === 0;
+        foreach ($snapshots as $snapshot) {
+            $payload = $snapshot->verifiedPayload();
+            if ($legacyHistory && ! isset($payload['revision']) && ($payload['feature_sha256'] ?? null) === null) {
+                // Preserve the previous compatibility checks for source-less legacy
+                // research records only; a real provenance-bearing record is strict.
+                $legacyIds[$snapshot->snapshot_id] = (int) $snapshot->decision_at_ms;
+            } else {
+                $strictTimes[(int) $snapshot->decision_at_ms] = true;
+            }
+        }
+        $ids = [];
+        foreach ($legacyIds as $id => $decision) {
+            if (! isset($strictTimes[$decision])) {
+                $ids[$id] = true;
+            }
+        }
+        if ($strictTimes === []) {
+            return $ids;
+        }
+        $rawRows ??= $this->datasets->load($manifest['dataset_id'], (int) config('intelligence.max_rows'))[1];
+        $rows = array_filter($rawRows, fn (array $row): bool => isset($strictTimes[$row['decision_at_ms']]));
+        $current = $this->snapshotIdsForRows($manifest, array_values($rows));
+        foreach ($current as $snapshotId) {
+            if ($snapshotId !== null) {
+                $ids[$snapshotId] = true;
+            }
+        }
+
+        return $ids;
     }
 
     private function snapshotMatchesRow(HumanTrainingSnapshot $snapshot, array $manifest, array $row): bool
@@ -303,12 +259,25 @@ final class HumanTraining
             $historyIndex[$timestamp] = $index;
         }
 
+        // Do not combine an old dataset vector with a newly repaired chart.
+        // Match the digest contract used by DatasetSnapshotBuilder exactly.
+        $featureDigests = [];
+        $sourceTimes = array_column(array_filter($rows, fn (array $row): bool => isset($row['source']['feature_sha256'])), 'microtimestamp');
+        foreach (array_chunk($sourceTimes, 500) as $chunk) {
+            foreach (MarketFeature::query()->where('exchange', $manifest['exchange'])->where('symbol', $manifest['symbol'])
+                ->where('period', $period)->where('version', $manifest['feature_version'])
+                ->whereIn('microtimestamp', $chunk)->get() as $feature) {
+                $featureDigests[(int) $feature->microtimestamp] = hash('sha256', json_encode($feature->payload, JSON_THROW_ON_ERROR));
+            }
+        }
         $observations = $this->batchModelObservations($manifest, array_keys($rows));
         $payloads = [];
         foreach ($rows as $decision => $row) {
             $timestamp = (int) $row['microtimestamp'];
             $end = $historyIndex[$timestamp] ?? null;
-            if ($end === null) {
+            $expectedFeatureDigest = $row['source']['feature_sha256'] ?? null;
+            if ($end === null || ($expectedFeatureDigest !== null
+                && $expectedFeatureDigest !== ($featureDigests[$timestamp] ?? null))) {
                 $payloads[$decision] = null;
                 continue;
             }

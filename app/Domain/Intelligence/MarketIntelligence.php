@@ -183,7 +183,7 @@ final class MarketIntelligence
         $settings = $model['settings'];
         if (($model['human_keys'] ?? []) !== []) {
             $human = $model['human_guidance'];
-            if (! config('human_training.enabled') || ($human['version'] ?? null) !== HumanGuidance::VERSION
+            if (! OptionalGuidance::enabled('trend') || ($human['version'] ?? null) !== HumanGuidance::VERSION
                 || ! ($human['influence'] ?? false) || ($human['reviews_submitted_by_ms'] ?? PHP_INT_MAX) >= $current->available_at_ms) {
                 return [...WeightedKnn::abstain('human_guidance_unavailable'), ...$context];
             }
@@ -194,7 +194,7 @@ final class MarketIntelligence
         }
         if (($model['candle_keys'] ?? []) !== []) {
             $candle = $model['candle_guidance'];
-            if (! config('human_training.enabled') || ($candle['version'] ?? null) !== CandleGuidance::VERSION
+            if (! OptionalGuidance::enabled('candle') || ! in_array($candle['version'] ?? null, CandleGuidance::READABLE_VERSIONS, true)
                 || ! ($candle['influence'] ?? false) || ($candle['labels_updated_by_ms'] ?? PHP_INT_MAX) >= $current->available_at_ms) {
                 return [...WeightedKnn::abstain('candle_guidance_unavailable'), ...$context];
             }

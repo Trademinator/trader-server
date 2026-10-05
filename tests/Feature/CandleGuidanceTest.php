@@ -39,7 +39,7 @@ function candleGuidanceAction(array $manifest, array $row, User $trainer, string
     return $snapshot;
 }
 
-it('builds a separate balanced three-action Candle Training comparison from matching authorized labels', function () {
+it('builds a separate HOLD-preserving three-action Candle Training comparison from matching authorized labels', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     $trainer = User::factory()->create();
     config(['operations.owner_uuid' => $trainer->user_id]);
@@ -51,18 +51,18 @@ it('builds a separate balanced three-action Candle Training comparison from matc
     }
 
     $bundle = app(CandleGuidance::class)->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle'];
-    expect($bundle['version'])->toBe('m4.4-candle-guidance-v2');
+    expect($bundle['version'])->toBe('m4.4-candle-guidance-v3');
     expect($bundle['samples'])->toBe(12);
     expect($bundle['training_samples'])->toBe(12);
     expect($bundle['class_counts'])->toBe(['buy' => 4, 'hold' => 4, 'sell' => 4]);
-    expect($bundle['balanced_class_counts'])->toBe(['buy' => 4, 'hold' => 4, 'sell' => 4]);
+    expect($bundle['training_class_counts'])->toBe(['buy' => 4, 'hold' => 4, 'sell' => 4]);
     expect($bundle['minimum_samples'])->toBe(8);
     expect($bundle['comparison'])->toHaveKeys(['baseline_without_candle', 'candle_human_only', 'combined']);
     expect($bundle['comparison']['candle_human_only']['production_eligible'])->toBeFalse();
     expect(strlen($bundle['label_provenance_sha256']))->toBe(64);
 });
 
-it('downsamples an imbalanced human action set equally across BUY HOLD and SELL', function () {
+it('retains every eligible example in an imbalanced action set', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     $trainer = User::factory()->create();
     config(['operations.owner_uuid' => $trainer->user_id, 'human_training.candle_min_samples' => 50]);
@@ -75,10 +75,10 @@ it('downsamples an imbalanced human action set equally across BUY HOLD and SELL'
 
     $bundle = app(CandleGuidance::class)->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle'];
     expect($bundle['samples'])->toBe(10);
-    expect($bundle['training_samples'])->toBe(6);
+    expect($bundle['training_samples'])->toBe(10);
     expect($bundle['class_counts'])->toBe(['buy' => 6, 'hold' => 2, 'sell' => 2]);
-    expect($bundle['balanced_class_counts'])->toBe(['buy' => 2, 'hold' => 2, 'sell' => 2]);
-    expect($bundle['status'])->toBe('insufficient_balanced_candle_labels');
+    expect($bundle['training_class_counts'])->toBe(['buy' => 6, 'hold' => 2, 'sell' => 2]);
+    expect($bundle['status'])->toBe('insufficient_candle_labels');
 });
 
 it('excludes candle labels from revoked trainers and incompatible snapshots', function () {
@@ -94,10 +94,36 @@ it('excludes candle labels from revoked trainers and incompatible snapshots', fu
 
     $service = app(CandleGuidance::class);
     $bundle = $service->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle'];
-    expect($bundle['samples'])->toBe(2)->and($bundle['training_samples'])->toBe(0);
+    expect($bundle['samples'])->toBe(2)->and($bundle['training_samples'])->toBe(2);
     config(['operations.owner_uuid' => $users[0]->user_id, 'human_training.trainer_uuids' => []]);
     $bundle = $service->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle'];
-    expect($bundle['samples'])->toBe(1)->and($bundle['training_samples'])->toBe(0);
+    expect($bundle['samples'])->toBe(1)->and($bundle['training_samples'])->toBe(1);
     config(['operations.owner_uuid' => null]);
     expect($service->compare($manifest, $rows, config('intelligence.knn'), microtime(true) + 30)['bundle']['samples'])->toBe(0);
+});
+
+it('retains abundant HOLDs and keeps policy selection independent of final holdout labels', function () {
+    $this->travelTo('2024-01-01 09:00:00 UTC');
+    $trainer = User::factory()->create();
+    config(['operations.owner_uuid'=>$trainer->user_id,'human_training.candle_min_samples'=>50]);
+    $manifest = IntelligenceFixtures::snapshot(500);
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    foreach (array_slice($rows,0,150) as $index=>$row) {
+        candleGuidanceAction($manifest,$row,$trainer,$index<5 ? 'buy' : ($index<10 ? 'sell' : 'hold'));
+    }
+    $service = app(CandleGuidance::class);
+    $first = $service->compare($manifest,$rows,config('intelligence.knn'),microtime(true)+60)['bundle'];
+    expect($first['training_samples'])->toBe(150)
+        ->and($first['training_class_counts'])->toBe(['buy'=>5,'hold'=>140,'sell'=>5])
+        ->and($first['weight_candidates'])->toHaveKeys(['natural','target_priors'])
+        ->and($first['weight_candidates']['target_priors']['class_weights']['buy'])->toBe(7.5);
+    // First 40% fits the auxiliary. The last 20% of the remaining 60% is holdout.
+    for ($i=440;$i<count($rows);$i++) {
+        $rows[$i]['label']='hodl';
+        $rows[$i]['semantic']=['bottom'=>false,'top'=>false];
+    }
+    $second = $service->compare($manifest,$rows,config('intelligence.knn'),microtime(true)+60)['bundle'];
+    expect($second['weight_candidates'])->toBe($first['weight_candidates'])
+        ->and($second['training_samples'])->toBe(150)
+        ->and($second['label_provenance_sha256'])->toBe($first['label_provenance_sha256']);
 });
