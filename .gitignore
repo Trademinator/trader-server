@@ -24,3 +24,4 @@ yarn-error.log
 /.zed
 /.well-known
 /storage/framework/ccxt-metadata.lock
+.stfolder
