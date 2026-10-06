@@ -8,6 +8,7 @@ use App\Domain\Research\FeatureSchema;
 use App\Models\HumanTrainingSnapshot;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use InvalidArgumentException;
 use RuntimeException;
@@ -33,11 +34,13 @@ final class HumanCandleKnn
             return ['bundle' => [...$bundle, 'status' => 'no_technical_features']];
         }
         $progress?->stage('loading_annotations');
-        $rows = $this->opinions($manifest, $keys, $bundle['annotation_cutoff_ms'], $deadline, $progress);
+        $diagnostics = [];
+        $rows = $this->opinions($manifest, $keys, $bundle['annotation_cutoff_ms'], $deadline, $progress, $diagnostics);
         $this->deadline($deadline);
         $progress?->stage('annotations_loaded', ['eligible_rows' => count($rows)]);
         $bundle = [...$bundle, 'samples' => count($rows), 'class_counts' => $this->counts($rows),
-            'sampling' => 'all_eligible_distinct_candles'];
+            'sampling' => 'all_eligible_distinct_candles',
+            'annotation_policy' => HumanCandleProjection::VERSION, 'annotation_diagnostics' => $diagnostics];
         if (count($rows) < max(5, (int) config('human_training.candle_min_samples'))) {
             return ['bundle' => $bundle];
         }
@@ -93,7 +96,7 @@ final class HumanCandleKnn
         $this->deadline($deadline);
         $knowledge = array_map(fn (array $row): array => [
             'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
-            'vector' => $row['vector'], 'label' => $row['label'],
+            'vector' => $row['vector'], 'label' => $row['label'], 'provenance' => $row['provenance'],
         ], $rows);
         $updatedBy = max(array_column($rows, 'updated_at_ms'));
 
@@ -129,61 +132,141 @@ final class HumanCandleKnn
         return $knn->vote($neighbors, $bundle['k'], $this->voteWeights($bundle['class_weights']));
     }
 
-    private function opinions(array $manifest, array $keys, int $annotationCutoff, float $deadline,
-        ?HumanTrainingProgress $progress = null): array
+    /** Read-only eligibility audit; uses exactly the same loader as training. */
+    public function audit(array $manifest, float $deadline, ?HumanTrainingProgress $progress = null): array
     {
+        $keys = array_values(array_intersect($manifest['keys'], FeatureEngine::KEYS));
+        if ($keys === []) {
+            throw new InvalidArgumentException('No technical inputs in the selected dataset.');
+        }
+        $diagnostics = [];
+        $rows = $this->opinions($manifest, $keys, now()->getTimestampMs(), $deadline, $progress, $diagnostics);
+
+        return ['annotation_policy' => HumanCandleProjection::VERSION, 'input_keys' => $keys,
+            'window' => KnowledgeWindow::metadata($manifest['as_of_ms']),
+            'samples' => count($rows), 'class_counts' => $this->counts($rows),
+            'minimum_samples' => config('human_training.candle_min_samples'),
+            'annotation_diagnostics' => $diagnostics, 'validation_performed' => false];
+    }
+
+    private function opinions(array $manifest, array $keys, int $annotationCutoff, float $deadline,
+        ?HumanTrainingProgress $progress = null, array &$diagnostics = []): array
+    {
+        if ($manifest['feature_version'] !== FeatureEngine::VERSION) {
+            throw new InvalidArgumentException('Human candle training requires a current target dataset.');
+        }
+        $marketKey = ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']);
+        $recorded = DB::table('human_candle_labels as labels')
+            ->join('human_training_snapshots as snapshots', 'snapshots.snapshot_id', '=', 'labels.snapshot_id')
+            ->where('snapshots.market_key', $marketKey);
+        $diagnostics = ['recorded_labels' => (clone $recorded)->count(),
+            'recorded_distinct_candles' => (clone $recorded)->distinct()->count('snapshots.decision_at_ms'),
+            'prefiltered_snapshots' => [], 'candidate_snapshots' => 0, 'examined_snapshots' => 0, 'source_versions' => [],
+            'accepted_snapshots' => 0, 'duplicate_eligible_snapshots' => 0,
+            'projected_candles' => 0, 'legacy_same_version_candles' => 0, 'excluded' => []];
+        $exclude = function (string $reason) use (&$diagnostics): void {
+            $diagnostics['excluded'][$reason] = ($diagnostics['excluded'][$reason] ?? 0) + 1;
+        };
         $trainerIds = array_map('strtolower', array_filter([...User::ownerIds(), ...config('human_training.trainer_uuids')]));
         $trainers = User::query()->whereIn('user_id', $trainerIds)->get()
             ->filter(fn (User $user): bool => Gate::forUser($user)->allows('train-intelligence'))->pluck('user_id')->all();
-        if ($trainers === []) {
-            return [];
-        }
+        $diagnostics['authorized_trainers'] = count($trainers);
         $cutoff = CarbonImmutable::createFromTimestampMs($annotationCutoff)->format('Y-m-d H:i:s.v');
-        $snapshots = HumanTrainingSnapshot::query()
-            ->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
-            ->where('version', HumanTraining::VERSION)
-            ->whereBetween('decision_at_ms', [KnowledgeWindow::fromMs($manifest['as_of_ms']), $manifest['as_of_ms']])
-            ->whereHas('candleLabels', fn ($query) => $query->whereIn('trainer_id', $trainers)->where('updated_at', '<=', $cutoff))
-            ->with(['candleLabels' => fn ($query) => $query->whereIn('trainer_id', $trainers)
-                ->whereIn('action', CandleTraining::ACTIONS)->where('updated_at', '<=', $cutoff)->orderBy('trainer_id')])
-            // Keep each source contiguous so its full checksum-verified dataset is loaded once.
-            ->orderBy('dataset_id')->orderBy('decision_at_ms')->orderByDesc('snapshot_id')->lazy(25);
+        $query = HumanTrainingSnapshot::query()->where('market_key', $marketKey)->whereHas('candleLabels');
+        $before = (clone $query)->count();
+        $diagnostics['recorded_snapshots'] = $before;
+        $filters = [
+            'snapshot_version' => fn ($query) => $query->where('version', HumanTraining::VERSION),
+            'outside_window' => fn ($query) => $query->whereBetween('decision_at_ms', [KnowledgeWindow::fromMs($manifest['as_of_ms']), $manifest['as_of_ms']]),
+            'unauthorized_trainer' => fn ($query) => $query->whereHas('candleLabels', fn ($labels) => $labels->whereIn('trainer_id', $trainers)),
+            'after_annotation_cutoff' => fn ($query) => $query->whereHas('candleLabels', fn ($labels) => $labels
+                ->whereIn('trainer_id', $trainers)->where('updated_at', '<=', $cutoff)),
+        ];
+        foreach ($filters as $reason => $filter) {
+            $filter($query);
+            $after = (clone $query)->count();
+            $diagnostics['prefiltered_snapshots'][$reason] = $before - $after;
+            $before = $after;
+        }
+        $diagnostics['candidate_snapshots'] = $before;
+        $query->with(['candleLabels' => fn ($query) => $query->whereIn('trainer_id', $trainers)
+            ->whereIn('action', CandleTraining::ACTIONS)->where('updated_at', '<=', $cutoff)->orderBy('trainer_id')]);
+        // Reuse a checksum-verified disk index for each dataset. Never materialize
+        // tens of thousands of source rows just to access one annotation batch.
+        // MariaDB repeatedly filesorts large chart payloads when SELECT * is
+        // combined with ORDER BY and OFFSET. Select the compact IDs just once.
+        $selectionStarted = microtime(true);
+        $snapshotIds = (clone $query)->reorder()->orderBy('dataset_id')->orderBy('decision_at_ms')
+            ->orderByDesc('snapshot_id')->toBase()->pluck('snapshot_id')->all();
+        $diagnostics['performance'] = [
+            'snapshot_selection_ms' => (int) round((microtime(true) - $selectionStarted) * 1000),
+            'snapshot_fetch_ms' => 0, 'snapshot_batches' => 0,
+            'dataset_loading_ms' => 0, 'projection_ms' => 0,
+        ];
         $opinions = [];
-        $processed = 0;
         $loadedDataset = null;
-        $source = $rawRows = $byTime = [];
-        foreach ($snapshots->chunk(25) as $batch) {
+        $source = [];
+        $rawRows = null;
+        $legacyHistory = false;
+        foreach (array_chunk($snapshotIds, 100) as $batchIds) {
+            $this->deadline($deadline);
+            $fetchStarted = microtime(true);
+            // Load only this batch's charts by primary key. Keep the exact same
+            // authorized trainer, action and annotation-cutoff eager-load filters.
+            $loaded = HumanTrainingSnapshot::query()->whereIn('snapshot_id', $batchIds)
+                ->with($query->getEagerLoads())->get()->keyBy('snapshot_id');
+            $batch = new \Illuminate\Database\Eloquent\Collection;
+            foreach ($batchIds as $snapshotId) {
+                $snapshot = $loaded->get($snapshotId);
+                if ($snapshot === null) {
+                    throw new RuntimeException('Human candle snapshot disappeared during inspection; retry.');
+                }
+                // IN queries do not guarantee ordering. Restore the selected order
+                // so dataset reuse and newest-compatible duplicate handling agree.
+                $batch->push($snapshot);
+            }
+            $diagnostics['performance']['snapshot_fetch_ms'] += (int) round((microtime(true) - $fetchStarted) * 1000);
+            $diagnostics['performance']['snapshot_batches']++;
+            $this->deadline($deadline);
             foreach ($batch->groupBy('dataset_id') as $dataset => $group) {
                 $this->deadline($deadline);
-                // Use each annotation's original schema when checking its immutable chart.
-                // Technical annotations remain usable when the automatic schema adds context.
                 if ($dataset !== $loadedDataset) {
-                    $progress?->stage('loading_dataset', ['dataset_id' => $dataset, 'processed' => $processed]);
-                    [$source, $rawRows] = $this->datasets->load($dataset);
-                    $byTime = array_column($rawRows, null, 'decision_at_ms');
+                    $datasetStarted = microtime(true);
+                    $progress?->stage('loading_dataset', ['dataset_id' => $dataset,
+                        'processed' => $diagnostics['examined_snapshots']]);
+                    // Reject a wrong market/horizon from its verified manifest
+                    // before reading the large row artifact, but allow versions.
+                    $source = $this->datasets->manifest($dataset);
+                    $rawRows = null;
+                    if ([$source['exchange'], $source['symbol'], $source['period'], $source['label_definition']['horizon']]
+                        === [$manifest['exchange'], $manifest['symbol'], $manifest['period'], $manifest['label_definition']['horizon']]) {
+                        [, $rawRows] = $this->datasets->open($dataset);
+                        $legacyHistory = app(SnapshotRevisions::class)->historyRevision($source) === 0;
+                    }
                     $loadedDataset = $dataset;
-                }
-                $this->deadline($deadline);
-                if ([$source['exchange'], $source['symbol'], $source['period'], $source['feature_version']]
-                    !== [$manifest['exchange'], $manifest['symbol'], $manifest['period'], $manifest['feature_version']]
-                    || $source['label_definition']['horizon'] !== $manifest['label_definition']['horizon']) {
-                    continue;
+                    $diagnostics['performance']['dataset_loading_ms'] += (int) round((microtime(true) - $datasetStarted) * 1000);
                 }
                 $progress?->stage('validating_snapshots', ['dataset_id' => $dataset,
-                    'processed' => $processed, 'eligible_rows' => count($opinions)]);
-                $compatible = $this->snapshots->compatibleSnapshotIds($source, $group, $rawRows);
-                $this->deadline($deadline);
+                    'processed' => $diagnostics['examined_snapshots'], 'eligible_rows' => count($opinions)]);
+                $candidates = $projectPayloads = $legacySnapshots = $legacyRows = [];
                 foreach ($group as $snapshot) {
                     $this->deadline($deadline);
-                    $progress?->tick(['processed' => $processed++, 'eligible_rows' => count($opinions)]);
+                    $diagnostics['examined_snapshots']++;
+                    $version = $source['feature_version'];
+                    $diagnostics['source_versions'][$version] = ($diagnostics['source_versions'][$version] ?? 0) + 1;
+                    $payload = $snapshot->verifiedPayload(); // Corruption is never a soft exclusion.
                     $decision = $snapshot->decision_at_ms;
-                    if (! isset($compatible[$snapshot->snapshot_id])
-                        || (isset($opinions[$decision]) && strcmp($opinions[$decision]['provenance']['snapshot_id'], $snapshot->snapshot_id) >= 0)) {
+                    $row = $rawRows?->findDecision($decision);
+                    if ($rawRows === null) {
+                        $exclude('source_market_or_horizon_mismatch');
+
                         continue;
                     }
-                    $row = $byTime[$decision] ?? null;
-                    $payload = $snapshot->verifiedPayload();
-                    if ($row === null || $row['label_available_at_ms'] > $manifest['as_of_ms']
+                    if ($row === null || ($payload['version'] ?? null) !== HumanTraining::VERSION
+                        || ($payload['exchange'] ?? null) !== $source['exchange']
+                        || ($payload['symbol'] ?? null) !== $source['symbol'] || ($payload['period'] ?? null) !== $source['period']
+                        || ($payload['decision_at_ms'] ?? null) !== $decision
+                        || ($payload['microtimestamp'] ?? null) !== $row['microtimestamp']
                         || ($payload['feature_version'] ?? null) !== $source['feature_version']
                         || ($payload['keys'] ?? null) !== $source['keys']
                         || ($payload['normalization'] ?? null) !== NormalizedVector::VERSION
@@ -191,10 +274,13 @@ final class HumanCandleKnn
                         || ($payload['vector'] ?? null) != NormalizedVector::from($row['vector'], $source['keys'])
                         || ($payload['features'] ?? null) != array_combine($source['keys'], $row['vector'])
                         || ($payload['feature_sha256'] ?? null) !== ($row['source']['feature_sha256'] ?? null)) {
+                        $exclude('original_snapshot_mismatch');
+
                         continue;
                     }
-                    $vector = FeatureSchema::vector($payload, $keys);
-                    if ($vector === null) {
+                    if ($row['label_available_at_ms'] > $manifest['as_of_ms']) {
+                        $exclude('immature_label');
+
                         continue;
                     }
                     $votes = $snapshot->candleLabels->countBy('action')->sortDesc();
@@ -202,24 +288,78 @@ final class HumanCandleKnn
                     $top = $votes->first() ?? 0;
                     if ($count < config('human_training.min_reviewers') || $top / max(1, $count) < config('human_training.min_agreement')
                         || $votes->values()->get(1) === $top) {
+                        $exclude('insufficient_agreement');
+
                         continue;
                     }
-                    $action = $votes->keys()->first();
-                    $opinions[$decision] = ['vector' => NormalizedVector::from($vector, $keys),
-                        'label' => $action === 'hold' ? 'hodl' : $action,
-                        // Validation targets describe annotations, not objective market outcomes.
+                    $id = $snapshot->snapshot_id;
+                    $candidates[$id] = ['snapshot' => $snapshot, 'row' => $row, 'action' => $votes->keys()->first()];
+                    if ($legacyHistory && ! isset($payload['revision']) && ($payload['feature_sha256'] ?? null) === null) {
+                        // Preserve existing source-less research fixtures/legacy behavior,
+                        // but NEVER use this exception to cross a feature version/schema.
+                        if ($source['feature_version'] !== $manifest['feature_version'] || array_diff($keys, $source['keys']) !== []) {
+                            $exclude('unverifiable_legacy_snapshot');
+                            unset($candidates[$id]);
+
+                            continue;
+                        }
+                        $legacySnapshots[] = $snapshot;
+                        $legacyRows[$decision] = $row;
+                    } else {
+                        $projectPayloads[$id] = $payload;
+                    }
+                }
+                $projectionStarted = microtime(true);
+                $projected = app(HumanCandleProjection::class)->project($manifest, $projectPayloads, $keys, $deadline);
+                $diagnostics['performance']['projection_ms'] += (int) round((microtime(true) - $projectionStarted) * 1000);
+                if ($legacySnapshots !== []) {
+                    $compatible = $this->snapshots->compatibleSnapshotIds($source, $legacySnapshots, array_values($legacyRows));
+                    foreach ($legacySnapshots as $snapshot) {
+                        $id = $snapshot->snapshot_id;
+                        $vector = FeatureSchema::vector($snapshot->payload, $keys);
+                        $projected[$id] = ! isset($compatible[$id]) || $vector === null
+                            ? ['reason' => 'incompatible_legacy_snapshot']
+                            : ['vector' => NormalizedVector::from($vector, $keys), 'provenance' => ['projection_version' => 'legacy_same_version']];
+                    }
+                }
+                foreach ($candidates as $id => $candidate) {
+                    $projection = $projected[$id];
+                    if (isset($projection['reason'])) {
+                        $exclude($projection['reason']);
+
+                        continue;
+                    }
+                    $diagnostics['accepted_snapshots']++;
+                    $snapshot = $candidate['snapshot'];
+                    $decision = $snapshot->decision_at_ms;
+                    if (isset($opinions[$decision])) {
+                        $diagnostics['duplicate_eligible_snapshots']++;
+                        // Preserve the established newest-compatible-snapshot policy.
+                        if (strcmp($opinions[$decision]['provenance']['snapshot_id'], $id) >= 0) {
+                            continue;
+                        }
+                    }
+                    $action = $candidate['action'];
+                    $opinions[$decision] = ['vector' => $projection['vector'], 'label' => $action === 'hold' ? 'hodl' : $action,
                         'semantic' => ['bottom' => $action === 'buy', 'top' => $action === 'sell'],
-                        'decision_at_ms' => $decision, 'label_available_at_ms' => $row['label_available_at_ms'],
+                        'decision_at_ms' => $decision, 'label_available_at_ms' => $candidate['row']['label_available_at_ms'],
                         'updated_at_ms' => $snapshot->candleLabels->max(fn ($label) => $label->updated_at->getTimestampMs()),
-                        'provenance' => ['snapshot_id' => $snapshot->snapshot_id, 'sha256' => $snapshot->sha256,
+                        'provenance' => ['snapshot_id' => $id, 'sha256' => $snapshot->sha256,
+                            'dataset_id' => $snapshot->dataset_id, 'dataset_rows_sha256' => $source['rows_sha256'],
+                            ...$projection['provenance'],
                             'labels' => $snapshot->candleLabels->map(fn ($label): array => ['id' => $label->candle_label_id,
                                 'trainer_id' => $label->trainer_id, 'action' => $label->action,
                                 'updated_at_ms' => $label->updated_at->getTimestampMs()])->all()]];
                 }
+                $progress?->tick(['processed' => $diagnostics['examined_snapshots'], 'eligible_rows' => count($opinions)]);
             }
         }
-        $progress?->tick(['processed' => $processed, 'eligible_rows' => count($opinions)]);
+        foreach ($opinions as $opinion) {
+            $metric = $opinion['provenance']['projection_version'] === 'legacy_same_version' ? 'legacy_same_version_candles' : 'projected_candles';
+            $diagnostics[$metric]++;
+        }
         ksort($opinions);
+        ksort($diagnostics['excluded']);
 
         return array_values($opinions);
     }

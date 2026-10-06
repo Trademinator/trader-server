@@ -1,6 +1,6 @@
 # Trademinator CLI reference
 
-Canonical operator reference for all **38 `trademinator:*` commands**, the local `inspire` command, and the committed metadata utility. Common Laravel operating commands are listed separately; package-provided commands vary with installed dependencies, so `php artisan list` remains the complete runtime inventory.
+Canonical operator reference for all **39 `trademinator:*` commands**, the local `inspire` command, and the committed metadata utility. Common Laravel operating commands are listed separately; package-provided commands vary with installed dependencies, so `php artisan list` remains the complete runtime inventory.
 
 Command signatures, descriptions and behavior were checked against repository source at `c0ce12f87ec570783381fd7854f03905ae2bc5bd`. Update this file whenever a command or its parameters change. `tests/Feature/TrademinatorCliDocumentationTest.php` checks the registered project-command inventory, exact normalized signatures and descriptions.
 
@@ -89,6 +89,7 @@ Each link contains the exact signature, parameter meanings, execution/side-effec
 | Models and signals | [`trademinator:dispatch-market-signals`](#trademinatordispatch-market-signals) |
 | Models and signals | [`trademinator:model-info`](#trademinatormodel-info) |
 | Models and signals | [`trademinator:analyze-validation-gates`](#trademinatoranalyze-validation-gates) |
+| Human training | [`trademinator:human-candle-audit`](#trademinatorhuman-candle-audit) |
 | Human training | [`trademinator:human-training-export`](#trademinatorhuman-training-export) |
 | Archives and portable data | [`trademinator:archive-tickers`](#trademinatorarchive-tickers) |
 | Archives and portable data | [`trademinator:archive-eligible-tickers`](#trademinatorarchive-eligible-tickers) |
@@ -728,6 +729,33 @@ php artisan trademinator:analyze-validation-gates --all-models --limit=100 --jso
 ```
 
 Implementation: [`AnalyzeValidationGates.php`](../app/Console/Commands/AnalyzeValidationGates.php).
+
+## trademinator:human-candle-audit
+
+Signature: `trademinator:human-candle-audit {exchange} {symbol} {period} {--dataset= : Current-version target dataset; defaults to the published model dataset} {--timeout=300 : Eligibility inspection budget in seconds, without KNN validation}`
+
+Description: Read-only audit of recorded human candles, current-feature reuse and exclusion reasons
+
+Inspect human candle eligibility using the **same loader as model training**, without creating a dataset, changing annotations, publishing a model, or running KNN tuning/holdout validation. Run as the application account so private dataset files are readable. The canonical history reader may populate its ordinary cache; authenticated source artifacts are never rewritten.
+
+Each original annotation is checked against its checksum-verified frozen dataset. A feature-version or schema change alone no longer discards a provenance-bearing annotation: the loader verifies the reviewed OHLCV chart and projects the action onto the current technical feature vector at the same decision time. Changed, inserted or missing chart candles, unavailable evidence, missing current inputs, unauthorized reviewers and inconsistent source snapshots remain exclusions. Corrupt artifacts fail the audit rather than being silently skipped. Source-less legacy research records retain their same-version behavior but cannot cross feature versions or gain missing inputs.
+
+| Parameter | Default / requirement | Explanation |
+| --- | --- | --- |
+| `exchange` | Required | Exact CCXT exchange ID, such as `bitso`. |
+| `symbol` | Required | Exact exchange symbol, such as `'ATOM/USD'`. |
+| `period` | Required | Exact candle period, such as `15m`. |
+| `--dataset` | Published model's dataset | Current-feature-version target dataset UUID for this market. Its technical key subset and as-of cutoff define this audit; an old-version annotation source is not a target dataset. |
+| `--timeout` | 300 | Positive integer inspection budget, at most 3,600 seconds. This only controls the audit, not model-training deadlines. |
+
+```bash
+php -d memory_limit=512M artisan trademinator:human-candle-audit bitso 'ATOM/USD' 15m
+php -d memory_limit=512M artisan trademinator:human-candle-audit bitso 'ATOM/USD' 15m --dataset=DATASET_UUID --timeout=600
+```
+
+The JSON separates `recorded_labels`, `recorded_distinct_candles`, sequential `prefiltered_snapshots`, per-reason `excluded` snapshots, duplicate eligible snapshots, projected candles and final `samples`/class counts. Snapshot counts and distinct-candle counts are different units. `validation_performed: false` is deliberate: enough eligible annotations do not guarantee validation. To retrain after a satisfactory audit, use the normal `knn-build` command with the intended schema, for example `--schema=full`; no SQL relabeling or migration is needed. See [HUMAN-CANDLE-REUSE.md](HUMAN-CANDLE-REUSE.md) for deployment and verification.
+
+Implementation: [`AuditHumanCandleTraining.php`](../app/Console/Commands/AuditHumanCandleTraining.php).
 
 ## trademinator:human-training-export
 

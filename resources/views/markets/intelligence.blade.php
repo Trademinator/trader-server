@@ -55,6 +55,28 @@
                     </table></div>
                 @endif
                 <p>{{ \App\Helpers\Decimal::format($report['candle_guidance']['samples'] ?? 0) }} eligible annotated candles · {{ str_replace('_', ' ', $report['candle_guidance']['status']) }}</p>
+                @if(isset($report['candle_guidance']['annotation_diagnostics']))
+                    @php
+                        $annotationAudit = $report['candle_guidance']['annotation_diagnostics'];
+                    @endphp
+                    <details class="guide-help">
+                        <summary>Human candle eligibility details</summary>
+                        <p>{{ \App\Helpers\Decimal::format($annotationAudit['recorded_distinct_candles']) }} recorded distinct candles;
+                            {{ \App\Helpers\Decimal::format($annotationAudit['projected_candles']) }} eligible candles use current features after chart verification.
+                            {{ \App\Helpers\Decimal::format($annotationAudit['duplicate_eligible_snapshots']) }} duplicate eligible snapshots are counted only once.</p>
+                        <p>Exclusions below count snapshots, not additional distinct candles. Counts describe this model build, not later annotations.</p>
+                        <div class="review-table-wrap"><table>
+                            <thead><tr><th scope="col">Exclusion reason</th><th scope="col">Snapshots</th></tr></thead>
+                            <tbody>
+                            @foreach(array_merge($annotationAudit['prefiltered_snapshots'], $annotationAudit['excluded']) as $reason => $count)
+                                @if($count > 0)
+                                    <tr><th scope="row">{{ ucwords(str_replace('_', ' ', $reason)) }}</th><td>{{ \App\Helpers\Decimal::format($count) }}</td></tr>
+                                @endif
+                            @endforeach
+                            </tbody>
+                        </table></div>
+                    </details>
+                @endif
                 @if(isset($report['candle_guidance']['holdout']))
                     <p>Human Candle held-out directional annotation agreement: {{ \App\Helpers\Decimal::format($report['candle_guidance']['holdout']['directional_annotation_agreement'] * 100, 1) }}%.</p>
                 @endif

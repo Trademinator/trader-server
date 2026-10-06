@@ -72,6 +72,8 @@ it('renders actual history counts and failed validation requirements for an abst
 
         $response->assertOk()->assertSee('227 retained examples')
             ->assertSee('Two-KNN scoring')->assertSee('Human Trend is excluded')
+            ->assertSee('Human candle eligibility details')->assertSee('0 recorded distinct candles')
+            ->assertSee('Exclusions below count snapshots, not additional distinct candles.')
             ->assertSee('Automatic KNN: Not ready')->assertSee('Human Candle KNN: Not ready')
             ->assertSee('Automatic KNN')->assertSee('Human Candle KNN')->assertSee('Effective weight')
             ->assertSee('227 out of 380')->assertSee('K selection requirements')
