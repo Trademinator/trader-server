@@ -194,6 +194,39 @@ final class CandleTraining
             ->where('trainer_id', $trainer->user_id)->delete();
     }
 
+    /**
+     * Preserve the complete chronological context without retaining full OHLCV
+     * rows and ten pattern fields per candle. Classification is candle-local;
+     * subsequent auto-label passes use only CLOSE and these three flags.
+     * This remains O(n) state, but avoids the large expanded history that can
+     * exhaust a 128 MiB request before response pagination even begins.
+     *
+     * @return list<array{close: mixed, 'is_black()': int, 'is_white()': int, 'is_super_doji()': int}>
+     */
+    private function autoLabelContext(DatasetRows $rows): array
+    {
+        $tickers = [];
+        foreach ($rows as $row) {
+            $candle = $row['candle'] ?? null;
+            if (! is_array($candle) || array_diff(['open', 'high', 'low', 'close', 'volume'], array_keys($candle)) !== []) {
+                throw ValidationException::withMessages(['dataset' => 'This frozen dataset is missing candle values required for auto-labeling.']);
+            }
+
+            // Use the existing package definitions and precision policy rather
+            // than implementing a second, subtly different candle classifier.
+            $single = [$candle];
+            $this->candle_anatomy($single);
+            $tickers[] = [
+                'close' => $single[0]['close'],
+                'is_black()' => $single[0]['is_black()'],
+                'is_white()' => $single[0]['is_white()'],
+                'is_super_doji()' => $single[0]['is_super_doji()'],
+            ];
+        }
+
+        return $tickers;
+    }
+
     /** Build retrospective BUY/HOLD/SELL suggestions without storing any label. */
     public function autoLabels(User $trainer, string $dataset, bool $includeExisting = false, int $offset = 0): array
     {
@@ -209,17 +242,9 @@ final class CandleTraining
             ]);
         }
 
-        $tickers = [];
-        foreach ($rows as $row) {
-            $candle = $row['candle'] ?? null;
-            if (! is_array($candle) || array_diff(['open', 'high', 'low', 'close', 'volume'], array_keys($candle)) !== []) {
-                throw ValidationException::withMessages(['dataset' => 'This frozen dataset is missing candle values required for auto-labeling.']);
-            }
-            $tickers[] = [...$candle, 'microtimestamp' => $row['microtimestamp'], 'decision_at_ms' => $row['decision_at_ms']];
-        }
+        $tickers = $this->autoLabelContext($rows);
 
         // Order is part of the algorithm: broad labels first, excess removed later.
-        $this->candle_anatomy($tickers);
         $this->candle_auto_mark_hold_candidates($tickers);
         $this->mark_all_blacks_and_whites($tickers);
         $this->remove_consequitive_actions($tickers);
@@ -257,14 +282,15 @@ final class CandleTraining
         }
 
         $labels = [];
-        foreach ($tickers as $ticker) {
+        foreach ($tickers as $index => $ticker) {
+            $row = $rowBatch[$index];
             $action = $ticker['action'] ?? null;
-            if (! in_array($action, self::ACTIONS, true) || $existing->has($ticker['decision_at_ms'])) {
+            if (! in_array($action, self::ACTIONS, true) || $existing->has($row['decision_at_ms'])) {
                 continue;
             }
             $labels[] = [
-                'time' => intdiv((int) $ticker['microtimestamp'], 1000),
-                'decision_at_ms' => (int) $ticker['decision_at_ms'],
+                'time' => intdiv((int) $row['microtimestamp'], 1000),
+                'decision_at_ms' => (int) $row['decision_at_ms'],
                 'action' => $action,
             ];
         }
