@@ -18,10 +18,29 @@ trait CandleAutoDetection
 {
     use Patterns;
 
+    /**
+     * Endpoints provide candle context, never an automatic BUY, SELL or HOLD.
+     * Apply to the complete chronological sequence, not a response page.
+     */
+    public function unlabel_endpoints(array &$tickers): array
+    {
+        if ($tickers === []) {
+            return $tickers;
+        }
+
+        foreach ([array_key_first($tickers), array_key_last($tickers)] as $index) {
+            unset($tickers[$index]['action'], $tickers[$index]['_auto_hold_doji'], $tickers[$index]['_auto_hold_middle']);
+        }
+
+        return $tickers;
+    }
+
     // All black candles are BUY candidates; all white candles are SELL candidates.
     // Broadly mark BUY/SELL candidates, excluding candles already reserved for HOLD.
     public function mark_all_blacks_and_whites(array &$tickers): array
     {
+        // Stale endpoint actions must not participate in surviving-pivot cleanup.
+        $this->unlabel_endpoints($tickers);
         $count = count($tickers);
         foreach ($tickers as $index => &$ticker) {
             if ($index <= 0 || $index >= $count - 2 || $this->candle_auto_is_reserved_hold($ticker)) {
@@ -151,16 +170,18 @@ trait CandleAutoDetection
     // correct when called independently.
     public function hodl_all_dojis(array &$tickers): array
     {
-        foreach ($tickers as &$ticker) {
-            if (($ticker['_auto_hold_doji'] ?? false) === true
-                || ($ticker['is_super_doji()'] ?? 0) === 1) {
+        $count = count($tickers);
+        foreach ($tickers as $index => &$ticker) {
+            if ($index > 0 && $index < $count - 1
+                && (($ticker['_auto_hold_doji'] ?? false) === true
+                    || ($ticker['is_super_doji()'] ?? 0) === 1)) {
                 $ticker['action'] = 'hold';
             }
             unset($ticker['_auto_hold_doji']);
         }
         unset($ticker);
 
-        return $tickers;
+        return $this->unlabel_endpoints($tickers);
     }
 
     // Label interior candles in long same-colour chains as HOLD candidates.
@@ -190,14 +211,14 @@ trait CandleAutoDetection
                 );
             }
 
-            if ($reserved || $middleChain) {
+            if ($index > 0 && $index < $count - 1 && ($reserved || $middleChain)) {
                 $tickers[$index]['action'] = 'hold';
             }
 
             unset($tickers[$index]['_auto_hold_middle']);
         }
 
-        return $tickers;
+        return $this->unlabel_endpoints($tickers);
     }
 
 
@@ -211,14 +232,14 @@ trait CandleAutoDetection
     /** Reserve future HOLDs before broad BUY/SELL assignment. */
     private function candle_auto_mark_hold_candidates(array &$tickers): array
     {
-        foreach ($tickers as &$ticker) {
-            if (($ticker['is_super_doji()'] ?? 0) === 1) {
+        $count = count($tickers);
+        foreach ($tickers as $index => &$ticker) {
+            if ($index > 0 && $index < $count - 1 && ($ticker['is_super_doji()'] ?? 0) === 1) {
                 $ticker['_auto_hold_doji'] = true;
             }
         }
         unset($ticker);
 
-        $count = count($tickers);
         for ($index = 2; $index < $count - 2; $index++) {
             $blackChain = ($tickers[$index]['is_black()'] ?? 0) === 1
                 && ($tickers[$index - 1]['is_black()'] ?? 0) === 1

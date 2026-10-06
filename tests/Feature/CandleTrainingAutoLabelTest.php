@@ -78,12 +78,12 @@ it('preserves only this trainers compatible labels with bounded reads and no sna
     [$manifest, $rows] = autoLabelDataset(121);
     $snapshots = app(HumanTraining::class)->snapshotsForRows($manifest, $rows);
     foreach ($rows as $index => $row) {
-        if (! in_array($index, [0, 120], true)) {
+        if (! in_array($index, [1, 119], true)) {
             HumanCandleLabel::factory()->create(['snapshot_id' => $snapshots[$row['decision_at_ms']]->snapshot_id,
                 'trainer_id' => $trainer->user_id, 'action' => 'hold']);
         }
     }
-    HumanCandleLabel::factory()->create(['snapshot_id' => $snapshots[$rows[0]['decision_at_ms']]->snapshot_id,
+    HumanCandleLabel::factory()->create(['snapshot_id' => $snapshots[$rows[1]['decision_at_ms']]->snapshot_id,
         'trainer_id' => $other->user_id, 'action' => 'hold']);
     DB::enableQueryLog();
 
@@ -103,7 +103,7 @@ it('preserves only this trainers compatible labels with bounded reads and no sna
     expect($labels)->toBe(array_map(fn (int $index): array => [
         'time' => intdiv($rows[$index]['microtimestamp'], 1000),
         'decision_at_ms' => $rows[$index]['decision_at_ms'], 'action' => 'hold',
-    ], [0, 120]));
+    ], [1, 119]));
 
     $queries = collect(DB::getQueryLog())->pluck('query');
     $snapshotQueries = $queries->filter(fn (string $sql): bool => str_contains($sql, 'human_training_snapshots'));
@@ -120,8 +120,8 @@ it('includes saved opinions when delete-all has been staged without changing sto
     $this->travelTo('2024-01-10 00:00:00 UTC');
     $trainer = User::factory()->create();
     config(['operations.owner_uuid' => $trainer->user_id]);
-    [$manifest, $rows] = autoLabelDataset(1);
-    $snapshot = app(HumanTraining::class)->snapshotForRow($manifest, $rows[0]);
+    [$manifest, $rows] = autoLabelDataset(3);
+    $snapshot = app(HumanTraining::class)->snapshotForRow($manifest, $rows[1]);
     HumanCandleLabel::factory()->create(['snapshot_id' => $snapshot->snapshot_id,
         'trainer_id' => $trainer->user_id, 'action' => 'hold']);
     DB::enableQueryLog();
@@ -138,23 +138,23 @@ it('allows a fresh suggestion after source changes without publishing a replacem
     $this->travelTo('2024-01-10 00:00:00 UTC');
     $trainer = User::factory()->create();
     config(['operations.owner_uuid' => $trainer->user_id]);
-    [$manifest, $rows] = autoLabelDataset(1);
-    $snapshot = app(HumanTraining::class)->snapshotForRow($manifest, $rows[0]);
+    [$manifest, $rows] = autoLabelDataset(3);
+    $snapshot = app(HumanTraining::class)->snapshotForRow($manifest, $rows[1]);
     $original = $snapshot->verifiedPayload();
     HumanCandleLabel::factory()->create(['snapshot_id' => $snapshot->snapshot_id,
         'trainer_id' => $trainer->user_id, 'action' => 'hold']);
     if ($change === 'context') {
-        DB::table('tickers')->where('microtimestamp', IntelligenceFixtures::START - 60000)
+        DB::table('tickers')->where('microtimestamp', $rows[0]['microtimestamp'])
             ->update(['payload' => json_encode(['open' => '10', 'high' => '11', 'low' => '9', 'close' => '10.5', 'volume' => '1'])]);
     } elseif ($change === 'feature') {
-        DB::table('market_features')->where('microtimestamp', $rows[0]['microtimestamp'])->update(['payload' => '{}']);
+        DB::table('market_features')->where('microtimestamp', $rows[1]['microtimestamp'])->update(['payload' => '{}']);
     } else {
-        DB::table('tickers')->where('microtimestamp', $rows[0]['microtimestamp'])->delete();
+        DB::table('tickers')->where('microtimestamp', $rows[1]['microtimestamp'])->delete();
     }
     Cache::flush();
 
     $this->actingAs($trainer)->postJson(route('human-training.candles.auto-label', $manifest['dataset_id']))
-        ->assertOk()->assertJsonPath('count', 1)->assertJsonPath('labels.0.decision_at_ms', $rows[0]['decision_at_ms']);
+        ->assertOk()->assertJsonPath('count', 1)->assertJsonPath('labels.0.decision_at_ms', $rows[1]['decision_at_ms']);
 
     $this->assertDatabaseCount('human_candle_labels', 1);
     $this->assertDatabaseCount('human_training_snapshots', 1);
@@ -165,8 +165,8 @@ it('rejects corrupt saved chart checksums rather than trusting their labels', fu
     $this->travelTo('2024-01-10 00:00:00 UTC');
     $trainer = User::factory()->create();
     config(['operations.owner_uuid' => $trainer->user_id]);
-    [$manifest, $rows] = autoLabelDataset(1);
-    $snapshot = app(HumanTraining::class)->snapshotForRow($manifest, $rows[0]);
+    [$manifest, $rows] = autoLabelDataset(3);
+    $snapshot = app(HumanTraining::class)->snapshotForRow($manifest, $rows[1]);
     HumanCandleLabel::factory()->create(['snapshot_id' => $snapshot->snapshot_id,
         'trainer_id' => $trainer->user_id, 'action' => 'hold']);
     DB::table('human_training_snapshots')->where('snapshot_id', $snapshot->snapshot_id)->update(['sha256' => str_repeat('0', 64)]);
@@ -201,7 +201,7 @@ it('allows enough sequential auto-label requests to finish a larger dataset', fu
     $this->travelTo('2024-01-10 00:00:00 UTC');
     $trainer = User::factory()->create();
     config(['operations.owner_uuid' => $trainer->user_id]);
-    [$manifest] = autoLabelDataset(1);
+    [$manifest] = autoLabelDataset(3);
 
     for ($request = 0; $request < 13; $request++) {
         $this->actingAs($trainer)->postJson(route('human-training.candles.auto-label', $manifest['dataset_id']))
@@ -242,3 +242,60 @@ it('returns 403 for trainers without permission to auto-label', function () {
     $this->actingAs(User::factory()->create())->postJson(route('human-training.candles.auto-label', Str::uuid7()))
         ->assertForbidden();
 });
+
+
+it('leaves datasets with no interior candle unlabelled even when existing opinions are included', function (int $count, bool $includeExisting) {
+    $this->travelTo('2024-01-10 00:00:00 UTC');
+    $trainer = User::factory()->create();
+    config(['operations.owner_uuid' => $trainer->user_id]);
+    [$manifest] = autoLabelDataset($count);
+
+    $this->actingAs($trainer)
+        ->postJson(route('human-training.candles.auto-label', $manifest['dataset_id']), ['include_existing' => $includeExisting])
+        ->assertOk()->assertExactJson(['labels' => [], 'count' => 0, 'processed' => $count,
+            'total' => $count, 'next_offset' => null]);
+
+    $this->assertDatabaseEmpty('human_candle_labels');
+    $this->assertDatabaseEmpty('human_training_snapshots');
+})->with([
+    'one candle' => [1, false],
+    'two candles' => [2, false],
+    'one candle including existing' => [1, true],
+    'two candles including existing' => [2, true],
+]);
+
+it('excludes dataset endpoints but retains interior page edges from every auto-label batch', function (bool $includeExisting) {
+    $this->travelTo('2024-01-10 00:00:00 UTC');
+    $trainer = User::factory()->create();
+    config(['operations.owner_uuid' => $trainer->user_id]);
+    [$manifest, $rows] = autoLabelDataset(103);
+    $labels = [];
+
+    foreach ([0 => 49, 50 => 50, 100 => 2] as $offset => $expectedCount) {
+        $response = $this->actingAs($trainer)
+            ->postJson(route('human-training.candles.auto-label', $manifest['dataset_id']), [
+                'offset' => $offset, 'include_existing' => $includeExisting,
+            ])
+            ->assertOk()->assertJsonPath('count', $expectedCount)
+            ->assertJsonPath('processed', min($offset + 50, 103))
+            ->assertJsonPath('next_offset', $offset === 100 ? null : $offset + 50);
+        $labels = [...$labels, ...$response->json('labels')];
+    }
+
+    expect($labels)->toBe(array_map(fn (int $index): array => [
+        'time' => intdiv($rows[$index]['microtimestamp'], 1000),
+        'decision_at_ms' => $rows[$index]['decision_at_ms'], 'action' => 'hold',
+    ], range(1, 101)));
+
+    // A resumed request may begin on any interior row, not only a multiple of 50.
+    $this->actingAs($trainer)
+        ->postJson(route('human-training.candles.auto-label', $manifest['dataset_id']), [
+            'offset' => 49, 'include_existing' => $includeExisting,
+        ])
+        ->assertOk()->assertJsonPath('count', 50)
+        ->assertJsonPath('labels.0.decision_at_ms', $rows[49]['decision_at_ms'])
+        ->assertJsonPath('labels.49.decision_at_ms', $rows[98]['decision_at_ms']);
+
+    $this->assertDatabaseEmpty('human_candle_labels');
+    $this->assertDatabaseEmpty('human_training_snapshots');
+})->with(['preserve saved opinions' => [false], 'include saved opinions' => [true]]);

@@ -229,6 +229,8 @@ final class CandleTraining
         $this->remove_consequitive_actions($tickers);
         $this->hodl_all_dojis($tickers);
         $this->hodl_middle_chains($tickers);
+        // Enforce after all label-producing passes and before response pagination.
+        $this->unlabel_endpoints($tickers);
 
         // Keep the full algorithm context, but verify only one chronological
         // page per request. Snapshot UUIDs reflect review order, not candle time.

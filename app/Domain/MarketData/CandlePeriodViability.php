@@ -35,6 +35,8 @@ final class CandlePeriodViability
         $this->find_new_bottoms($candles);
         $this->hodl_all_dojis($candles);
         $this->hodl_middle_chains($candles);
+        // Context-only endpoints must never contribute to finalized-label ratios.
+        $this->unlabel_endpoints($candles);
 
         return $this->summary($candles, $minimumRatio);
     }
