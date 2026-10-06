@@ -123,6 +123,25 @@ it('collapses repeated frozen datasets into one logical market option by default
         ->and($html)->toContain('value="'.$newest.'"')->not->toContain('value="'.$older.'"');
 });
 
+it('can hide dataset sample counts when they are not pertinent to the workflow', function () {
+    $user = User::factory()->create();
+    $exchange = Exchange::query()->create(['name' => 'Binance', 'class' => 'binance', 'config' => '{}']);
+    subscribedPairSelectMarket($user, $exchange, 'ETH/BTC', '3m');
+
+    $dataset = (string) Str::uuid7();
+    $datasets = [
+        ['dataset_id' => $dataset, 'exchange' => 'binance', 'symbol' => 'ETH/BTC', 'period' => '3m', 'rows' => 3988],
+    ];
+
+    $view = $this->actingAs($user)->blade(
+        '<x-subscribed-pair-select name="dataset" :datasets="$datasets" :show-dataset-samples="false" />',
+        ['datasets' => $datasets],
+    );
+
+    $view->assertSeeText('Binance · ETH/BTC · 3m')
+        ->assertDontSeeText('3,988 samples');
+});
+
 it('keeps the currently open frozen dataset as the single option for its market', function () {
     $user = User::factory()->create();
     $exchange = Exchange::query()->create(['name' => 'Binance', 'class' => 'binance', 'config' => '{}']);

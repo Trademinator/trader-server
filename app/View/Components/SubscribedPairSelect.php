@@ -25,6 +25,7 @@ final class SubscribedPairSelect extends FormControl
         public array $datasets = [],
         public ?array $currentDataset = null,
         public bool $showDatasetVersions = false,
+        public bool $showDatasetSamples = true,
         public string $placeholder = '',
         public bool $showUnavailableDatasets = false,
     ) {
@@ -129,13 +130,16 @@ final class SubscribedPairSelect extends FormControl
             return null;
         }
         $parts = [$exchange, $pair, $period];
-        if (isset($dataset['rows']) && is_numeric($dataset['rows'])) {
+        $hasRows = isset($dataset['rows']) && is_numeric($dataset['rows']);
+        if ($hasRows && $this->showDatasetSamples) {
             $parts[] = Decimal::format((int) $dataset['rows']).' samples';
-            if ($this->showDatasetVersions) {
+        }
+        if ($this->showDatasetVersions) {
+            if ($hasRows) {
                 $parts[] = substr($id, 0, 8);
+            } elseif ($current) {
+                $parts[] = 'current dataset';
             }
-        } elseif ($current && $this->showDatasetVersions) {
-            $parts[] = 'current dataset';
         }
 
         return ['value' => $id, 'label' => implode(' · ', $parts)];

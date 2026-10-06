@@ -38,7 +38,7 @@
                     <label for="candle-dataset">Market and frozen dataset</label>
                     <x-subscribed-pair-select name="dataset" id="candle-dataset" :value="$selectedDataset ?? ''"
                         :datasets="$datasets" :all-subscribed="true" :sort="['exchange', 'pair', 'period']"
-                        :show-unavailable-datasets="true" required />
+                        :show-dataset-samples="false" :show-unavailable-datasets="true" required />
                     <p class="guide-help">Subscribed pairs without a usable semantic dataset are shown in green and disabled. The replay opens on an unlabelled candle when possible; selecting an earlier candle truncates the chart there so later candles are not shown while you decide.</p>
                     <button class="guide-button" type="submit" @disabled($datasets === [])>Start Candle Training</button>
                 </form>
