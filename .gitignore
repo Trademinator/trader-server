@@ -22,5 +22,5 @@ yarn-error.log
 /.nova
 /.vscode
 /.zed
-
+/.well-known
 /storage/framework/ccxt-metadata.lock
