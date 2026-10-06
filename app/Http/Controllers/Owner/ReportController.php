@@ -6,6 +6,7 @@ use App\Domain\Features\FeatureEngine;
 use App\Domain\Intelligence\CoinGeckoReadiness;
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\Operations\GeoLocation;
+use App\Domain\Operations\QueueBacklog;
 use App\Http\Controllers\Controller;
 use App\Models\Market;
 use App\Models\MarketFeature;
@@ -22,7 +23,7 @@ use Illuminate\View\View;
 
 class ReportController extends Controller
 {
-    public function index(GeoLocation $geo, CoinGeckoReadiness $contextReadiness): View
+    public function index(GeoLocation $geo, CoinGeckoReadiness $contextReadiness, QueueBacklog $backlog): View
     {
         $users = User::query()->toBase()->selectRaw('COUNT(*) AS total, COUNT(email_verified_at) AS verified, COUNT(suspended_at) AS suspended')->first();
         $subscriptions = MarketSubscription::query()->where('active', true)->count();
@@ -44,7 +45,7 @@ class ReportController extends Controller
                 }
             }
         }
-        $queues = DB::table('jobs')->selectRaw('queue, COUNT(*) AS total, MIN(created_at) AS oldest')->groupBy('queue')->get();
+        $queueBacklog = $backlog->snapshot();
         $failed = DB::connection(config('queue.failed.database'))->table(config('queue.failed.table', 'failed_jobs'))
             ->select('uuid', 'connection', 'queue', 'failed_at')->orderByDesc('failed_at')->orderByDesc('id')->limit(10)->get();
         $queueDriver = config('queue.default');
@@ -54,7 +55,7 @@ class ReportController extends Controller
         $latestModel = DB::table('intelligence_models')->max('created_at');
         $geoStatus = $geo->status();
 
-        return view('owner.overview', compact('users', 'subscriptions', 'feeds', 'overdue', 'modelTotals', 'queues', 'failed', 'queueDriver', 'traffic', 'latestPull', 'latestModel', 'geoStatus'));
+        return view('owner.overview', compact('users', 'subscriptions', 'feeds', 'overdue', 'modelTotals', 'queueBacklog', 'failed', 'queueDriver', 'traffic', 'latestPull', 'latestModel', 'geoStatus'));
     }
 
     public function subscriptions(Request $request): View

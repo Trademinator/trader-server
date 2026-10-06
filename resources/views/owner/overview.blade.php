@@ -26,10 +26,22 @@
         </section>
     </div>
     <section class="owner-panel" id="queue-backlog"><h2>Queue backlog</h2>
-        <p class="owner-muted">Configured queue connection: {{ $queueDriver }}. The table below reports the database queue only.</p>
-        <div class="owner-scroll"><table class="owner-table"><thead><tr><th>Queue</th><th>Pending / reserved</th><th>Oldest queued at</th></tr></thead><tbody>
-            @forelse($queues as $queue)<tr><td>{{ $queue->queue }}</td><td>{{ $queue->total }}</td><td><x-display-time :value="$queue->oldest" unit="seconds" /></td></tr>@empty<tr><td colspan="3">No jobs in the database queue.</td></tr>@endforelse
+        <p class="owner-muted">Configured queue connection: {{ $queueDriver }}. Monitored connections: {{ implode(', ', $queueBacklog['connections']) ?: 'None' }}.</p>
+        @foreach($queueBacklog['notices'] as $notice)<p class="owner-muted">{{ $notice }}</p>@endforeach
+        @foreach($queueBacklog['errors'] as $error)<p role="status">{{ $error }} Backlog counts may be incomplete.</p>@endforeach
+        <div class="owner-scroll"><table class="owner-table"><thead><tr><th>Connection / backend</th><th>Queue</th><th>Waiting</th><th>Delayed</th><th>Reserved</th><th>Total</th><th>Oldest waiting job</th></tr></thead><tbody>
+            @forelse($queueBacklog['rows'] as $queue)
+                <tr>
+                    <td>{{ $queue['connection'] }} / {{ $queue['driver'] }}</td>
+                    <td>{{ $queue['driver'] === 'sqs' ? basename($queue['queue']) : $queue['queue'] }}</td>
+                    <td>{{ $queue['waiting'] }}</td><td>{{ $queue['delayed'] }}</td><td>{{ $queue['reserved'] }}</td><td>{{ $queue['total'] }}</td>
+                    <td>@if($queue['oldest'] !== null)<x-display-time :value="$queue['oldest']" unit="seconds" />@else—@endif</td>
+                </tr>
+            @empty
+                <tr><td colspan="7">{{ $queueBacklog['errors'] === [] ? 'No queued jobs in the monitored connections.' : 'Queue backlog could not be fully read.' }}</td></tr>
+            @endforelse
         </tbody></table></div>
+        <p class="owner-muted">Reserved jobs have been claimed by a worker. Oldest-job times are shown when available.@if(collect($queueBacklog['rows'])->contains('driver', 'sqs')) SQS counts are approximate.@endif</p>
         <h3>Recent recorded job failures</h3><div class="owner-scroll"><table class="owner-table"><thead><tr><th>Job UUID</th><th>Connection / queue</th><th>Failed at</th><th>Actions</th></tr></thead><tbody>
             @forelse($failed as $job)
                 <tr>
