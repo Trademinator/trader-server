@@ -591,7 +591,7 @@ Implementation: [`BacktestResearchDataset.php`](../app/Console/Commands/Backtest
 
 ## trademinator:knn-build
 
-Signature: `trademinator:knn-build {exchange} {symbol} {period} {--dataset=} {--schema=core} {--from=} {--to=} {--as-of=}`
+Signature: `trademinator:knn-build {exchange} {symbol} {period} {--dataset=} {--schema=core} {--from=} {--to=} {--as-of=} {--context-fallback= : none or technical; defaults to INTELLIGENCE_CONTEXT_FALLBACK}`
 
 Description: Build closed-candle semantic knowledge and validate KNN and pattern intelligence
 
@@ -614,6 +614,26 @@ Build/validate intelligence for one market immediately from existing data. Creat
 php -d memory_limit=512M artisan trademinator:knn-build bitso 'ATOM/USD' 15m --schema=core
 php -d memory_limit=512M artisan trademinator:knn-build bitso 'ATOM/USD' 15m --schema=full
 php artisan trademinator:knn-build bitso 'ATOM/USD' 15m --dataset=DATASET_UUID
+```
+
+`--context-fallback=technical` explicitly permits a new `--schema=full` build to choose
+`technical` when full feature history cannot supply potential tuning and holdout
+capacity but technical history can. The inspection uses input availability and
+timestamps, never target values or model scores. It is an upper-bound preflight:
+source gaps, semantic warmup and later pattern/lead-lag exclusions still apply.
+Only one dataset/model is fitted; validation failure never triggers another schema.
+No missing values are replaced with zero. All validation gates remain unchanged.
+
+The default is `INTELLIGENCE_CONTEXT_FALLBACK=none`. Set it to `technical` to allow
+this policy on scheduled full builds as well; an explicit `--context-fallback=none`
+overrides that setting. Explicit frozen `--dataset` builds never reselect a schema
+and cannot be combined with `--context-fallback`. Reports and inference expose
+`automatic.schema` and `automatic.schema_selection` (inference under the automatic
+scoring component). A technical model does not consume CoinGecko inputs. This is a
+single-schema fallback, not a simultaneous third KNN model.
+
+```bash
+php -d memory_limit=512M artisan trademinator:knn-build bitso 'ATOM/USD' 15m --schema=full --context-fallback=technical
 ```
 
 Implementation: [`BuildMarketIntelligence.php`](../app/Console/Commands/BuildMarketIntelligence.php).

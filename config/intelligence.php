@@ -5,6 +5,7 @@ return [
     'path' => storage_path('app/private/intelligence'),
     'queue' => env('INTELLIGENCE_QUEUE', 'intelligence'),
     'schema' => env('INTELLIGENCE_SCHEMA', 'core'),
+    'context_fallback' => env('INTELLIGENCE_CONTEXT_FALLBACK', 'none'),
     'horizon' => 12,
     'lookback' => 20,
     'minimum_move_bps' => 10.0,

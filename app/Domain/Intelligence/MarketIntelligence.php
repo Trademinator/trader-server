@@ -33,8 +33,20 @@ final class MarketIntelligence
 
     public function build(string $exchange, string $symbol, string $period, ?string $dataset = null,
         string $schema = 'core', ?int $fromMs = null, ?int $toMs = null, ?int $asOfMs = null,
-        ?string $generation = null, array $buildPerformance = [], ?string $featureLockOwner = null): array
+        ?string $generation = null, array $buildPerformance = [], ?string $featureLockOwner = null, ?string $contextFallback = null): array
     {
+        $fallback = $contextFallback ?? config('intelligence.context_fallback', 'none');
+        if (! in_array($fallback, ['none', 'technical'], true)) {
+            throw new InvalidArgumentException('Context fallback must be none or technical.');
+        }
+        if ($contextFallback !== null && ($dataset !== null || ($fallback === 'technical' && $schema !== 'full'))) {
+            throw new InvalidArgumentException('Technical context fallback requires a new full-schema build.');
+        }
+        // A previous strict-full generation must not suppress an opted-in build.
+        if ($generation !== null && $dataset === null && $schema === 'full' && $fallback === 'technical') {
+            $generation = hash('sha256', $generation.'|'.AutomaticSchemaSelection::VERSION);
+        }
+        $schemaSelection = [];
         $buildPerformance['started_at'] ??= now()->toIso8601String();
         $buildPerformance['started_monotonic_ns'] = hrtime(true);
         $buildPerformance['stages'] ??= [];
@@ -66,17 +78,49 @@ final class MarketIntelligence
                 $fromMs = max($fromMs ?? 0, KnowledgeWindow::fromMs($asOfMs));
                 $definition = new SemanticLabels(config('intelligence.horizon'), config('intelligence.lookback'),
                     config('intelligence.minimum_move_bps'), config('intelligence.extreme_fraction'));
-                $manifest = $this->datasets->build($exchange, $symbol, $period, $definition, $schema,
-                    fromMs: (int) $fromMs, toMs: $toMs, asOfMs: $asOfMs, featureLockOwner: $featureLockOwner);
+                [$manifest, $schemaSelection] = $this->snapshotWithSchemaPolicy($exchange, $symbol, $period,
+                    $definition, $schema, (int) $fromMs, $toMs, $asOfMs, $featureLockOwner, $fallback, $deadline);
                 $dataset = $manifest['dataset_id'];
             }
 
             $buildPerformance['stages']['dataset_ms'] = (int) ($buildPerformance['stages']['dataset_ms'] ?? 0)
                 + (int) round((hrtime(true) - $datasetStarted) / 1_000_000);
 
-            return $this->trainer->train($dataset, $deadline, $generation, $buildPerformance);
+            return $this->trainer->train($dataset, $deadline, $generation, $buildPerformance, $schemaSelection);
         } finally {
             $lock->release();
+        }
+    }
+
+    /** Freeze one schema before any model fitting; never retry after validation failure. */
+    private function snapshotWithSchemaPolicy(string $exchange, string $symbol, string $period, SemanticLabels $definition,
+        string $schema, int $fromMs, int $toMs, int $asOfMs, ?string $featureLockOwner, string $fallback, float $deadline): array
+    {
+        $selection = ['requested_schema' => $schema, 'effective_schema' => $schema,
+            'fallback_policy' => $schema === 'full' ? $fallback : 'none', 'reason' => 'explicit_schema'];
+        $ownedLock = null;
+        try {
+            if ($schema === 'full' && $fallback === 'technical') {
+                $lockName = 'trademinator:features:'.hash('sha256', "$exchange|$symbol|$period");
+                if ($featureLockOwner === null) {
+                    $ownedLock = Cache::lock($lockName, 720);
+                    if (! $ownedLock->get()) {
+                        throw new RuntimeException('Features or a dataset are already being built for this market and period.');
+                    }
+                    $featureLockOwner = $ownedLock->owner();
+                } elseif (! Cache::restoreLock($lockName, $featureLockOwner)->isOwnedByCurrentProcess()) {
+                    throw new RuntimeException('Feature lock ownership was lost before schema inspection.');
+                }
+                $selection = app(AutomaticSchemaSelection::class)->inspect($exchange, $symbol, $period,
+                    $fromMs, $toMs, $asOfMs, $definition->horizon, $deadline);
+                $schema = $selection['effective_schema'];
+            }
+            $manifest = $this->datasets->build($exchange, $symbol, $period, $definition, $schema,
+                fromMs: $fromMs, toMs: $toMs, asOfMs: $asOfMs, featureLockOwner: $featureLockOwner);
+
+            return [$manifest, $selection];
+        } finally {
+            $ownedLock?->release();
         }
     }
 
@@ -158,6 +202,8 @@ final class MarketIntelligence
         $human = $this->candleKnn->predict($model['candle_guidance'], $current->payload, $current->available_at_ms);
         $result = $this->ensemble->combine($automatic, $human, $model['ensemble']);
         $result['scoring']['components']['automatic']['input_keys'] = [...$model['keys'], ...$model['pattern_keys'], ...($model['lead_lag_keys'] ?? [])];
+        $result['scoring']['components']['automatic']['schema'] = $model['automatic']['schema'] ?? null;
+        $result['scoring']['components']['automatic']['schema_selection'] = $model['automatic']['schema_selection'] ?? null;
         $result['scoring']['components']['automatic']['context_keys'] = array_values(array_diff($model['keys'], FeatureEngine::KEYS));
         $result['scoring']['components']['human_candle']['input_keys'] = $model['candle_guidance']['input_keys'] ?? [];
         $context['candle_guidance'] = ['status' => $model['candle_guidance']['status'], 'mode' => 'independent_knn',

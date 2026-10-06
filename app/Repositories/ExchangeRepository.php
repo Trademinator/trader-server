@@ -224,8 +224,7 @@ class ExchangeRepository extends BaseRepository
                     'microtimestamp' => $raw['bucket_start_time'] ?? null,
                     'open' => $raw['first_rate'] ?? null, 'high' => $raw['max_rate'] ?? null,
                     'low' => $raw['min_rate'] ?? null, 'close' => $raw['last_rate'] ?? null, 'volume' => $raw['volume'] ?? null,
-                    'trade_count' => $raw['trade_count'] ?? null,
-                    'first_trade_time' => $raw['first_trade_time'] ?? null, 'last_trade_time' => $raw['last_trade_time'] ?? null,
+                    ...array_intersect_key($raw, array_flip(['trade_count', 'first_trade_time', 'last_trade_time'])),
                 ];
             }
 
@@ -239,11 +238,28 @@ class ExchangeRepository extends BaseRepository
 
     private function normalizeCandleEvidence(array $rows): array
     {
-        foreach ($rows as $row) {
+        foreach ($rows as &$row) {
             if (! is_numeric($row['volume'] ?? $row[5] ?? null)) {
                 throw new \UnexpectedValueException('Candle reconstruction evidence requires an explicit volume.');
             }
+            // CCXT quotes JSON numbers to preserve prices. Only these discrete
+            // metadata fields may become integers; missing and null stay distinct.
+            foreach (['trade_count', 'first_trade_time', 'last_trade_time'] as $field) {
+                if (! isset($row[$field])) {
+                    continue;
+                }
+                $value = $row[$field];
+                if (is_string($value) && ctype_digit($value)) {
+                    $value = filter_var(ltrim($value, '0') ?: '0', FILTER_VALIDATE_INT,
+                        ['options' => ['min_range' => 0]]);
+                }
+                if (! is_int($value) || $value < 0) {
+                    throw new \UnexpectedValueException('Candle trade metadata requires nonnegative, in-range integers.');
+                }
+                $row[$field] = $value;
+            }
         }
+        unset($row);
 
         return (new OhlcvNormalizer)->normalize($rows);
     }

@@ -54,6 +54,15 @@
                         </tbody>
                     </table></div>
                 @endif
+                @if(isset($report['automatic']['schema_selection']))
+                    <p>Automatic input schema: <strong>{{ $report['automatic']['schema_selection']['effective_schema'] }}</strong>
+                        (requested: {{ $report['automatic']['schema_selection']['requested_schema'] }}).
+                        {{ ucwords(str_replace('_', ' ', $report['automatic']['schema_selection']['reason'])) }}.
+                        @if(($report['automatic']['history_status'] ?? null) === 'insufficient_tuning_history')
+                            No tuning folds: insufficient eligible automatic history.
+                        @endif
+                    </p>
+                @endif
                 <p>{{ \App\Helpers\Decimal::format($report['candle_guidance']['samples'] ?? 0) }} eligible annotated candles · {{ str_replace('_', ' ', $report['candle_guidance']['status']) }}</p>
                 @if(isset($report['candle_guidance']['annotation_diagnostics']))
                     @php
@@ -80,7 +89,7 @@
                 @if(isset($report['candle_guidance']['holdout']))
                     <p>Human Candle held-out directional annotation agreement: {{ \App\Helpers\Decimal::format($report['candle_guidance']['holdout']['directional_annotation_agreement'] * 100, 1) }}%.</p>
                 @endif
-                <p class="guide-help">An abstaining model receives zero effective weight. Supported HOLD votes remain evidence. Human Trend is excluded. Social/news scoring is not connected; CoinGecko is context inside the automatic model. Scores are not probabilities of profit, and neighbor counts are not added across models.</p>
+                <p class="guide-help">An abstaining model receives zero effective weight. Supported HOLD votes remain evidence. Human Trend is excluded. Social/news scoring is not connected; CoinGecko context is used only when included in the automatic model’s effective schema. Scores are not probabilities of profit, and neighbor counts are not added across models.</p>
                 @can('train-intelligence')<a href="{{ route('human-training.index', ['exchange' => $item->market->exchange->class, 'symbol' => $item->market->symbol, 'period' => $period]) }}">Open human training</a>@endcan
             </section>
         @endif

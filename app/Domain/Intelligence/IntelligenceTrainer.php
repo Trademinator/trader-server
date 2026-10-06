@@ -22,7 +22,7 @@ final class IntelligenceTrainer
         private HumanCandleKnn $candleKnn,
     ) {}
 
-    public function train(string $dataset, ?float $deadline = null, ?string $generation = null, array $buildPerformance = []): array
+    public function train(string $dataset, ?float $deadline = null, ?string $generation = null, array $buildPerformance = [], array $schemaSelection = []): array
     {
         $buildPerformance['started_at'] ??= now()->toIso8601String();
         $buildPerformance['started_monotonic_ns'] ??= hrtime(true);
@@ -160,7 +160,10 @@ final class IntelligenceTrainer
                 'candle_guidance' => $candle['bundle'], 'candle_keys' => [],
                 'ensemble' => $ensemble,
                 'automatic' => ['status' => $automaticReady ? 'ready' : 'abstaining', 'reason' => $automaticReason,
-                    'validation_target' => 'future_semantic_outcomes'],
+                    'validation_target' => 'future_semantic_outcomes', 'schema' => $manifest['schema'],
+                    'schema_selection' => $schemaSelection ?: ['requested_schema' => $manifest['schema'],
+                        'effective_schema' => $manifest['schema'], 'fallback_policy' => 'none', 'reason' => 'frozen_dataset'],
+                    'history_status' => $selection['folds'] === [] ? 'insufficient_tuning_history' : 'tuning_evaluated'],
                 'regime_settings' => ['super_confidence' => 0.8, 'super_effective_neighbors' => 6.0],
                 'pattern_keys' => $patternKeys, 'label_definition' => $manifest['label_definition'],
                 'trained_as_of_ms' => $manifest['as_of_ms'], 'available_at_ms' => $availableAt,
