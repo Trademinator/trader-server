@@ -108,7 +108,7 @@ Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-
         ->middleware(['throttle:6,1,history-recovery', ConfirmHistoryRecoveryPassword::class])->name('history-recovery.store');
     Route::get('intelligence', [ReportController::class, 'intelligence'])->name('intelligence');
     Route::get('status', [StatusController::class, 'index'])->name('status');
-    Route::delete('status/purge', [StatusController::class, 'purge'])->middleware(['password.confirm', 'throttle:6,1'])->name('status.purge');
+    Route::delete('status/purge', [StatusController::class, 'purge'])->middleware(['password.confirm', 'throttle:6,1,owner-status-purge'])->name('status.purge');
     Route::get('intelligence/{model}', [ReportController::class, 'model'])->name('intelligence.show');
     Route::get('events', [MarketEventController::class, 'index'])->name('events');
     Route::put('events/{candidate}', [MarketEventController::class, 'update'])->whereUuid('candidate')->name('events.update');

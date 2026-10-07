@@ -65,6 +65,8 @@ class StatusController extends Controller
 
     public function purge(Request $request): RedirectResponse
     {
+        set_time_limit(300);
+
         $data = $request->validate(['scope' => ['required', Rule::in(['features', 'human-snapshots', 'models', 'datasets', 'checkpoints'])]]);
         $deleted = match ($data['scope']) {
             'features' => DB::table('market_features')->where('version', '!=', FeatureEngine::VERSION)->delete(),
