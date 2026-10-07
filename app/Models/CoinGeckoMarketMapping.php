@@ -26,11 +26,12 @@ class CoinGeckoMarketMapping extends Model
         'status',
         'resolved_at',
         'last_error',
+        'manually_mapped',
     ];
 
     protected function casts(): array
     {
-        return ['resolved_at' => 'datetime'];
+        return ['resolved_at' => 'datetime', 'manually_mapped' => 'boolean'];
     }
 
     public function market(): BelongsTo

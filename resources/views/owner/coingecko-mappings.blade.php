@@ -1,31 +1,43 @@
 <x-owner.layout title="CoinGecko mappings">
     <section class="owner-panel">
-        @if (session('status')) <p class="mb-4 text-green-600">{{ session('status') }}</p> @endif
-        @if ($errors->any()) <p class="mb-4 text-red-600">{{ $errors->first() }}</p> @endif
         <div class="overflow-x-auto bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-            <p class="mb-4 text-sm text-gray-600 dark:text-gray-300">Only CoinGecko exceptions appear here. Unsupported quote currencies cannot be solved by choosing a different coin. Deleting an exception does not delete its exchange market, and automatic reconciliation may recreate it.</p>
+            <p class="mb-4 text-sm text-gray-600 dark:text-gray-300">Only mappings requiring human intervention are shown. The exchange's <strong>base symbol</strong> is the coin we could not identify automatically; the quote is the currency after the slash. Manually resolved rows stay here so you can correct mistakes. Unsupported quote currencies cannot be fixed by choosing another coin.</p>
             <table class="min-w-full text-sm text-gray-900 dark:text-gray-100">
-                <thead><tr class="text-left border-b dark:border-gray-600"><th class="p-2">Exchange</th><th class="p-2">Market</th><th class="p-2">Problem</th><th class="p-2">CoinGecko asset</th><th class="p-2">Actions</th></tr></thead>
+                <thead><tr class="text-left border-b dark:border-gray-600"><th class="p-2">Exchange</th><th class="p-2">Market</th><th class="p-2">Symbol needing identification</th><th class="p-2">Problem / candidates</th><th class="p-2">CoinGecko asset ID</th><th class="p-2">Actions</th></tr></thead>
                 <tbody>
                 @forelse ($mappings as $mapping)
-                    <tr class="border-b dark:border-gray-700">
+                    @php
+                        $canEdit = in_array($mapping->status, ['unmapped', 'ambiguous'], true) || ($mapping->status === 'resolved' && $mapping->manually_mapped);
+                        $symbol = $mapping->base_symbol ?: explode('/', $mapping->market?->symbol ?? '')[0];
+                    @endphp
+                    <tr class="border-b dark:border-gray-700 align-top">
                         <td class="p-2">{{ $mapping->market?->exchange?->name ?? $mapping->market?->exchange?->class }}</td>
                         <td class="p-2 font-mono">{{ $mapping->market?->symbol }}</td>
-                        <td class="p-2"><strong>{{ $mapping->status }}</strong><div class="text-xs text-gray-500 dark:text-gray-400">{{ $mapping->last_error }}</div></td>
+                        <td class="p-2"><strong class="font-mono">{{ $mapping->status === 'unsupported' ? strtoupper((string) $mapping->vs_currency) : $symbol }}</strong><div class="text-xs text-gray-500">{{ $mapping->status === 'unsupported' ? 'Unsupported quote currency' : 'Exchange base ticker' }}</div></td>
+                        <td class="p-2"><strong>{{ $mapping->manually_mapped ? 'Manually mapped' : $mapping->status }}</strong>
+                            @if (! $mapping->manually_mapped && $mapping->last_error)<div class="text-xs text-gray-500 dark:text-gray-400">{{ $mapping->last_error }}</div>@endif
+                            @if ($mapping->status === 'ambiguous')
+                                <div class="mt-2 text-xs" data-coingecko-candidates data-symbol="{{ $symbol }}" data-input="coin-{{ $mapping->getKey() }}" aria-live="polite">Loading exact CoinGecko symbol matches…</div>
+                            @endif
+                        </td>
                         <td class="p-2">
-                            @if (in_array($mapping->status, ['unmapped', 'ambiguous'], true))
-                                <form id="map-{{ $mapping->getKey() }}" method="POST" action="{{ route('owner.coingecko-mappings.update', $mapping) }}">@csrf @method('PUT')
-                                    <input name="coin_id" list="options-{{ $mapping->getKey() }}" required placeholder="Search by name, ticker or ID" autocomplete="off" class="w-64 rounded dark:bg-gray-700" data-coingecko-search data-options="options-{{ $mapping->getKey() }}" aria-label="CoinGecko coin ID for {{ $mapping->market?->symbol }}" />
+                            @if ($canEdit)
+                                <form id="map-{{ $mapping->getKey() }}" method="POST" action="{{ route('owner.coingecko-mappings.update', $mapping) }}">
+                                    @csrf @method('PUT')
+                                    <input id="coin-{{ $mapping->getKey() }}" name="coin_id" value="{{ $mapping->coin_id }}" list="options-{{ $mapping->getKey() }}" required placeholder="Search coin name, ticker or API ID" autocomplete="off" class="w-64 rounded dark:bg-gray-700" data-coingecko-search data-options="options-{{ $mapping->getKey() }}" aria-label="CoinGecko API ID for {{ $symbol }} on {{ $mapping->market?->exchange?->class }}" />
                                     <datalist id="options-{{ $mapping->getKey() }}"></datalist>
+                                    @if($mapping->manually_mapped)<div class="text-xs text-gray-500 mt-1">Current: {{ $mapping->coin_name }} · {{ $mapping->coin_id }}</div>@endif
                                 </form>
-                            @else <span class="text-gray-500">Quote unsupported; no coin override</span> @endif
+                            @else
+                                <span class="text-gray-500">No coin override for unsupported quotes</span>
+                            @endif
                         </td>
                         <td class="p-2 whitespace-nowrap">
-                            @if (in_array($mapping->status, ['unmapped', 'ambiguous'], true)) <button class="underline mr-3" type="submit" form="map-{{ $mapping->getKey() }}">Save</button> @endif
-                            <form class="inline" action="{{ route('owner.coingecko-mappings.destroy', $mapping) }}" method="POST" onsubmit="return confirm('Delete this mapping exception? It may be recreated automatically.')">@csrf @method('DELETE')<button class="underline text-red-600" type="submit">Delete</button></form>
+                            @if ($canEdit)<button class="underline mr-3" type="submit" form="map-{{ $mapping->getKey() }}">{{ $mapping->manually_mapped ? 'Update mapping' : 'Save mapping' }}</button>@endif
+                            <form class="inline" action="{{ route('owner.coingecko-mappings.destroy', $mapping) }}" method="POST" onsubmit="return confirm('Delete this mapping? Automatic reconciliation may recreate it.')">@csrf @method('DELETE')<button class="underline text-red-600" type="submit">Delete</button></form>
                         </td>
                     </tr>
-                @empty <tr><td class="p-4" colspan="5">No CoinGecko mappings currently require attention.</td></tr> @endforelse
+                @empty <tr><td class="p-4" colspan="6">No CoinGecko mappings currently require attention.</td></tr> @endforelse
                 </tbody>
             </table>
             <div class="mt-4">{{ $mappings->links() }}</div>
@@ -34,6 +46,31 @@
     <script>
     (() => {
         const url = @json(route('owner.coingecko-mappings.coins'));
+        const lookup = async (q, exact = false) => {
+            const response = await fetch(url + '?q=' + encodeURIComponent(q) + (exact ? '&exact=1' : ''), {headers: {'Accept': 'application/json'}});
+            if (!response.ok) throw new Error('CoinGecko lookup failed');
+            return (await response.json()).results || [];
+        };
+        document.querySelectorAll('[data-coingecko-candidates]').forEach(async area => {
+            try {
+                const choices = await lookup(area.dataset.symbol, true);
+                area.replaceChildren();
+                if (!choices.length) { area.textContent = 'No exact ticker matches found. Use the search box to find a coin by name or ID.'; return; }
+                const heading = document.createElement('div');
+                heading.textContent = 'CoinGecko exact ticker matches (' + choices.length + (choices.length === 50 ? '+' : '') + '):';
+                area.append(heading);
+                const list = document.createElement('ul');
+                for (const coin of choices) {
+                    const item = document.createElement('li');
+                    const button = document.createElement('button');
+                    button.type = 'button'; button.className = 'underline text-left';
+                    button.textContent = coin.text;
+                    button.addEventListener('click', () => { const field = document.getElementById(area.dataset.input); if (field) field.value = coin.id; });
+                    item.append(button); list.append(item);
+                }
+                area.append(list);
+            } catch (_) { area.textContent = 'Unable to load candidates; search the catalogue manually.'; }
+        });
         document.querySelectorAll('[data-coingecko-search]').forEach(input => {
             let timer;
             input.addEventListener('input', () => {
@@ -41,17 +78,15 @@
                 const q = input.value.trim();
                 if (q.length < 2) return;
                 timer = setTimeout(async () => {
-                    const response = await fetch(url + '?q=' + encodeURIComponent(q), {headers: {'Accept': 'application/json'}});
-                    if (!response.ok) return;
-                    const data = await response.json();
-                    const list = document.getElementById(input.dataset.options);
-                    list.replaceChildren();
-                    for (const coin of data.results || []) {
-                        const opt = document.createElement('option');
-                        opt.value = coin.id;
-                        opt.label = coin.text;
-                        list.append(opt);
-                    }
+                    try {
+                        const choices = await lookup(q);
+                        const list = document.getElementById(input.dataset.options);
+                        list.replaceChildren();
+                        for (const coin of choices) {
+                            const opt = document.createElement('option');
+                            opt.value = coin.id; opt.label = coin.text; list.append(opt);
+                        }
+                    } catch (_) { /* Keep field editable when API is unavailable. */ }
                 }, 300);
             });
         });

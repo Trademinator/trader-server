@@ -19,7 +19,10 @@ final class CoinGeckoMappingController extends Controller
         return view('owner.coingecko-mappings', [
             'mappings' => CoinGeckoMarketMapping::query()
                 ->with('market.exchange')
-                ->whereIn('status', ['unmapped', 'ambiguous', 'unsupported'])
+                ->where(function ($query): void {
+                    $query->whereIn('status', ['unmapped', 'ambiguous', 'unsupported'])
+                        ->orWhere('manually_mapped', true);
+                })
                 ->whereHas('market')
                 ->orderBy('created_at', 'desc')
                 ->paginate(50),
@@ -37,12 +40,14 @@ final class CoinGeckoMappingController extends Controller
         $coins = Cache::remember('trademinator:coingecko:coins-list', now()->addDay(),
             fn (): array => $client->get('/coins/list'));
 
+        $exact = $request->boolean('exact');
         $results = [];
         foreach ($coins as $coin) {
             if (! is_array($coin) || ! isset($coin['id'], $coin['symbol'], $coin['name'])) {
                 continue;
             }
-            if (! str_contains(Str::lower($coin['id'].' '.$coin['symbol'].' '.$coin['name']), $query)) {
+            if ($exact ? Str::lower((string) $coin['symbol']) !== $query
+                : ! str_contains(Str::lower($coin['id'].' '.$coin['symbol'].' '.$coin['name']), $query)) {
                 continue;
             }
             $results[] = ['id' => $coin['id'], 'text' => $coin['name'].' ('.strtoupper($coin['symbol']).') · '.$coin['id']];
@@ -56,7 +61,8 @@ final class CoinGeckoMappingController extends Controller
 
     public function update(Request $request, CoinGeckoMarketMapping $mapping, CoinGeckoClient $client): RedirectResponse
     {
-        abort_unless(in_array($mapping->status, ['unmapped', 'ambiguous'], true), 422,
+        abort_unless(in_array($mapping->status, ['unmapped', 'ambiguous'], true)
+            || ($mapping->status === 'resolved' && $mapping->manually_mapped), 422,
             'Only unresolved coin identities can be mapped. Unsupported quote currencies cannot be overridden.');
         $data = $request->validate(['coin_id' => ['required', 'string', 'max:128']]);
         $coin = collect($client->get('/coins/list'))->firstWhere('id', $data['coin_id']);
@@ -70,6 +76,7 @@ final class CoinGeckoMappingController extends Controller
             'status' => 'resolved',
             'last_error' => null,
             'resolved_at' => now(),
+            'manually_mapped' => true,
         ]);
 
         return back()->with('status', 'CoinGecko coin mapping updated.');
@@ -77,7 +84,8 @@ final class CoinGeckoMappingController extends Controller
 
     public function destroy(CoinGeckoMarketMapping $mapping): RedirectResponse
     {
-        abort_unless(in_array($mapping->status, ['unmapped', 'ambiguous', 'unsupported'], true), 422);
+        abort_unless(in_array($mapping->status, ['unmapped', 'ambiguous', 'unsupported'], true)
+            || ($mapping->status === 'resolved' && $mapping->manually_mapped), 422);
         // Delete the pending exception, not the actual market or its exchange feed.
         // The next subscription reconciliation may recreate an automatic mapping.
         $mapping->delete();
