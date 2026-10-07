@@ -12,6 +12,7 @@ use App\Models\MarketFeed;
 use App\Repositories\TickerRepository;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Queue\MaxAttemptsExceededException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -23,7 +24,9 @@ final class CollectMarketFeed implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries = 5;
+    public int $tries = 20;
+
+    public int $maxExceptions = 5;
 
     public int $timeout = 600;
 
@@ -89,6 +92,12 @@ final class CollectMarketFeed implements ShouldQueue
 
     public function failed(?Throwable $exception): void
     {
+        if ($exception instanceof MaxAttemptsExceededException) {
+            $this->finish('pending', now()->addMinute(), 'Market feed remained busy; collection will be retried.');
+
+            return;
+        }
+
         $this->finish('error', now()->addMinutes(5), $exception?->getMessage() ?? 'Collection failed.');
     }
 
