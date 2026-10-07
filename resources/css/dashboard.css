@@ -35,4 +35,7 @@ button.dashboard-stat { text-align: left; cursor: pointer; }
 .dashboard-table-wrap th { font-weight: 750; }
 .dashboard-table-wrap summary { cursor: pointer; text-decoration: underline; margin-top: 7px; }
 .dashboard-page .guide-panel h3 { font-weight: 700; }
+.dashboard-category-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 767px) { .dashboard-category-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .dashboard-category-grid { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .dashboard-chart { height: 300px; } .dashboard-hero { padding: 20px; } }

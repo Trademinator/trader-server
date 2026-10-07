@@ -43,9 +43,17 @@
                     </div>
                 </div>
                 <p class="guide-help">Observed <x-display-time :value="$conditions['observed_at_ms']" unit="milliseconds" />. Broad market context; chart prices below come from the selected exchange.</p>
-                @if ($conditions['categories'])<div class="flex flex-wrap gap-2 mt-3" aria-label="Largest category movements in the available sample">@foreach ($conditions['categories'] as $category)
-                    <span class="guide-badge">{{ $category['name'] }} · {{ $number($category['change_24h']) }}% market cap / 24h</span>
-                @endforeach</div>@endif
+                @if ($conditions['categories'])
+                    <div class="dashboard-category-grid mt-3" aria-label="Largest category movements in the available sample">
+                        @foreach ($conditions['categories'] as $category)
+                            <div class="dashboard-stat">
+                                <span>{{ $category['name'] }}</span>
+                                <strong>{{ $number($category['change_24h']) }}%</strong>
+                                <small>Market cap · 24h</small>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
             @else
                 <p>Fresh market context is not available. Your subscribed-market charts and intelligence remain available below.</p>
             @endif
