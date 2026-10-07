@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Tests\Support\IntelligenceFixtures;
 
-it('loads ordered snapshot identities once and hydrates bounded primary-key batches without losing annotations', function () {
+it('keyset-pages ordered snapshot identities and hydrates narrow bounded batches without losing annotations', function () {
     $this->travelTo('2024-01-01 06:00:00 UTC');
     $path = sys_get_temp_dir().'/human-candle-paging-'.Str::uuid7();
     $trainer = User::factory()->create();
@@ -41,11 +41,9 @@ it('loads ordered snapshot identities once and hydrates bounded primary-key batc
             HumanCandleLabel::factory()->create(['snapshot_id' => $snapshot->snapshot_id,
                 'trainer_id' => $trainer->user_id, 'action' => $action, 'created_at' => now(), 'updated_at' => now()]);
         };
-        // Insert in reverse chronological order so primary-key order is different.
         foreach (array_reverse($rows) as $row) {
             $annotate($manifest, $row, $row['label'] === 'hodl' ? 'hold' : $row['label']);
         }
-        // Duplicates straddle the original 100-candle boundary in a new dataset.
         $revision = IntelligenceFixtures::snapshot(305);
         $annotate($revision, $rows[99], 'sell');
         $annotate($revision, $rows[100], 'sell');
@@ -58,20 +56,31 @@ it('loads ordered snapshot identities once and hydrates bounded primary-key batc
         expect($audit['samples'])->toBe(305)
             ->and($audit['class_counts'])->toBe(['buy' => 101, 'hold' => 101, 'sell' => 103])
             ->and($audit['annotation_diagnostics']['duplicate_eligible_snapshots'])->toBe(2)
-            ->and($audit['annotation_diagnostics']['performance']['snapshot_batches'])->toBe(4)
+            ->and($audit['annotation_diagnostics']['performance']['snapshot_batches'])->toBe(13)
             ->and($audit['annotation_diagnostics']['excluded'])->toBe([])
             ->and($audit['validation_performed'])->toBeFalse();
 
-        $payloadReads = array_values(array_filter($queries,
-            fn (array $query): bool => (bool) preg_match('/^select \* from ["`]?human_training_snapshots["`]?\s/i', $query['sql'])));
-        expect($payloadReads)->toHaveCount(4);
+        $payloadReads = array_values(array_filter($queries, fn (array $query): bool =>
+            str_contains(strtolower($query['sql']), 'human_training_snapshots')
+            && str_contains(strtolower($query['sql']), 'payload')
+            && str_contains(strtolower($query['sql']), 'snapshot_id')
+            && str_contains(strtolower($query['sql']), ' in ')));
+        expect($payloadReads)->toHaveCount(13);
         foreach ($payloadReads as $query) {
-            expect(strtolower($query['sql']))->not->toContain('order by')->not->toContain('offset')
-                ->and($query['bindings'])->toBeLessThanOrEqual(100);
+            expect(strtolower($query['sql']))->not->toContain('select *')->not->toContain('order by')->not->toContain('offset')
+                ->and($query['bindings'])->toBeLessThanOrEqual(25);
         }
-        $identityReads = array_values(array_filter($queries,
-            fn (array $query): bool => (bool) preg_match('/^select ["`]?snapshot_id["`]? from ["`]?human_training_snapshots["`]?\s/i', $query['sql'])));
-        expect($identityReads)->toHaveCount(1);
+
+        $identityReads = array_values(array_filter($queries, fn (array $query): bool =>
+            str_contains(strtolower($query['sql']), 'human_training_snapshots')
+            && str_contains(strtolower($query['sql']), 'dataset_id')
+            && str_contains(strtolower($query['sql']), 'order by')
+            && ! str_contains(strtolower($query['sql']), 'payload')));
+        expect(count($identityReads))->toBeGreaterThanOrEqual(13);
+        foreach ($identityReads as $query) {
+            expect(strtolower($query['sql']))->not->toContain('offset');
+        }
+
         $this->assertDatabaseCount('human_candle_labels', 307);
         $this->assertDatabaseCount('intelligence_models', 0);
     } finally {

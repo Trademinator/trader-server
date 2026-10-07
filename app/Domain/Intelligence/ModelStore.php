@@ -72,6 +72,15 @@ final class ModelStore
         return rtrim(config('intelligence.path'), '/').'/'.$id.'.model';
     }
 
+    public function knowledgePath(string $id): string
+    {
+        if (! Str::isUuid($id)) {
+            throw new InvalidArgumentException('Model ID must be a UUID.');
+        }
+
+        return rtrim(config('intelligence.path'), '/').'/'.$id.'.knowledge.jsonl';
+    }
+
     public function save(array $artifact): array
     {
         $persistenceStarted = hrtime(true);
@@ -80,18 +89,40 @@ final class ModelStore
         $id = (string) Str::uuid7();
         $artifact['model_id'] = $id;
         $artifact['created_at'] = now()->toIso8601String();
-        $artifact['format_version'] = 'm4-intelligence-v1';
+        $artifact['format_version'] = 'm4-intelligence-v2';
         $path = $this->path($id);
+        $knowledgePath = $this->knowledgePath($id);
         if (! is_dir(dirname($path)) && ! mkdir(dirname($path), 0700, true)) {
             throw new RuntimeException('Cannot create private model directory.');
         }
+
+        $knowledge = $artifact['knowledge'] ?? [];
+        $knowledgeHash = hash_init('sha256');
+        $knowledgeHandle = fopen($knowledgePath.'.tmp', 'wb');
+        if ($knowledgeHandle === false) {
+            throw new RuntimeException('Cannot create private model knowledge file.');
+        }
+        try {
+            foreach ($knowledge as $row) {
+                $line = json_encode($row, JSON_THROW_ON_ERROR)."\n";
+                if (fwrite($knowledgeHandle, $line) !== strlen($line)) {
+                    throw new RuntimeException('Cannot write private model knowledge file.');
+                }
+                hash_update($knowledgeHash, $line);
+            }
+        } finally {
+            fclose($knowledgeHandle);
+        }
+        $artifact['knowledge_sha256'] = hash_final($knowledgeHash);
+        unset($artifact['knowledge']);
         $bytes = serialize($artifact);
         $report = $artifact;
-        unset($report['knowledge'], $report['patterns'], $report['lead_lag']['models']);
+        unset($report['patterns'], $report['lead_lag']['models'], $report['knowledge_sha256']);
         unset($report['human_guidance']['estimator'], $report['candle_guidance']['estimator'], $report['candle_guidance']['knowledge']);
         $report['patterns'] = $artifact['patterns']['report'];
         try {
-            if (file_put_contents($path.'.tmp', $bytes, LOCK_EX) !== strlen($bytes)
+            if (! chmod($knowledgePath.'.tmp', 0600) || ! rename($knowledgePath.'.tmp', $knowledgePath)
+                || file_put_contents($path.'.tmp', $bytes, LOCK_EX) !== strlen($bytes)
                 || ! chmod($path.'.tmp', 0600) || ! rename($path.'.tmp', $path)) {
                 throw new RuntimeException('Cannot publish intelligence model.');
             }
@@ -111,7 +142,7 @@ final class ModelStore
                 }
             });
         } catch (Throwable $error) {
-            foreach ([$path.'.tmp', $path] as $file) {
+            foreach ([$path.'.tmp', $path, $knowledgePath.'.tmp', $knowledgePath] as $file) {
                 if (is_file($file)) {
                     unlink($file);
                 }
@@ -168,18 +199,9 @@ final class ModelStore
 
     public function load(string $id): array
     {
-        $path = $this->path($id);
-        $record = DB::table('intelligence_models')->where('model_id', $id)->first();
-        $bytes = is_file($path) ? file_get_contents($path) : false;
-        if ($record === null || $bytes === false || ! hash_equals($record->sha256, hash('sha256', $bytes))) {
-            throw new RuntimeException('Intelligence model is missing or its checksum does not match.');
-        }
-        // Only our private artifacts, authenticated by the independently stored DB digest, are decoded.
-        // Never accept arbitrary uploaded or user-supplied serialized models.
-        $artifact = unserialize($bytes);
-        if (! is_array($artifact) || ($artifact['format_version'] ?? null) !== 'm4-intelligence-v1'
-            || ($artifact['model_id'] ?? null) !== $id) {
-            throw new RuntimeException('Unsupported intelligence artifact.');
+        $artifact = $this->loadArtifact($id);
+        if (($artifact['format_version'] ?? null) === 'm4-intelligence-v2') {
+            $artifact['knowledge'] = iterator_to_array($this->knowledge($artifact), false);
         }
 
         return $artifact;
@@ -190,5 +212,62 @@ final class ModelStore
         $id = DB::table('intelligence_heads')->where('market_key', self::marketKey($exchange, $symbol, $period))->value('model_id');
 
         return $id === null ? null : $this->load($id);
+    }
+
+    public function currentForPrediction(string $exchange, string $symbol, string $period): ?array
+    {
+        $id = DB::table('intelligence_heads')->where('market_key', self::marketKey($exchange, $symbol, $period))->value('model_id');
+
+        return $id === null ? null : $this->loadArtifact($id);
+    }
+
+    public function knowledge(array $artifact): iterable
+    {
+        if (($artifact['format_version'] ?? null) === 'm4-intelligence-v1') {
+            yield from $artifact['knowledge'] ?? [];
+
+            return;
+        }
+        if (($artifact['format_version'] ?? null) !== 'm4-intelligence-v2') {
+            throw new RuntimeException('Unsupported intelligence artifact.');
+        }
+
+        $path = $this->knowledgePath($artifact['model_id']);
+        $handle = is_file($path) ? fopen($path, 'rb') : false;
+        if ($handle === false) {
+            throw new RuntimeException('Intelligence model knowledge is missing.');
+        }
+
+        $hash = hash_init('sha256');
+        try {
+            while (($line = fgets($handle)) !== false) {
+                hash_update($hash, $line);
+                yield json_decode($line, true, flags: JSON_THROW_ON_ERROR);
+            }
+        } finally {
+            fclose($handle);
+        }
+        if (! hash_equals((string) ($artifact['knowledge_sha256'] ?? ''), hash_final($hash))) {
+            throw new RuntimeException('Intelligence model knowledge checksum does not match.');
+        }
+    }
+
+    private function loadArtifact(string $id): array
+    {
+        $path = $this->path($id);
+        $record = DB::table('intelligence_models')->where('model_id', $id)->first();
+        $bytes = is_file($path) ? file_get_contents($path) : false;
+        if ($record === null || $bytes === false || ! hash_equals($record->sha256, hash('sha256', $bytes))) {
+            throw new RuntimeException('Intelligence model is missing or its checksum does not match.');
+        }
+        // Only our private artifacts, authenticated by the independently stored DB digest, are decoded.
+        // Never accept arbitrary uploaded or user-supplied serialized models.
+        $artifact = unserialize($bytes);
+        if (! is_array($artifact) || ! in_array($artifact['format_version'] ?? null, ['m4-intelligence-v1', 'm4-intelligence-v2'], true)
+            || ($artifact['model_id'] ?? null) !== $id) {
+            throw new RuntimeException('Unsupported intelligence artifact.');
+        }
+
+        return $artifact;
     }
 }

@@ -49,7 +49,7 @@ final class HumanCandleKnn
         }
         $knn = $this->knn($settings);
         $progress?->stage('preparing_neighbors', ['total' => count($rows)]);
-        $rows = $knn->prepareRows($rows);
+        $knn->validatePreparedRows($rows);
         $tuningStart = (int) floor(count($rows) * 0.6);
         $holdoutStart = (int) floor(count($rows) * 0.8);
         $tuning = array_slice($rows, $tuningStart, $holdoutStart - $tuningStart);
@@ -94,18 +94,27 @@ final class HumanCandleKnn
         // Publication retains all eligible annotations, including the evaluated period.
         $progress?->stage('finalizing', ['knowledge_rows' => count($rows)]);
         $this->deadline($deadline);
-        $knowledge = array_map(fn (array $row): array => [
-            'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
-            'vector' => $row['vector'], 'label' => $row['label'], 'provenance' => $row['provenance'],
-        ], $rows);
+        $classWeights = ClassPriorWeights::fit($this->counts($rows), $selected['target']);
         $updatedBy = max(array_column($rows, 'updated_at_ms'));
+        $availableAt = max($updatedBy, max(array_column($rows, 'label_available_at_ms')));
+        $trainingThrough = max(array_column($rows, 'decision_at_ms'));
+        unset($training, $tuning, $holdout);
+        foreach ($rows as &$row) {
+            $row = [
+                'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
+                'vector' => $row['vector'], 'label' => $row['label'], 'provenance' => $row['provenance'],
+            ];
+        }
+        unset($row);
+        $knowledge = $rows;
+        unset($rows);
 
         return ['bundle' => [...$bundle,
-            'class_weights' => ClassPriorWeights::fit($this->counts($rows), $selected['target']),
+            'class_weights' => $classWeights,
             'knowledge_rows' => count($knowledge), 'knowledge' => $knowledge,
             'labels_updated_by_ms' => $updatedBy,
-            'available_at_ms' => max($updatedBy, max(array_column($rows, 'label_available_at_ms'))),
-            'training_through_ms' => max(array_column($rows, 'decision_at_ms'))]];
+            'available_at_ms' => $availableAt,
+            'training_through_ms' => $trainingThrough]];
     }
 
     public function predict(array $bundle, array $payload, int $asOfMs): array
@@ -191,16 +200,13 @@ final class HumanCandleKnn
         $diagnostics['candidate_snapshots'] = $before;
         $query->with(['candleLabels' => fn ($query) => $query->whereIn('trainer_id', $trainers)
             ->whereIn('action', CandleTraining::ACTIONS)->where('updated_at', '<=', $cutoff)->orderBy('trainer_id')]);
-        // Reuse a checksum-verified disk index for each dataset. Never materialize
-        // tens of thousands of source rows just to access one annotation batch.
-        // MariaDB repeatedly filesorts large chart payloads when SELECT * is
-        // combined with ORDER BY and OFFSET. Select the compact IDs just once.
-        $selectionStarted = microtime(true);
-        $snapshotIds = (clone $query)->reorder()->orderBy('dataset_id')->orderBy('decision_at_ms')
-            ->orderByDesc('snapshot_id')->toBase()->pluck('snapshot_id')->all();
+        // Page compact snapshot identities with a keyset cursor. Never materialize
+        // every candidate UUID in PHP and never use OFFSET over the large payload table.
+        $identityQuery = (clone $query)->reorder()
+            ->select(['snapshot_id', 'dataset_id', 'decision_at_ms'])
+            ->orderBy('dataset_id')->orderBy('decision_at_ms')->orderByDesc('snapshot_id');
         $diagnostics['performance'] = [
-            'snapshot_selection_ms' => (int) round((microtime(true) - $selectionStarted) * 1000),
-            'snapshot_fetch_ms' => 0, 'snapshot_batches' => 0,
+            'snapshot_selection_ms' => 0, 'snapshot_fetch_ms' => 0, 'snapshot_batches' => 0,
             'dataset_loading_ms' => 0, 'projection_ms' => 0,
         ];
         $opinions = [];
@@ -208,21 +214,52 @@ final class HumanCandleKnn
         $source = [];
         $rawRows = null;
         $legacyHistory = false;
-        foreach (array_chunk($snapshotIds, 100) as $batchIds) {
+        $cursor = null;
+        $batchSize = 25;
+        while (true) {
             $this->deadline($deadline);
+            $selectionStarted = microtime(true);
+            $page = clone $identityQuery;
+            if ($cursor !== null) {
+                $page->where(function ($where) use ($cursor): void {
+                    $where->where('dataset_id', '>', $cursor['dataset_id'])
+                        ->orWhere(function ($sameDataset) use ($cursor): void {
+                            $sameDataset->where('dataset_id', $cursor['dataset_id'])
+                                ->where('decision_at_ms', '>', $cursor['decision_at_ms']);
+                        })
+                        ->orWhere(function ($sameDecision) use ($cursor): void {
+                            $sameDecision->where('dataset_id', $cursor['dataset_id'])
+                                ->where('decision_at_ms', $cursor['decision_at_ms'])
+                                ->where('snapshot_id', '<', $cursor['snapshot_id']);
+                        });
+                });
+            }
+            $identities = $page->limit($batchSize)->toBase()->get();
+            $diagnostics['performance']['snapshot_selection_ms'] += (int) round((microtime(true) - $selectionStarted) * 1000);
+            if ($identities->isEmpty()) {
+                break;
+            }
+
+            $batchIds = $identities->pluck('snapshot_id')->all();
+            $lastIdentity = $identities->last();
+            $cursor = ['dataset_id' => $lastIdentity->dataset_id,
+                'decision_at_ms' => (int) $lastIdentity->decision_at_ms, 'snapshot_id' => $lastIdentity->snapshot_id];
+
             $fetchStarted = microtime(true);
-            // Load only this batch's charts by primary key. Keep the exact same
-            // authorized trainer, action and annotation-cutoff eager-load filters.
-            $loaded = HumanTrainingSnapshot::query()->whereIn('snapshot_id', $batchIds)
-                ->with($query->getEagerLoads())->get()->keyBy('snapshot_id');
+            $loaded = HumanTrainingSnapshot::query()
+                ->select(['snapshot_id', 'dataset_id', 'decision_at_ms', 'sha256', 'payload'])
+                ->whereIn('snapshot_id', $batchIds)
+                ->with(['candleLabels' => fn ($labels) => $labels
+                    ->select(['candle_label_id', 'snapshot_id', 'trainer_id', 'action', 'updated_at'])
+                    ->whereIn('trainer_id', $trainers)->whereIn('action', CandleTraining::ACTIONS)
+                    ->where('updated_at', '<=', $cutoff)->orderBy('trainer_id')])
+                ->get()->keyBy('snapshot_id');
             $batch = new \Illuminate\Database\Eloquent\Collection;
             foreach ($batchIds as $snapshotId) {
                 $snapshot = $loaded->get($snapshotId);
                 if ($snapshot === null) {
                     throw new RuntimeException('Human candle snapshot disappeared during inspection; retry.');
                 }
-                // IN queries do not guarantee ordering. Restore the selected order
-                // so dataset reuse and newest-compatible duplicate handling agree.
                 $batch->push($snapshot);
             }
             $diagnostics['performance']['snapshot_fetch_ms'] += (int) round((microtime(true) - $fetchStarted) * 1000);
@@ -340,19 +377,28 @@ final class HumanCandleKnn
                         }
                     }
                     $action = $candidate['action'];
+                    $labelProvenance = $snapshot->candleLabels->map(fn ($label): array => [
+                        'id' => $label->candle_label_id, 'trainer_id' => $label->trainer_id, 'action' => $label->action,
+                        'updated_at_ms' => $label->updated_at->getTimestampMs(),
+                    ])->all();
+                    $fullProvenance = ['snapshot_id' => $id, 'sha256' => $snapshot->sha256,
+                        'dataset_id' => $snapshot->dataset_id, 'dataset_rows_sha256' => $source['rows_sha256'],
+                        ...$projection['provenance'], 'labels' => $labelProvenance];
                     $opinions[$decision] = ['vector' => $projection['vector'], 'label' => $action === 'hold' ? 'hodl' : $action,
-                        'semantic' => ['bottom' => $action === 'buy', 'top' => $action === 'sell'],
+                        'semantic_bottom' => $action === 'buy', 'semantic_top' => $action === 'sell',
                         'decision_at_ms' => $decision, 'label_available_at_ms' => $candidate['row']['label_available_at_ms'],
                         'updated_at_ms' => $snapshot->candleLabels->max(fn ($label) => $label->updated_at->getTimestampMs()),
                         'provenance' => ['snapshot_id' => $id, 'sha256' => $snapshot->sha256,
                             'dataset_id' => $snapshot->dataset_id, 'dataset_rows_sha256' => $source['rows_sha256'],
-                            ...$projection['provenance'],
-                            'labels' => $snapshot->candleLabels->map(fn ($label): array => ['id' => $label->candle_label_id,
-                                'trainer_id' => $label->trainer_id, 'action' => $label->action,
-                                'updated_at_ms' => $label->updated_at->getTimestampMs()])->all()]];
+                            'projection_version' => $projection['provenance']['projection_version'] ?? null,
+                            'feature_version' => $projection['provenance']['feature_version'] ?? $source['feature_version'],
+                            'labels' => array_map(fn (array $label): array => ['id' => $label['id']], $labelProvenance),
+                            'digest' => HumanTrainingSnapshot::digest($fullProvenance)]];
+                    unset($labelProvenance, $fullProvenance);
                 }
                 $progress?->tick(['processed' => $diagnostics['examined_snapshots'], 'eligible_rows' => count($opinions)]);
             }
+            unset($batch, $loaded, $identities, $batchIds);
         }
         foreach ($opinions as $opinion) {
             $metric = $opinion['provenance']['projection_version'] === 'legacy_same_version' ? 'legacy_same_version_candles' : 'projected_candles';

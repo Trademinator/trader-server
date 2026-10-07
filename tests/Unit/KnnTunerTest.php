@@ -36,6 +36,18 @@ it('selects K within the training-only square-root cap and purges unfinished lab
     }
 });
 
+it('produces the same tuning result from already prepared rows', function () {
+    $knn = new WeightedKnn;
+    $rows = tuningRows();
+    $prepared = $knn->prepareRows($rows);
+    $tuner = new KnnTuner($knn);
+
+    $normal = $tuner->tune($rows, tuningSettings(), microtime(true) + 10);
+    $ready = $tuner->tunePrepared($prepared, tuningSettings(), microtime(true) + 10);
+
+    expect($ready)->toBe($normal);
+});
+
 it('disqualifies semantically contradictory candidates even with perfect classification', function () {
     $report = (new KnnTuner(new WeightedKnn))->tune(tuningRows(180, true), tuningSettings(), microtime(true) + 10);
 
@@ -44,6 +56,21 @@ it('disqualifies semantically contradictory candidates even with perfect classif
     expect($scored)->not->toBeEmpty();
     expect($scored[0]['semantic_precision'])->toBe(1);
     expect($scored[0]['contradiction_rate'])->toBe(1);
+});
+
+it('accepts compact semantic flags without changing tuning results', function () {
+    $rows = tuningRows();
+    $compact = array_map(function (array $row): array {
+        $row['semantic_bottom'] = $row['semantic']['bottom'];
+        $row['semantic_top'] = $row['semantic']['top'];
+        unset($row['semantic']);
+
+        return $row;
+    }, $rows);
+    $tuner = new KnnTuner(new WeightedKnn);
+
+    expect($tuner->tune($compact, tuningSettings(), microtime(true) + 10))
+        ->toBe($tuner->tune($rows, tuningSettings(), microtime(true) + 10));
 });
 
 it('refuses an expired compute budget without selecting a partial winner', function () {

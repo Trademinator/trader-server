@@ -3,6 +3,7 @@
 use App\Domain\Intelligence\PatternCatalog;
 use App\Domain\Intelligence\PatternTrainer;
 use App\Domain\Intelligence\ProbabilityCalibration;
+use App\Domain\Intelligence\SequentialRandomForest;
 use App\Domain\Research\SemanticLabels;
 use Tests\Support\LeadLagFixtures;
 
@@ -83,6 +84,27 @@ it('compares real Rubix classifiers on purged chronological calibration and eval
     $candidate = $rows[0]['patterns'][0];
     expect($trainer->predict($bundle, [0.0], [$candidate], 100)[0]['completion_probability'])->toBeNull();
     expect($trainer->predict($bundle, [0.0], [$candidate], 999999)[0]['completion_probability'])->toBeGreaterThan(0.9);
+});
+
+it('uses the memory-bounded forest for pattern candidates', function () {
+    mt_srand(42);
+    $rows = [];
+    for ($i = 0; $i < 180; $i++) {
+        $complete = $i % 2 === 0;
+        $rows[] = ['vector' => [$complete ? 0.0 : 1.0], 'decision_at_ms' => $i * 1000,
+            'patterns' => [['type' => 'bullish_engulfing', 'length' => 2, 'stage' => 1,
+                'progress' => 0.5, 'similarity' => 0.8, 'label' => $complete ? 'completed' : 'failed',
+                'label_available_at_ms' => ($i + 2) * 1000]]];
+    }
+
+    $bundle = (new PatternTrainer(new PatternCatalog, new ProbabilityCalibration))
+        ->train($rows, ['min_samples' => 50, 'min_block_rows' => 10, 'trees' => 5, 'k' => 5], microtime(true) + 20);
+
+    if (($bundle['report']['bullish_engulfing']['selected'] ?? null) === 'random_forest') {
+        expect($bundle['models']['bullish_engulfing']['estimator'])->toBeInstanceOf(SequentialRandomForest::class);
+    } else {
+        expect($bundle['report']['bullish_engulfing']['candidates'])->toHaveKey('random_forest');
+    }
 });
 
 it('chooses the pattern algorithm before inspecting final evaluation labels', function () {

@@ -85,7 +85,7 @@ it('refuses failed job access to ordinary users', function (string $method, stri
     $this->assertDatabaseCount('jobs', 0);
 })->with('failed job routes');
 
-it('links all three actions from the owner backlog without exposing exception details there', function () {
+it('links all three actions from the owner backlog without exposing exception messages there', function () {
     $owner = failedJobOwner();
     $job = recordedFailedJob();
 
@@ -96,6 +96,51 @@ it('links all three actions from the owner backlog without exposing exception de
         ->assertSee('name="_method" value="DELETE"', false)
         ->assertDontSee('Feature replay exceeded its timeout');
 });
+
+it('sorts failed job headers in both directions and shows exception names', function (string $sort, string $direction, array $order) {
+    $owner = failedJobOwner();
+    $ids = [
+        'a' => recordedFailedJob([
+            'uuid' => '00000000-0000-4000-8000-000000000001', 'connection' => 'redis', 'queue' => 'zeta',
+            'exception' => "ZetaException: PRIVATE ZETA MESSAGE\nStack trace:\n#0 /app/zeta.php(1)", 'failed_at' => '2026-10-05 10:00:00',
+        ]),
+        'b' => recordedFailedJob([
+            'uuid' => '00000000-0000-4000-8000-000000000002', 'connection' => 'database', 'queue' => 'beta',
+            'exception' => "AlphaException: PRIVATE ALPHA MESSAGE\nStack trace:\n#0 /app/alpha.php(1)", 'failed_at' => '2026-10-05 12:00:00',
+        ]),
+        'c' => recordedFailedJob([
+            'uuid' => '00000000-0000-4000-8000-000000000003', 'connection' => 'redis', 'queue' => 'alpha',
+            'exception' => "BetaException: PRIVATE BETA MESSAGE\nStack trace:\n#0 /app/beta.php(1)", 'failed_at' => '2026-10-05 11:00:00',
+        ]),
+    ];
+
+    $response = $this->actingAs($owner)->get(route('owner.overview', [
+        'failed_sort' => $sort, 'failed_direction' => $direction,
+    ]));
+
+    $response->assertOk()
+        ->assertViewHas('failed', fn ($failed) => $failed->pluck('uuid')->all() === array_map(fn ($key) => $ids[$key], $order))
+        ->assertSee('aria-sort="'.($direction === 'asc' ? 'ascending' : 'descending').'"', false)
+        ->assertSee('ZetaException')->assertSee('AlphaException')->assertSee('BetaException')
+        ->assertDontSee('PRIVATE ZETA MESSAGE')->assertDontSee('PRIVATE ALPHA MESSAGE')->assertDontSee('PRIVATE BETA MESSAGE');
+})->with([
+    'UUID ascending' => ['uuid', 'asc', ['a', 'b', 'c']],
+    'UUID descending' => ['uuid', 'desc', ['c', 'b', 'a']],
+    'connection ascending' => ['connection', 'asc', ['b', 'c', 'a']],
+    'connection descending' => ['connection', 'desc', ['a', 'c', 'b']],
+    'exception ascending' => ['exception', 'asc', ['b', 'c', 'a']],
+    'exception descending' => ['exception', 'desc', ['a', 'c', 'b']],
+    'date ascending' => ['failed_at', 'asc', ['a', 'c', 'b']],
+    'date descending' => ['failed_at', 'desc', ['b', 'c', 'a']],
+]);
+
+it('rejects invalid failed job sorting parameters', function (string $field, string $value) {
+    $this->actingAs(failedJobOwner())->from('/owner')->get(route('owner.overview', [$field => $value]))
+        ->assertRedirect('/owner')->assertSessionHasErrors($field);
+})->with([
+    'sort expression' => ['failed_sort', 'failed_at desc; DROP TABLE failed_jobs'],
+    'direction expression' => ['failed_direction', 'desc, uuid'],
+]);
 
 it('shows escaped failure details without executing or revealing the serialized payload', function () {
     $owner = failedJobOwner();

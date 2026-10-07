@@ -85,6 +85,46 @@ it('prepares knowledge vectors once and preserves weighted neighbor ordering', f
         ->toBe($knn->neighbors($rows, [0.12, 0.22], 2, 10, [1.0, 0.5]));
 });
 
+it('prepares rows in place without changing KNN semantics', function () {
+    $knn = new WeightedKnn(1, 1, 0.5);
+    $rows = [
+        ['decision_at_ms' => 1, 'label_available_at_ms' => 2, 'vector' => ['0.10', 0.20],
+            'feature_weights' => [1, '0.5'], 'label' => 'buy'],
+        ['decision_at_ms' => 2, 'label_available_at_ms' => 3, 'vector' => [0.30, '0.40'],
+            'feature_weights' => ['1', 0.25], 'label' => 'sell'],
+    ];
+
+    $expected = $knn->prepareRows($rows);
+    $knn->prepareRowsInPlace($rows);
+
+    expect($rows)->toBe($expected);
+});
+
+it('does not retain empty feature weight arrays on prepared rows', function () {
+    $rows = [['decision_at_ms' => 1, 'label_available_at_ms' => 2,
+        'vector' => [0.1, 0.2], 'label' => 'buy', 'feature_weights' => []]];
+
+    (new WeightedKnn)->prepareRowsInPlace($rows);
+
+    expect($rows[0])->not->toHaveKey('feature_weights');
+});
+
+it('validates already prepared rows without rewriting them', function () {
+    $knn = new WeightedKnn;
+    $rows = [
+        ['decision_at_ms' => 1, 'label_available_at_ms' => 2, 'vector' => [0.1, 0.2], 'label' => 'buy'],
+        ['decision_at_ms' => 2, 'label_available_at_ms' => 3, 'vector' => [0.3, 0.4],
+            'feature_weights' => [1.0, 0.5], 'label' => 'sell'],
+    ];
+    $before = $rows;
+
+    $knn->validatePreparedRows($rows);
+
+    expect($rows)->toBe($before);
+    expect(fn () => $knn->validatePreparedRows([[...$rows[0], 'vector' => ['0.1', 0.2]]]))
+        ->toThrow(InvalidArgumentException::class, 'prepared');
+});
+
 it('rejects malformed vectors and weights before repeated neighbor scans', function () {
     $knn = new WeightedKnn;
     $base = ['decision_at_ms' => 1, 'label_available_at_ms' => 2, 'label' => 'buy'];

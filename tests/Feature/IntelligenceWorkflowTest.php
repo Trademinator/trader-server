@@ -73,6 +73,37 @@ it('publishes a validated model with separate chronological tuning and untouched
     expect(app(ModelStore::class)->report($artifact['model_id']))->not->toHaveKey('knowledge');
 });
 
+it('stores automatic KNN knowledge separately and streams it for prediction', function () {
+    $this->travelTo('2024-01-01 04:05:00 UTC');
+    $manifest = IntelligenceFixtures::snapshot();
+    $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+    $store = app(ModelStore::class);
+    $metadata = $store->currentForPrediction('kraken', 'BTC/USD', '1m');
+
+    expect($metadata)->not->toHaveKey('knowledge')
+        ->and($metadata['format_version'])->toBe('m4-intelligence-v2')
+        ->and(is_file($store->knowledgePath($report['model_id'])))->toBeTrue()
+        ->and(iterator_count($store->knowledge($metadata)))->toBe($report['knowledge_rows']);
+
+    IntelligenceFixtures::feature(243, 0.0);
+    IntelligenceFixtures::feature(244, 0.0);
+    IntelligenceFixtures::feature(245, 1.0);
+
+    expect(app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m')['action'])->toBe('buy');
+});
+
+it('rejects corrupted streamed KNN knowledge', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $manifest = IntelligenceFixtures::snapshot();
+    $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+    $store = app(ModelStore::class);
+    $metadata = $store->currentForPrediction('kraken', 'BTC/USD', '1m');
+    file_put_contents($store->knowledgePath($report['model_id']), "{\"corrupt\":true}\n");
+
+    expect(fn () => iterator_to_array($store->knowledge($metadata), false))
+        ->toThrow(RuntimeException::class, 'checksum');
+});
+
 it('keeps final holdout targets out of K selection', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     $manifest = IntelligenceFixtures::snapshot();

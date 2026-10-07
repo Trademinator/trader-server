@@ -12,12 +12,27 @@ final class KnnTuner
     public function tune(array $rows, array $settings, float $deadline): array
     {
         $rows = $this->knn->prepareRows($rows);
+
+        return $this->tunePrepared($rows, $settings, $deadline);
+    }
+
+    public function tunePrepared(array $rows, array $settings, float $deadline): array
+    {
         $trainSize = $settings['min_train_size'];
         $maximum = min($settings['k_cap'], (int) floor(sqrt($trainSize)));
-        $candidates = array_values(array_unique(array_filter([1, 3, 5, 9, 17, 33, 65, $maximum],
+        $initialCandidates = array_values(array_unique(array_filter([1, 3, 5, 9, 17, 33, 65, $maximum],
             fn (int $k): bool => $k > 0 && $k <= $maximum)));
-        sort($candidates);
-        $cases = $folds = [];
+        sort($initialCandidates);
+
+        // The square-root cap keeps this small (15 at the default 250-row minimum).
+        // Scoring every K lets us discard each case immediately instead of retaining
+        // every test row plus its neighbor list until the end of tuning.
+        $accumulators = [];
+        foreach (range(1, $maximum) as $k) {
+            $accumulators[$k] = $this->newAccumulator($k);
+        }
+
+        $folds = [];
         foreach ((new WalkForward)->folds($rows, $trainSize, $settings['test_size'], $settings['gap'], true, null) as $fold) {
             $training = array_map(fn (int $i): array => $rows[$i], $fold['train']);
             $folds[] = ['fold' => $fold['fold'], 'train_rows' => count($training),
@@ -28,19 +43,27 @@ final class KnnTuner
                     throw new RuntimeException('K tuning time budget exceeded; reduce INTELLIGENCE_MAX_MODEL_AGE_DAYS or increase the build time budget.');
                 }
                 $row = $rows[$index];
-                $cases[] = ['row' => $row, 'fold' => $fold['fold'],
-                    'neighbors' => $this->knn->neighborsPrepared($training, $row['vector'], $maximum, $row['decision_at_ms'], $row['feature_weights'] ?? [])];
+                $neighbors = $this->knn->neighborsPrepared($training, $row['vector'], $maximum,
+                    $row['decision_at_ms'], $row['feature_weights'] ?? []);
+                foreach ($accumulators as $k => &$accumulator) {
+                    $this->accumulate($accumulator, $row, $this->knn->vote($neighbors, $k), $fold['fold']);
+                }
+                unset($accumulator);
             }
+            unset($training);
         }
-        $reports = [];
-        foreach ($candidates as $k) {
-            $reports[$k] = $this->score($cases, $k, $settings);
+
+        $allReports = [];
+        foreach ($accumulators as $k => $accumulator) {
+            $allReports[$k] = $this->finishAccumulator($accumulator, $settings);
         }
-        $best = $this->best($reports);
+        $initialReports = array_intersect_key($allReports, array_flip($initialCandidates));
+        $best = $this->best($initialReports);
         $center = $best ?? $maximum;
-        foreach (range(max(1, $center - 3), min($maximum, $center + 3)) as $k) {
-            $reports[$k] ??= $this->score($cases, $k, $settings);
-        }
+        $selected = array_values(array_unique([...$initialCandidates,
+            ...range(max(1, $center - 3), min($maximum, $center + 3))]));
+        sort($selected);
+        $reports = array_intersect_key($allReports, array_flip($selected));
         ksort($reports);
 
         return ['k' => $this->best($reports), 'k_max' => $maximum, 'folds' => $folds,
@@ -51,16 +74,70 @@ final class KnnTuner
     {
         $training = $this->knn->prepareRows($training);
         $test = $this->knn->prepareRows($test);
-        $cases = [];
+
+        return $this->evaluatePrepared($training, $test, $k, $settings, $deadline);
+    }
+
+    public function evaluatePrepared(array $training, array $test, int $k, array $settings, float $deadline): array
+    {
+        $accumulator = $this->newAccumulator($k);
         foreach ($test as $row) {
             if (microtime(true) > $deadline) {
                 throw new RuntimeException('KNN evaluation time budget exceeded.');
             }
-            $cases[] = ['row' => $row, 'fold' => 1,
-                'neighbors' => $this->knn->neighborsPrepared($training, $row['vector'], $k, $row['decision_at_ms'], $row['feature_weights'] ?? [])];
+            $neighbors = $this->knn->neighborsPrepared($training, $row['vector'], $k,
+                $row['decision_at_ms'], $row['feature_weights'] ?? []);
+            $this->accumulate($accumulator, $row, $this->knn->vote($neighbors, $k), 1);
         }
 
-        return $this->score($cases, $k, $settings);
+        return $this->finishAccumulator($accumulator, $settings);
+    }
+
+    private function newAccumulator(int $k): array
+    {
+        return ['k' => $k, 'evaluated' => 0, 'directional' => 0, 'correct' => 0,
+            'contradictions' => 0, 'confidence' => 0.0, 'folds' => [],
+            'confusion' => array_fill_keys(['buy', 'hodl', 'sell'], array_fill_keys(['buy', 'hodl', 'sell'], 0))];
+    }
+
+    private function accumulate(array &$state, array $row, array $result, int $fold): void
+    {
+        $action = $result['action'];
+        $state['evaluated']++;
+        $state['confusion'][$row['label']][$action]++;
+        $state['folds'][$fold] ??= ['correct' => 0, 'directional' => 0];
+        if ($action === 'hodl') {
+            return;
+        }
+        $state['directional']++;
+        $state['confidence'] += $result['confidence'];
+        $matches = $action === $row['label'];
+        $state['correct'] += (int) $matches;
+        $state['folds'][$fold]['directional']++;
+        $state['folds'][$fold]['correct'] += (int) $matches;
+        $top = (bool) ($row['semantic_top'] ?? $row['semantic']['top'] ?? false);
+        $bottom = (bool) ($row['semantic_bottom'] ?? $row['semantic']['bottom'] ?? false);
+        $state['contradictions'] += (int) (($action === 'buy' && $top) || ($action === 'sell' && $bottom));
+    }
+
+    private function finishAccumulator(array $state, array $settings): array
+    {
+        $directional = $state['directional'];
+        $precision = $directional ? $state['correct'] / $directional : 0;
+        $coverage = $state['evaluated'] ? $directional / $state['evaluated'] : 0;
+        $contradictionRate = $directional ? $state['contradictions'] / $directional : 0;
+        $rates = array_map(fn (array $fold): float => $fold['directional'] ? $fold['correct'] / $fold['directional'] : 0, $state['folds']);
+        $stability = $rates ? 1 - (max($rates) - min($rates)) : 0;
+
+        return ['k' => $state['k'], 'evaluated' => $state['evaluated'], 'directional' => $directional,
+            'semantic_precision' => $precision, 'contradiction_rate' => $contradictionRate,
+            'coverage' => $coverage, 'mean_confidence' => $directional ? $state['confidence'] / $directional : 0,
+            'stability' => $stability, 'confusion' => $state['confusion'],
+            'eligible' => $state['evaluated'] >= $settings['min_validation_rows']
+                && $directional >= $settings['min_directional_predictions']
+                && $precision >= $settings['min_semantic_precision']
+                && $coverage >= $settings['min_coverage']
+                && $contradictionRate <= $settings['max_contradiction_rate']];
     }
 
     private function score(array $cases, int $k, array $settings): array
@@ -83,8 +160,9 @@ final class KnnTuner
             $correct += (int) $matches;
             $folds[$case['fold']]['directional']++;
             $folds[$case['fold']]['correct'] += (int) $matches;
-            $semantic = $row['semantic'];
-            $contradictions += (int) (($action === 'buy' && $semantic['top']) || ($action === 'sell' && $semantic['bottom']));
+            $top = (bool) ($row['semantic_top'] ?? $row['semantic']['top'] ?? false);
+            $bottom = (bool) ($row['semantic_bottom'] ?? $row['semantic']['bottom'] ?? false);
+            $contradictions += (int) (($action === 'buy' && $top) || ($action === 'sell' && $bottom));
         }
         $precision = $directional ? $correct / $directional : 0;
         $coverage = count($cases) ? $directional / count($cases) : 0;

@@ -28,7 +28,7 @@ final class IntelligenceTrainer
         $buildPerformance['started_monotonic_ns'] ??= hrtime(true);
         $buildPerformance['stages'] ??= [];
         $datasetLoadStarted = hrtime(true);
-        [$manifest, $rows] = $this->datasets->load($dataset);
+        [$manifest, $datasetRows] = $this->datasets->open($dataset);
         $buildPerformance['stages']['dataset_ms'] = (int) ($buildPerformance['stages']['dataset_ms'] ?? 0)
             + $this->elapsedMs($datasetLoadStarted);
         if ($manifest['feature_version'] !== FeatureEngine::VERSION
@@ -39,15 +39,43 @@ final class IntelligenceTrainer
             throw new InvalidArgumentException('Knowledge cutoff cannot be in the future.');
         }
         $window = KnowledgeWindow::metadata($manifest['as_of_ms']);
-        $snapshotRows = count($rows);
-        $rows = array_values(array_filter($rows, fn (array $row): bool => $row['decision_at_ms'] >= $window['from_ms']));
-        $ageExcluded = $snapshotRows - count($rows);
+        $snapshotRows = count($datasetRows);
+        $rows = [];
+        $ageExcluded = 0;
+        foreach ($datasetRows as $row) {
+            if ($row['decision_at_ms'] < $window['from_ms']) {
+                $ageExcluded++;
+
+                continue;
+            }
+            if (! isset($row['semantic'], $row['patterns'])
+                || $row['label_available_at_ms'] > $manifest['as_of_ms']
+                || ! in_array($row['label'], ['buy', 'hodl', 'sell'], true)) {
+                throw new InvalidArgumentException('Invalid semantic knowledge row.');
+            }
+            foreach ($row['patterns'] as $pattern) {
+                if (! in_array($pattern['type'] ?? null, PatternCatalog::TYPES, true)
+                    || ! in_array($pattern['label'] ?? null, ['completed', 'failed'], true)
+                    || ! is_int($pattern['label_available_at_ms'] ?? null)
+                    || $pattern['label_available_at_ms'] <= $row['decision_at_ms']
+                    || $pattern['label_available_at_ms'] > $row['label_available_at_ms']) {
+                    throw new InvalidArgumentException('Pattern outcome is outside the closed semantic horizon.');
+                }
+            }
+            $rows[] = [
+                'decision_at_ms' => $row['decision_at_ms'],
+                'label_available_at_ms' => $row['label_available_at_ms'],
+                'vector' => NormalizedVector::from($row['vector'], $manifest['keys']),
+                'label' => $row['label'],
+                'semantic_bottom' => (bool) $row['semantic']['bottom'],
+                'semantic_top' => (bool) $row['semantic']['top'],
+                'patterns' => $row['patterns'],
+            ];
+        }
         if ($rows === []) {
             throw new InvalidArgumentException('No eligible history within INTELLIGENCE_MAX_MODEL_AGE_DAYS.');
         }
-        $rowAudit = TrainingRowAudit::inspect($rows);
-        $rows = $rowAudit['rows'];
-        unset($rowAudit['rows']);
+        $rowAudit = ['input_rows' => count($rows), 'unique_rows' => count($rows), 'duplicates' => 0];
         $settings = config('intelligence.knn');
         $ensemble = KnnEnsemble::settings(config('intelligence.ensemble'));
         $deadline ??= microtime(true) + config('intelligence.max_seconds');
@@ -57,24 +85,6 @@ final class IntelligenceTrainer
             throw new RuntimeException('Intelligence training is already running for this market and period.');
         }
         try {
-            foreach ($rows as &$row) {
-                if (! isset($row['semantic'], $row['patterns'])
-                    || $row['label_available_at_ms'] > $manifest['as_of_ms']
-                    || ! in_array($row['label'], ['buy', 'hodl', 'sell'], true)) {
-                    throw new InvalidArgumentException('Invalid semantic knowledge row.');
-                }
-                foreach ($row['patterns'] as $pattern) {
-                    if (! in_array($pattern['type'] ?? null, PatternCatalog::TYPES, true)
-                        || ! in_array($pattern['label'] ?? null, ['completed', 'failed'], true)
-                        || ! is_int($pattern['label_available_at_ms'] ?? null)
-                        || $pattern['label_available_at_ms'] <= $row['decision_at_ms']
-                        || $pattern['label_available_at_ms'] > $row['label_available_at_ms']) {
-                        throw new InvalidArgumentException('Pattern outcome is outside the closed semantic horizon.');
-                    }
-                }
-                $row['vector'] = NormalizedVector::from($row['vector'], $manifest['keys']);
-            }
-            unset($row);
             $patternSettings = config('intelligence.patterns');
             $sourceRows = count($rows);
             $patternBundle = ['models' => [], 'report' => [], 'version' => PatternCatalog::VERSION];
@@ -82,6 +92,7 @@ final class IntelligenceTrainer
             if ($patternSettings['enabled']) {
                 $patternRows = array_slice($rows, 0, (int) floor(count($rows) * 0.4));
                 $patternBundle = $this->patterns->train($patternRows, $patternSettings, $deadline);
+                unset($patternRows);
             }
             $buildPerformance['stages']['patterns_ms'] = $this->elapsedMs($stageStarted);
 
@@ -89,6 +100,7 @@ final class IntelligenceTrainer
             $leadLag = $this->leadLag->prepare($manifest, $rows, $deadline);
             $buildPerformance['stages']['lead_lag_ms'] = $this->elapsedMs($stageStarted);
             $leadLagBundle = $leadLag['bundle'];
+            unset($leadLag['bundle']);
             $leadLagExcluded = 0;
             $patternKeys = $patternSettings['as_knn_features'] ? $this->patterns->featureKeys($patternBundle) : [];
             if ($patternKeys !== []) {
@@ -100,6 +112,18 @@ final class IntelligenceTrainer
                 }
                 unset($row);
             }
+            foreach ($rows as &$row) {
+                unset($row['patterns']);
+            }
+            unset($row);
+            $patternTreeSpools = [];
+            foreach ($patternBundle['models'] as &$patternModel) {
+                $estimator = $patternModel['estimator'] ?? null;
+                if ($estimator instanceof SequentialRandomForest) {
+                    $patternTreeSpools[] = ['estimator' => $estimator, 'spools' => $estimator->spillTrees()];
+                }
+            }
+            unset($patternModel);
             if ($leadLagBundle['keys'] !== []) {
                 $before = count($rows);
                 $rows = array_values(array_filter($rows, fn (array $row): bool => $row['decision_at_ms'] > $leadLagBundle['available_at_ms']));
@@ -111,7 +135,9 @@ final class IntelligenceTrainer
                 }
                 unset($row);
             }
+            unset($leadLag['series']);
             $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
+            $knn->validatePreparedRows($rows);
             $tuner = new KnnTuner($knn);
             $testStart = (int) floor(count($rows) * 0.8);
             $test = array_slice($rows, $testStart);
@@ -120,13 +146,28 @@ final class IntelligenceTrainer
                 fn (array $row): bool => $row['label_available_at_ms'] < $cutoff));
 
             $stageStarted = hrtime(true);
-            $selection = $tuner->tune($training, $settings, $deadline);
+            $selection = $tuner->tunePrepared($training, $settings, $deadline);
             $buildPerformance['stages']['knn_tuning_ms'] = $this->elapsedMs($stageStarted);
 
             $stageStarted = hrtime(true);
             $evaluation = $selection['k'] === null ? null
-                : $tuner->evaluate($training, $test, $selection['k'], $settings, $deadline);
+                : $tuner->evaluatePrepared($training, $test, $selection['k'], $settings, $deadline);
             $buildPerformance['stages']['holdout_ms'] = $this->elapsedMs($stageStarted);
+
+            $tuningRows = count($training);
+            $holdoutRows = count($test);
+            $holdoutTrainingLabelsAvailableByMs = max(array_column($training, 'label_available_at_ms') ?: [0]);
+            $availableAt = max(array_column($rows, 'label_available_at_ms') ?: [0]);
+            unset($training, $test, $tuner, $knn);
+            foreach ($rows as &$row) {
+                $row = [
+                    'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
+                    'vector' => $row['vector'], 'label' => $row['label'], 'feature_weights' => $row['feature_weights'] ?? [],
+                ];
+            }
+            unset($row);
+            $knowledge = $rows;
+            unset($rows);
 
             $human = ['version' => HumanGuidance::VERSION, 'status' => 'disabled',
                 'reason' => 'excluded_from_scoring', 'influence' => false, 'keys' => [], 'samples' => 0];
@@ -142,14 +183,14 @@ final class IntelligenceTrainer
             $automaticReason = $automaticReady ? 'validated' : ($selection['k'] === null ? 'no_eligible_k' : 'holdout_failed');
             $ready = ($automaticReady && $ensemble['weights']['automatic'] > 0)
                 || ($candle['bundle']['influence'] && $ensemble['weights']['human_candle'] > 0);
-            $availableAt = max(array_column($rows, 'label_available_at_ms') ?: [0]);
             if ($candle['bundle']['influence']) {
                 $availableAt = max($availableAt, $candle['bundle']['available_at_ms']);
             }
-            $knowledge = array_map(fn (array $row): array => [
-                'decision_at_ms' => $row['decision_at_ms'], 'label_available_at_ms' => $row['label_available_at_ms'],
-                'vector' => $row['vector'], 'label' => $row['label'], 'feature_weights' => $row['feature_weights'] ?? [],
-            ], $rows);
+            foreach ($patternTreeSpools as &$spilledForest) {
+                $spilledForest['estimator']->restoreTrees($spilledForest['spools']);
+                $spilledForest['spools'] = [];
+            }
+            unset($spilledForest);
             $artifact = [
                 'validation_version' => self::VERSION,
                 'generation_key' => $generation, 'dataset_id' => $dataset, 'exchange' => $manifest['exchange'], 'symbol' => $manifest['symbol'],
@@ -176,17 +217,17 @@ final class IntelligenceTrainer
                     'window' => $window, 'snapshot_rows' => $snapshotRows, 'age_excluded_rows' => $ageExcluded,
                     'deduplication' => $rowAudit,
                     'schema' => $manifest['schema'], 'source_rows' => $sourceRows,
-                    'usable_rows' => count($rows),
-                    'pattern_excluded_rows' => $sourceRows - count($rows) - $leadLagExcluded,
+                    'usable_rows' => count($knowledge),
+                    'pattern_excluded_rows' => $sourceRows - count($knowledge) - $leadLagExcluded,
                     'human_excluded_rows' => 0, 'candle_excluded_rows' => 0,
                     'lead_lag_excluded_rows' => $leadLagExcluded,
                     'skipped' => $manifest['skipped'] ?? [],
                     'reconstruction' => $manifest['reconstruction'] ?? [],
-                    'tuning_rows' => count($training), 'holdout_rows' => count($test),
+                    'tuning_rows' => $tuningRows, 'holdout_rows' => $holdoutRows,
                 ],
                 'selection' => $selection, 'holdout' => $evaluation,
                 'holdout_from_ms' => $cutoff,
-                'holdout_training_labels_available_by_ms' => max(array_column($training, 'label_available_at_ms') ?: [0]),
+                'holdout_training_labels_available_by_ms' => $holdoutTrainingLabelsAvailableByMs,
                 'knowledge_rows' => count($knowledge), 'knowledge' => $knowledge, 'patterns' => $patternBundle,
                 'build_performance' => $buildPerformance,
             ];
@@ -196,6 +237,11 @@ final class IntelligenceTrainer
 
             return $this->models->save($artifact);
         } finally {
+            if (isset($patternTreeSpools)) {
+                foreach ($patternTreeSpools as $spilledForest) {
+                    $spilledForest['estimator']->closeSpools($spilledForest['spools']);
+                }
+            }
             $lock->release();
         }
     }

@@ -4,7 +4,6 @@ namespace App\Domain\Intelligence;
 
 use Rubix\ML\Classifiers\ClassificationTree;
 use Rubix\ML\Classifiers\KNearestNeighbors;
-use Rubix\ML\Classifiers\RandomForest;
 use Rubix\ML\Datasets\Labeled;
 use Rubix\ML\Datasets\Unlabeled;
 use RuntimeException;
@@ -44,6 +43,7 @@ final class PatternTrainer
             $select = array_slice($calibrate, $selectStart);
             $calibrate = array_values(array_filter(array_slice($calibrate, 0, $selectStart),
                 fn (array $row): bool => $row['label_available_at_ms'] < ($select[0]['decision_at_ms'] ?? 0)));
+            unset($samples);
             if (min(count($train), count($calibrate), count($select), count($test)) < $settings['min_block_rows']
                 || count(array_unique(array_column($train, 'label'))) < 2
                 || count(array_unique(array_column($calibrate, 'label'))) < 2) {
@@ -52,7 +52,7 @@ final class PatternTrainer
                 continue;
             }
             $learners = [
-                'random_forest' => new RandomForest(new ClassificationTree(10, 3), $settings['trees'], 0.8),
+                'random_forest' => new SequentialRandomForest(new ClassificationTree(10, 3), $settings['trees'], 0.8),
                 'weighted_knn' => new KNearestNeighbors(min($settings['k'], count($train)), true),
             ];
             $baseRate = count(array_filter($train, fn (array $row): bool => $row['label'] === 'completed')) / count($train);
@@ -78,6 +78,7 @@ final class PatternTrainer
                     'metrics' => $this->calibration->metrics($calibrated, array_column($test, 'label')),
                     'raw_metrics' => $this->calibration->metrics($rawTest, array_column($test, 'label')),
                     'available_at_ms' => max(array_column($test, 'label_available_at_ms'))];
+                unset($raw, $rawSelect, $rawTest, $calibrated);
             }
             uasort($candidates, fn (array $a, array $b): int => [$a['selection_metrics']['brier'], $a['selection_metrics']['log_loss'], $a['selection_metrics']['calibration_error']]
                 <=> [$b['selection_metrics']['brier'], $b['selection_metrics']['log_loss'], $b['selection_metrics']['calibration_error']]);

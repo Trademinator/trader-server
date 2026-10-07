@@ -139,7 +139,7 @@ final class MarketIntelligence
     private function evaluate(string $exchange, string $symbol, string $period, ?int $asOfMs): array
     {
         $asOfMs = min($asOfMs ?? now()->getTimestampMs(), now()->getTimestampMs());
-        $model = $this->models->current($exchange, $symbol, $period);
+        $model = $this->models->currentForPrediction($exchange, $symbol, $period);
         $context = ['exchange' => $exchange, 'symbol' => $symbol, 'period' => $period,
             'horizon_candles' => $model['label_definition']['horizon'] ?? null,
             'model_id' => $model['model_id'] ?? null, 'regime' => 'neutral', 'lead_lag' => [], 'patterns' => [], 'patterns_evaluated' => false];
@@ -248,6 +248,6 @@ final class MarketIntelligence
         $settings = $model['settings'];
         $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
 
-        return $knn->predict($model['knowledge'], $vector, $model['k'], $decisionAt, $weights);
+        return $knn->predictIterable($this->models->knowledge($model), $vector, $model['k'], $decisionAt, $weights);
     }
 }

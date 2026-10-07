@@ -25,6 +25,41 @@ final class WeightedKnn
     /** Validate and flatten knowledge vectors once before repeated KNN scans. */
     public function prepareRows(array $rows): array
     {
+        $this->prepareRowsInPlace($rows);
+
+        return $rows;
+    }
+
+    public function validatePreparedRows(array $rows): void
+    {
+        $dimensions = null;
+        foreach ($rows as $row) {
+            if (! isset($row['vector']) || ! is_array($row['vector']) || ! array_is_list($row['vector']) || $row['vector'] === []) {
+                throw new InvalidArgumentException('Knowledge vectors must be nonempty lists.');
+            }
+            $dimensions ??= count($row['vector']);
+            if (count($row['vector']) !== $dimensions) {
+                throw new InvalidArgumentException('Knowledge feature dimensions do not match.');
+            }
+            foreach ($row['vector'] as $value) {
+                if ((! is_int($value) && ! is_float($value)) || ! is_finite((float) $value) || $value < 0 || $value > 1) {
+                    throw new InvalidArgumentException('KNN expects prepared finite unit-interval vectors.');
+                }
+            }
+            $rowWeights = $row['feature_weights'] ?? [];
+            if (! is_array($rowWeights) || ($rowWeights !== [] && (! array_is_list($rowWeights) || count($rowWeights) !== $dimensions))) {
+                throw new InvalidArgumentException('Knowledge feature weights must match the vector.');
+            }
+            foreach ($rowWeights as $weight) {
+                if ((! is_int($weight) && ! is_float($weight)) || ! is_finite((float) $weight) || $weight < 0 || $weight > 1) {
+                    throw new InvalidArgumentException('Feature weights must be prepared finite unit-interval values.');
+                }
+            }
+        }
+    }
+
+    public function prepareRowsInPlace(array &$rows): void
+    {
         $dimensions = null;
         foreach ($rows as &$row) {
             if (! isset($row['vector']) || ! is_array($row['vector']) || ! array_is_list($row['vector']) || $row['vector'] === []) {
@@ -34,16 +69,19 @@ final class WeightedKnn
             if (count($row['vector']) !== $dimensions) {
                 throw new InvalidArgumentException('Knowledge feature dimensions do not match.');
             }
-            $row['vector'] = $this->prepareVector($row['vector'], $dimensions);
+            $this->prepareVectorInPlace($row['vector'], $dimensions);
             $rowWeights = $row['feature_weights'] ?? [];
             if (! is_array($rowWeights)) {
                 throw new InvalidArgumentException('Knowledge feature weights must be a list.');
             }
-            $row['feature_weights'] = $this->prepareWeights($rowWeights, $dimensions, 'Knowledge');
+            $this->prepareWeightsInPlace($rowWeights, $dimensions, 'Knowledge');
+            if ($rowWeights === []) {
+                unset($row['feature_weights']);
+            } else {
+                $row['feature_weights'] = $rowWeights;
+            }
         }
         unset($row);
-
-        return $rows;
     }
 
     public function neighbors(array $rows, array $vector, int $k, int $asOfMs, array $weights = []): array
@@ -58,6 +96,55 @@ final class WeightedKnn
     }
 
     /** Hot path for rows and query vectors already validated as finite unit-interval floats. */
+    public function neighborsIterable(iterable $rows, array $vector, int $k, int $asOfMs, array $weights = []): array
+    {
+        if ($k < 1 || $vector === []) {
+            throw new InvalidArgumentException('K and feature count must be positive.');
+        }
+        $vector = $this->prepareVector($vector);
+        $dimensions = count($vector);
+        $weights = $this->prepareWeights($weights, $dimensions, 'Query');
+
+        $heap = new SplPriorityQueue;
+        $heap->setExtractFlags(SplPriorityQueue::EXTR_BOTH);
+        $cutoff = $this->maxDistance;
+        $index = 0;
+        foreach ($rows as $row) {
+            $prepared = $this->prepareRows([$row])[0];
+            if (count($prepared['vector']) !== $dimensions) {
+                throw new InvalidArgumentException('Knowledge feature dimensions do not match.');
+            }
+            if ($prepared['decision_at_ms'] >= $asOfMs || $prepared['label_available_at_ms'] >= $asOfMs) {
+                $index++;
+                continue;
+            }
+            $rowWeights = $prepared['feature_weights'] ?? [];
+            $distance = $weights === [] && $rowWeights === []
+                ? $this->unweightedDistance($vector, $prepared['vector'], $dimensions, $cutoff)
+                : $this->weightedDistance($vector, $prepared['vector'], $weights, $rowWeights, $dimensions, $cutoff);
+            if ($distance !== null && $distance <= $cutoff && $distance <= $this->maxDistance) {
+                $heap->insert(['distance' => $distance, 'label' => $prepared['label'],
+                    'decision_at_ms' => $prepared['decision_at_ms']], [$distance, $index]);
+                if ($heap->count() > $k) {
+                    $heap->extract();
+                }
+                if ($heap->count() === $k) {
+                    $heap->top();
+                    $worst = $heap->current();
+                    $cutoff = min($this->maxDistance, (float) $worst['data']['distance']);
+                }
+            }
+            $index++;
+        }
+
+        $neighbors = [];
+        foreach ($heap as $entry) {
+            $neighbors[] = $entry['data'];
+        }
+
+        return array_reverse($neighbors);
+    }
+
     public function neighborsPrepared(array $rows, array $vector, int $k, int $asOfMs, array $weights = []): array
     {
         if ($k < 1 || $vector === []) {
@@ -161,6 +248,11 @@ final class WeightedKnn
         return $this->vote($this->neighbors($rows, $vector, $k, $asOfMs, $weights), $k);
     }
 
+    public function predictIterable(iterable $rows, array $vector, int $k, int $asOfMs, array $weights = []): array
+    {
+        return $this->vote($this->neighborsIterable($rows, $vector, $k, $asOfMs, $weights), $k);
+    }
+
     public static function abstain(string $reason): array
     {
         return ['action' => 'hodl', 'confidence' => 0.0, 'reason' => $reason,
@@ -169,6 +261,13 @@ final class WeightedKnn
     }
 
     private function prepareVector(array $vector, ?int $dimensions = null): array
+    {
+        $this->prepareVectorInPlace($vector, $dimensions);
+
+        return $vector;
+    }
+
+    private function prepareVectorInPlace(array &$vector, ?int $dimensions = null): void
     {
         if (! array_is_list($vector) || $vector === [] || ($dimensions !== null && count($vector) !== $dimensions)) {
             throw new InvalidArgumentException('KNN feature dimensions do not match.');
@@ -180,14 +279,19 @@ final class WeightedKnn
             $value = (float) $value;
         }
         unset($value);
-
-        return $vector;
     }
 
     private function prepareWeights(array $weights, int $dimensions, string $scope): array
     {
+        $this->prepareWeightsInPlace($weights, $dimensions, $scope);
+
+        return $weights;
+    }
+
+    private function prepareWeightsInPlace(array &$weights, int $dimensions, string $scope): void
+    {
         if ($weights === []) {
-            return [];
+            return;
         }
         if (! array_is_list($weights) || count($weights) !== $dimensions) {
             throw new InvalidArgumentException($scope.' feature weights do not match the vector.');
@@ -199,8 +303,6 @@ final class WeightedKnn
             $weight = (float) $weight;
         }
         unset($weight);
-
-        return $weights;
     }
 
     private function unweightedDistance(array $vector, array $other, int $dimensions, float $cutoff): ?float

@@ -21,6 +21,19 @@ afterEach(function () {
     File::deleteDirectory(dirname(config('research.path')));
 });
 
+it('loads semantic training rows through the disk-backed dataset index', function () {
+    $this->travelTo('2024-01-04 00:00:00 UTC');
+    $manifest = IntelligenceFixtures::snapshot(3105);
+
+    $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+
+    expect($report['knowledge_rows'])->toBe(3105)
+        ->and($report['training_data']['snapshot_rows'])->toBe(3105)
+        ->and($report['training_data']['deduplication'])->toBe([
+            'input_rows' => 3105, 'unique_rows' => 3105, 'duplicates' => 0,
+        ]);
+});
+
 it('retains more than 3000 eligible examples independently of the research row budget', function () {
     $this->travelTo('2024-01-04 00:00:00 UTC');
     config(['research.max_rows' => 5]);
