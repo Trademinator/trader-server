@@ -79,7 +79,7 @@ One machine may combine all roles; additional machines may combine any supported
 - Human Outcome Training and Human Action Training never overwrite algorithmic labels. For either KNN, W_H = min(0.60, 0.60 * sqrt(N_H / 750)); W_A = 1 - W_H. If one source abstains, the supported source receives 100% effective weight.
 - Final matrix: SELL with SUPER BEAR/BEAR/NEUTRAL => SELL; SELL with BULL/SUPER BULL => HOLD. HOLD => HOLD. BUY with SUPER BEAR/BEAR/NEUTRAL => HOLD; BUY with BULL/SUPER BULL => BUY.
 - Existing old-version models and frozen semantic datasets must be rebuilt; they are never silently reinterpreted.
-- INTELLIGENCE_MAX_SECONDS defaults to 1800 seconds. Intelligence workers use --timeout=2100.
+- INTELLIGENCE_MAX_SECONDS defaults to 1800 seconds. Intelligence workers use --timeout=2200.
 
 ## M4.2 acceptance and implementation
 

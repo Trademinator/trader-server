@@ -15,12 +15,15 @@ use App\Repositories\TickerRepository;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 
-function reconstructedTrainingBars(string $emptyMethod = 'no_trades'): array
+function reconstructedTrainingBars(string $emptyMethod = 'no_trades', bool $oscillating = false): array
 {
     $rows = [];
     for ($i = 0; $i < 50; $i++) {
-        $rows[] = ['microtimestamp' => 1704067200000 + $i * 900000, 'open' => (string) (100 + $i),
-            'close' => (string) (100.5 + $i), 'high' => (string) (102 + $i), 'low' => (string) (99 + $i), 'volume' => '1'];
+        $open = $oscillating ? 100 + 10 * sin($i * M_PI / 5) : 100 + $i;
+        $close = $oscillating ? 100 + 10 * sin(($i + 1) * M_PI / 5) : 100.5 + $i;
+        $rows[] = ['microtimestamp' => 1704067200000 + $i * 900000, 'open' => (string) $open,
+            'close' => (string) $close, 'high' => (string) (max($open, $close) + 2),
+            'low' => (string) (min($open, $close) - 1), 'volume' => '1'];
     }
     $rows[29]['reconstruction'] = ['version' => CandleProvenance::VERSION, 'method' => 'lower_timeframe',
         'available_at_ms' => $rows[29]['microtimestamp'] + 900000, 'source_period' => '5m'];
@@ -39,7 +42,10 @@ function reconstructedTrainingBars(string $emptyMethod = 'no_trades'): array
 }
 
 beforeEach(function () {
-    config(['research.path' => sys_get_temp_dir().'/trademinator-reconstructed-'.Str::uuid7()]);
+    config([
+        'research.path' => sys_get_temp_dir().'/trademinator-reconstructed-'.Str::uuid7(),
+        'exchange_fees.taker_overrides.bitso.rate' => 0.0,
+    ]);
 });
 
 afterEach(function () {
@@ -144,7 +150,7 @@ it('includes reconstruction use in the published KNN report', function (string $
     config(['intelligence.path' => config('research.path').'/models', 'intelligence.patterns.enabled' => false,
         'intelligence.knn.min_train_size' => 5, 'intelligence.knn.test_size' => 2,
         'intelligence.knn.min_validation_rows' => 1]);
-    app(TickerRepository::class)->saveTickers('bitso', 'ATOM/USD', '15m', reconstructedTrainingBars($emptyMethod));
+    app(TickerRepository::class)->saveTickers('bitso', 'ATOM/USD', '15m', reconstructedTrainingBars($emptyMethod, true));
     app(FeatureBuilder::class)->build('bitso', 'ATOM/USD', '15m');
     $manifest = app(DatasetSnapshotBuilder::class)->build('bitso', 'ATOM/USD', '15m', new SemanticLabels(2, 3));
 

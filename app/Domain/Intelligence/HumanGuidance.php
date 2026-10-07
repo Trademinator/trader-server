@@ -143,7 +143,7 @@ final class HumanGuidance
             if (microtime(true) > $deadline) {
                 throw new RuntimeException('Human Outcome Training time budget exceeded.');
             }
-            $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $batch, $rawRows);
+            $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $batch, $byTime);
             foreach ($batch as $snapshot) {
                 if (! isset($compatible[$snapshot->snapshot_id])) {
                     continue;
