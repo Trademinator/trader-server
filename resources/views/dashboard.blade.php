@@ -101,15 +101,24 @@
             <section class="guide-panel" aria-labelledby="readiness-title">
                 <h2 id="readiness-title">Intelligence readiness · {{ $market->symbol }}</h2>
                 <p>{{ $progress['action'] }}</p>
-                <div class="grid gap-4 lg:grid-cols-3 mt-4">
-                    <div><h3>1. Usable history</h3>
+                <div class="grid gap-3 lg:grid-cols-3 mt-4">
+                    <div class="dashboard-stat">
+                        <h3>1. Usable history</h3>
                         @if ($progress['history'])<x-intelligence-progress :label="$progress['history']['sampled'] ? 'Potential training rows (checked sample)' : 'Potential training rows'" :value="$progress['history']['potential']" :target="$progress['minimum']" native />
                             @if ($progress['history']['sampled'])<p class="guide-help">Checked the latest {{ \App\Helpers\Decimal::format($progress['history']['checked']) }} of {{ \App\Helpers\Decimal::format($progress['history']['closed']) }} rows in the age window. Older eligible rows are also available to training.</p>@endif
                         @else<p>Waiting for a selected candle period and complete features.</p>@endif
-                        <p class="guide-help">Estimate before source checks and model-specific exclusions.</p></div>
-                    <div><h3>2. Model build</h3><p>{{ $details['report'] ? 'A model build has completed.' : 'No model build recorded yet.' }}</p>
-                        @if ($details['report'])<p class="guide-help">Model {{ $details['report']['model_id'] }}</p>@endif</div>
-                    <div><h3>3. Validation</h3><x-knn-readiness :report="$details['report']" :coingecko="$details['coingecko']" /><p class="guide-help">Green: Outcome KNN. Blue: Action KNN. Yellow: fresh, complete CoinGecko context. Each KNN check requires its own current, validated model with a positive scoring weight. Readiness does not guarantee a signal for every candle.</p></div>
+                        <p class="guide-help">Estimate before source checks and model-specific exclusions.</p>
+                    </div>
+                    <div class="dashboard-stat">
+                        <h3>2. Model build</h3>
+                        <p>{{ $details['report'] ? 'A model build has completed.' : 'No model build recorded yet.' }}</p>
+                        @if ($details['report'])<p class="guide-help">Model {{ $details['report']['model_id'] }}</p>@endif
+                    </div>
+                    <div class="dashboard-stat">
+                        <h3>3. Validation</h3>
+                        <x-knn-readiness :report="$details['report']" :coingecko="$details['coingecko']" />
+                        <p class="guide-help">Green: Outcome KNN. Blue: Action KNN. Yellow: fresh, complete CoinGecko context. Each KNN check requires its own current, validated model with a positive scoring weight. Readiness does not guarantee a signal for every candle.</p>
+                    </div>
                 </div>
                 @if ($progress['eta'])<p><strong>Earliest data estimate: <x-display-time :value="$progress['eta']" /></strong></p>@endif
                 <p class="guide-help">{{ $progress['eta_note'] }} Validated-model ETA: unknown.</p>
