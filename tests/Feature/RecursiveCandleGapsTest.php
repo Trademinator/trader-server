@@ -125,9 +125,10 @@ it('reports a missing cold-history manifest without corrupting transaction state
         $repository = app(TickerRepository::class);
         $repository->invalidateHistory('bitso', 'ATOM/USD', '15m');
 
+        $transactionLevel = DB::transactionLevel();
         expect(fn () => $repository->missingClosedCandleRanges('bitso', 'ATOM/USD', '15m', $start + 1800000))
             ->toThrow(ArchiveIntegrityException::class, 'Archive manifest is missing');
-        expect(DB::transactionLevel())->toBe(0);
+        expect(DB::transactionLevel())->toBe($transactionLevel);
     } finally {
         File::deleteDirectory($root);
     }

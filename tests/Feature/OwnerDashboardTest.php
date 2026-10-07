@@ -159,16 +159,16 @@ it('shows version status and purges only obsolete feature versions', function ()
         'payload' => '{}', 'created_at' => now(), 'updated_at' => now(),
     ];
     DB::table('market_features')->insert([
-        [...$base, 'feature_id' => (string) Str::uuid(), 'version' => AppDomainFeaturesFeatureEngine::VERSION],
+        [...$base, 'feature_id' => (string) Str::uuid(), 'version' => \App\Domain\Features\FeatureEngine::VERSION],
         [...$base, 'feature_id' => (string) Str::uuid(), 'microtimestamp' => $base['microtimestamp'] - 60000, 'version' => 'obsolete-feature-v0'],
     ]);
 
     $this->actingAs($owner)->get('/owner/status')->assertOk()
-        ->assertSee('Version status')->assertSee(AppDomainFeaturesFeatureEngine::VERSION)
+        ->assertSee('Version status')->assertSee(\App\Domain\Features\FeatureEngine::VERSION)
         ->assertDontSee('obsolete-feature-v0')->assertSee('Purge obsolete');
 
     $this->delete('/owner/status/purge', ['scope' => 'features'])->assertRedirect();
 
     expect(DB::table('market_features')->where('version', 'obsolete-feature-v0')->count())->toBe(0)
-        ->and(DB::table('market_features')->where('version', AppDomainFeaturesFeatureEngine::VERSION)->count())->toBe(1);
+        ->and(DB::table('market_features')->where('version', \App\Domain\Features\FeatureEngine::VERSION)->count())->toBe(1);
 });

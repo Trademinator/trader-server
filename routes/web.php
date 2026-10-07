@@ -9,6 +9,7 @@ use App\Http\Controllers\Markets\SubscriptionController;
 use App\Http\Controllers\Markets\SuggestionController;
 use App\Http\Controllers\Markets\SuggestionReviewController;
 use App\Http\Controllers\Owner\ArchiveController;
+use App\Http\Controllers\Owner\CoinGeckoMappingController;
 use App\Http\Controllers\Owner\FailedJobController;
 use App\Http\Controllers\Owner\HistoryRecoveryController;
 use App\Http\Controllers\Owner\MarketEventController;
@@ -109,6 +110,10 @@ Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-
     Route::get('intelligence', [ReportController::class, 'intelligence'])->name('intelligence');
     Route::get('status', [StatusController::class, 'index'])->name('status');
     Route::delete('status/purge', [StatusController::class, 'purge'])->middleware(['password.confirm', 'throttle:6,1,owner-status-purge'])->name('status.purge');
+    Route::get('coingecko-mappings', [CoinGeckoMappingController::class, 'index'])->name('coingecko-mappings.index');
+    Route::get('coingecko-mappings/coins', [CoinGeckoMappingController::class, 'coins'])->middleware('throttle:30,1')->name('coingecko-mappings.coins');
+    Route::put('coingecko-mappings/{mapping}', [CoinGeckoMappingController::class, 'update'])->middleware('throttle:12,1')->name('coingecko-mappings.update');
+    Route::delete('coingecko-mappings/{mapping}', [CoinGeckoMappingController::class, 'destroy'])->middleware('throttle:12,1')->name('coingecko-mappings.destroy');
     Route::get('intelligence/{model}', [ReportController::class, 'model'])->name('intelligence.show');
     Route::get('events', [MarketEventController::class, 'index'])->name('events');
     Route::put('events/{candidate}', [MarketEventController::class, 'update'])->whereUuid('candidate')->name('events.update');
