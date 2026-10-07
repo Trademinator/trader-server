@@ -164,7 +164,8 @@ it('shows version status and purges only obsolete feature versions', function ()
     ]);
 
     $this->actingAs($owner)->get('/owner/status')->assertOk()
-        ->assertSee('Version status')->assertSee('obsolete-feature-v0')->assertSee('Purge eligible');
+        ->assertSee('Version status')->assertSee(AppDomainFeaturesFeatureEngine::VERSION)
+        ->assertDontSee('obsolete-feature-v0')->assertSee('Purge obsolete');
 
     $this->delete('/owner/status/purge', ['scope' => 'features'])->assertRedirect();
 
