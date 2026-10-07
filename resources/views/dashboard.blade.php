@@ -25,10 +25,22 @@
         <section class="guide-panel" aria-labelledby="conditions-title">
             <div class="flex flex-wrap items-center justify-between gap-3"><h2 id="conditions-title">Market conditions</h2><span class="guide-badge">CoinGecko context</span></div>
             @if ($conditions)
-                <div class="grid gap-4 sm:grid-cols-3 mt-3">
-                    <p><span class="dashboard-muted">Global market cap · 24h</span><br><strong>{{ $number($conditions['market_change_24h']) }}%</strong></p>
-                    <p><span class="dashboard-muted">Bitcoin dominance</span><br><strong>{{ $number($conditions['btc_dominance']) }}%</strong></p>
-                    <p><span class="dashboard-muted">Global volume · 24h</span><br><strong>{{ $number($conditions['volume_usd'] === null ? null : $conditions['volume_usd'] / 1000000000) }} billion USD</strong></p>
+                <div class="grid gap-3 sm:grid-cols-3 mt-3">
+                    <div class="dashboard-stat">
+                        <span>Global market cap · 24h</span>
+                        <strong>{{ $number($conditions['market_change_24h']) }}%</strong>
+                        <small>Broad crypto market</small>
+                    </div>
+                    <div class="dashboard-stat">
+                        <span>Bitcoin dominance</span>
+                        <strong>{{ $number($conditions['btc_dominance']) }}%</strong>
+                        <small>Share of global crypto market cap</small>
+                    </div>
+                    <div class="dashboard-stat">
+                        <span>Global volume · 24h</span>
+                        <strong>{{ $number($conditions['volume_usd'] === null ? null : $conditions['volume_usd'] / 1000000000) }} billion USD</strong>
+                        <small>Reported global trading volume</small>
+                    </div>
                 </div>
                 <p class="guide-help">Observed <x-display-time :value="$conditions['observed_at_ms']" unit="milliseconds" />. Broad market context; chart prices below come from the selected exchange.</p>
                 @if ($conditions['categories'])<div class="flex flex-wrap gap-2 mt-3" aria-label="Largest category movements in the available sample">@foreach ($conditions['categories'] as $category)
