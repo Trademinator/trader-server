@@ -44,7 +44,7 @@
                 </div>
                 <p class="guide-help">Observed <x-display-time :value="$conditions['observed_at_ms']" unit="milliseconds" />. Broad market context; chart prices below come from the selected exchange.</p>
                 @if ($conditions['categories'])
-                    <div class="dashboard-category-grid mt-3" aria-label="Largest category movements in the available sample">
+                    <div class="grid gap-3 mt-3" style="grid-template-columns: repeat(5, minmax(0, 1fr));" aria-label="Largest category movements in the available sample">
                         @foreach ($conditions['categories'] as $category)
                             <div class="dashboard-stat">
                                 <span>{{ $category['name'] }}</span>
