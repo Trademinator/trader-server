@@ -72,7 +72,8 @@ final class ArchiveCatalog
                 return;
             } catch (QueryException $e) {
                 $driverCode = (int) ($e->errorInfo[1] ?? 0);
-                if ($driverCode !== 1020 || $attempt >= $attempts) {
+                $retryableDriverCodes = [1020, 1205, 1213];
+                if (! in_array($driverCode, $retryableDriverCodes, true) || $attempt >= $attempts) {
                     throw $e;
                 }
 
