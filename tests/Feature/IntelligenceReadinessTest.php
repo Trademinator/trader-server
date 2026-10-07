@@ -152,7 +152,7 @@ it('preserves legacy model counts without confusing the retained pool with total
     expect($progress['source']['source_rows'])->toBe(227);
     expect($progress['source']['usable_rows'])->toBe(227);
     expect($progress['settings']['min_train_size'])->toBe(250);
-    expect($progress['tuning']['gates'][0]['passed'])->toBeFalse();
+    expect($progress['tuning'])->toBeNull();
     $report['pattern_keys'] = ['pattern.bullish_engulfing.probability'];
     expect(readiness($report)['source']['usable_rows'])->toBeNull();
 });

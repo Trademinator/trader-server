@@ -49,7 +49,7 @@ it('builds ordinary intelligence with both optional human modes disabled and no 
     config(['human_training.trend_enabled' => false, 'human_training.candle_enabled' => false]);
     $manifest = IntelligenceFixtures::snapshot();
     $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
-    expect($report['human_guidance']['status'])->toBe('disabled')
+    expect($report['human_guidance']['status'])->toBe('outcome_training_disabled')
         ->and($report['candle_guidance']['status'])->toBe('disabled')
         ->and($report['human_keys'])->toBe([])->and($report['candle_keys'])->toBe([])
         ->and($report['status'])->toBe('ready');
@@ -63,7 +63,7 @@ it('excludes disabled Trend guidance while leaving Candle guidance available', f
 
     $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
 
-    expect($report['human_guidance']['status'])->toBe('disabled');
+    expect($report['human_guidance']['status'])->toBe('outcome_training_disabled');
     expect($report['human_guidance']['influence'])->toBeFalse();
     expect($report['human_keys'])->toBe([]);
     expect($report['candle_guidance']['status'])->toBe('insufficient_candle_labels');

@@ -42,7 +42,7 @@ it('keyset-pages ordered snapshot identities and hydrates narrow bounded batches
                 'trainer_id' => $trainer->user_id, 'action' => $action, 'created_at' => now(), 'updated_at' => now()]);
         };
         foreach (array_reverse($rows) as $row) {
-            $annotate($manifest, $row, $row['label'] === 'hodl' ? 'hold' : $row['label']);
+            $annotate($manifest, $row, $row['action_label'] === 'hodl' ? 'hold' : $row['action_label']);
         }
         $revision = IntelligenceFixtures::snapshot(305);
         $annotate($revision, $rows[99], 'sell');

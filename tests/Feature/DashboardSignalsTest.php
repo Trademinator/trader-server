@@ -66,11 +66,12 @@ it('records the original model evidence, preserves its time and distinguishes su
         $first = app(SignalJournal::class)->record($market);
         expect($first->reason)->toBe('supported')->and($first->action)->toBe('hodl')
             ->and($first->model_id)->toBe($report['model_id'])->and($first->payload['horizon_candles'])->toBe(2);
-        expect($first->payload['scoring']['components']['automatic']['action'])->toBe('hold')
-            ->and((float) $first->payload['scoring']['effective_weights']['automatic'])->toBe(1.0);
+        expect($first->payload['scoring']['version'])->toBe('outcome-action-matrix-v2')
+            ->and($first->payload['scoring']['action']['sources']['components']['algorithmic']['action'])->toBe('hodl')
+            ->and((float) $first->payload['scoring']['action']['sources']['effective_weights']['algorithmic'])->toBe(1.0);
         expect(app(SignalJournal::class)->record($market)->getKey())->toBe($first->getKey());
         $this->actingAs($owner)->get('/dashboard')->assertOk()->assertSee('HOLD')
-            ->assertSee('aria-label="Automatic KNN: Ready"', false);
+            ->assertSee('aria-label="Outcome KNN: Ready"', false);
         $this->travelTo('2024-01-01 04:08:00 UTC');
         $second = app(SignalJournal::class)->record($market);
         expect($second->reason)->toBe('stale_features')->and($second->is_change)->toBeTrue();
