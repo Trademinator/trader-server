@@ -25,7 +25,7 @@ final class RebuildBackfilledIntelligence implements ShouldQueue
 
     public int $maxExceptions = 1;
 
-    public int $timeout = 900;
+    public int $timeout = 2100;
 
     public bool $failOnTimeout = true;
 

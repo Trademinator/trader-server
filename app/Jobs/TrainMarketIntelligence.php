@@ -19,7 +19,7 @@ final class TrainMarketIntelligence implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 3;
 
-    public int $timeout = 900;
+    public int $timeout = 2100;
 
     public int $uniqueFor = 86400;
 

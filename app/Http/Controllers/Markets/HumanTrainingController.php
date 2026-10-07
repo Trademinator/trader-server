@@ -46,7 +46,7 @@ class HumanTrainingController extends Controller
         }
 
         return response()->view('markets.human-training', ['datasets' => $datasets, 'selectedDataset' => $selectedDataset,
-            'pending' => $pending, 'completed' => (clone $reviews)->whereIn('label', HumanTraining::LABELS)->count(),
+            'pending' => $pending, 'completed' => (clone $reviews)->whereIn('label', HumanTraining::acceptedLabels())->count(),
             'candleCompleted' => $candleTraining->count($request->user()),
             'statistics' => Gate::allows('manage-server') ? $this->statistics() : null,
         ])->header('Cache-Control', 'no-store, private');
@@ -92,8 +92,8 @@ class HumanTrainingController extends Controller
 
     private function statistics(): array
     {
-        $snapshots = HumanTrainingSnapshot::query()->whereHas('reviews', fn ($query) => $query->whereIn('label', HumanTraining::LABELS))
-            ->with(['reviews' => fn ($query) => $query->whereIn('label', HumanTraining::LABELS)])
+        $snapshots = HumanTrainingSnapshot::query()->whereHas('reviews', fn ($query) => $query->whereIn('label', HumanTraining::acceptedLabels()))
+            ->with(['reviews' => fn ($query) => $query->whereIn('label', HumanTraining::acceptedLabels())])
             ->orderByDesc('decision_at_ms')->limit(1000)->get();
         $trainers = [];
         $shared = $disputed = 0;

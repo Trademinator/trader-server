@@ -79,7 +79,7 @@ class CandleTrainingController extends Controller
         );
 
         return response()->json([...$result,
-            'message' => 'Candle Training labels submitted. The reviewed labels are now available to the next model build.',
+            'message' => 'Action Training labels submitted. The reviewed labels are now available to the next model build.',
         ])->header('Cache-Control', 'no-store, private');
     }
 

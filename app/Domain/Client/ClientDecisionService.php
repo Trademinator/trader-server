@@ -56,7 +56,9 @@ final class ClientDecisionService
 
         $signalExpiry = $this->freshness->expiresAt($signal->decision_at_ms, $signal->period);
         $base['expires_at_ms'] = min($expires, $signalExpiry ?? $expires);
-        if ($signal->reason !== 'supported') {
+        $degradedActionOnly = $signal->reason === 'degraded_action_only';
+        if (! in_array($signal->reason, ['supported', 'degraded_action_only'], true)
+            || ($degradedActionOnly && $signal->action === 'buy')) {
             return [...$base, 'reason' => 'server_abstention'];
         }
         if ($signalExpiry === null || $now >= $signalExpiry) {

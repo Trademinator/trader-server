@@ -1,7 +1,9 @@
-# Two-KNN scoring and history recovery
+# Outcome + Action intelligence recovery
 
-Implementation based on `Trademinator/trader-server` commit
-`dc9ec52836acec63654961df1c4f51d591c77ffa` (main, 2026-10-05).
+Current contract (2026-10-07): rebuild old-version models and frozen Outcome datasets. Outcome KNN and Action KNN use independent K values, dynamic Human Training source weights, and the fixed Outcome × Action decision matrix.
+
+This document describes the Outcome + Action redesign prepared from GitHub `main`
+at commit `194ee23bc33a48196c84cdc486e1742a828bed7d` (2026-10-07).
 
 ## Deploy
 
@@ -17,7 +19,7 @@ required. Keep existing datasets, models and annotations. Sites that cache
 configuration should regenerate that cache after editing `.env`. The existing
 history/intelligence workers and scheduler remain unchanged.
 
-Existing stacked models must be rebuilt for validation version `m5-two-knn-v1`;
+Existing stacked models must be rebuilt for validation version `m6-outcome-action-knn-v1`;
 prediction abstains on an old version. Rebuild each market using its actual
 exchange, symbol, selected period and desired schema, for example:
 
@@ -25,54 +27,24 @@ exchange, symbol, selected period and desired schema, for example:
 php artisan trademinator:knn-build kraken BTC/USD 1h --schema=full
 ```
 
-`full` still requires complete CoinGecko context for automatic training. Existing
-technical annotation datasets can supply the human model when the automatic
-dataset uses full context. The recovery action also forces a rebuild; redispatching
+`full` still requires complete CoinGecko context for the algorithmic Outcome source. Existing
+technical annotation datasets can supply Human Action Training without requiring CoinGecko
+context. The recovery action also forces a rebuild; redispatching
 an already completed weekly generation does not. See [CLI.md](CLI.md#trademinatorknn-build).
 
-## Two independent models
+## Two independent KNNs
 
-The automatic KNN learns cost-free future semantic outcomes. Human Candle KNN
-learns submitted BUY/HOLD/SELL annotations independently. Both use the selected
-technical features with identical normalization; only automatic KNN receives
-CoinGecko context when selected. Existing automatic pattern/lead-lag extensions
-remain automatic inputs. Human predictions are never appended to that vector.
-Human Trend Training is excluded from scoring, including when its legacy flag is
-true. Its annotation UI and saved reviews remain available.
+Outcome KNN and Action KNN answer different questions and tune independent K values.
 
-```dotenv
-HUMAN_TRAINING_ENABLED=true
-HUMAN_TREND_TRAINING_ENABLED=false
-HUMAN_CANDLE_TRAINING_ENABLED=true
-INTELLIGENCE_AUTOMATIC_WEIGHT=0.40
-INTELLIGENCE_HUMAN_CANDLE_WEIGHT=0.60
-INTELLIGENCE_ENSEMBLE_MIN_CONFIDENCE=0.60
-```
+Outcome KNN predicts SUPER BEAR, BEAR, NEUTRAL, BULL or SUPER BULL. Its horizon H is frozen into each dataset from the frequency-weighted spacing of consecutive opposite BUY/SELL Action pivots. Outcome targets use a forward log-CLOSE regression slope beta, volatility V = ATR_t / Close_t, and M = tanh(beta * sqrt(H) / V). Hard class boundaries are -0.60, -0.20, 0.20 and 0.60.
 
-Each model must independently pass validation and live evidence gates. Supported
-models contribute their full action-score distributions at the configured relative
-weights (defaults 40% automatic, 60% human). An unavailable or abstaining model has
-zero effective weight; remaining weights renormalize. Supported HOLD is real
-evidence. Both unavailable, a tie, or insufficient combined confidence means
-abstention. Confidence is the largest combined score times weighted mean similarity;
-it is not a profit probability. Neighbor counts use the minimum of participating
-models, never their sum, because they may describe the same candles.
+Action KNN predicts BUY, HOLD or SELL. Its algorithmic targets come from the same fee-aware retrospective Action auto-labeler used by the Human Action Training page. The first and last source candles remain context-only and cannot receive Action labels.
 
-Weights and thresholds are frozen into each published artifact. Changing them
-requires rebuilding. Disabling Candle Training immediately removes its independent
-vote; it does not prevent a supported automatic prediction. No reviews are erased.
-The master switch retains its existing access behavior. The automatic model needs
-no human reviews; human fitting defaults to at least 50 annotated candles and two
-observed actions. Social/news scoring is not implemented and reports zero weight.
-CoinGecko is automatic context, not a separately weighted social model.
+Each KNN has an algorithmic source and an optional Human Training source. Human Outcome Training contributes only to Outcome KNN. Human Action Training contributes only to Action KNN. Human Training never overwrites algorithmic labels. For either KNN, W_H = min(0.60, 0.60 * sqrt(N_H / 750)) and W_A = 1 - W_H. When one source abstains, the supported source receives 100% effective weight for that inference.
 
-Automatic training runs first under its existing 480-second deadline. Human
-training then receives a separate cooperative 300-second allowance, with a further
-10-second publication reserve. Training jobs allow 900 seconds overall; locks,
-recovery leases and queue reservations are extended accordingly. See
-[worker deployment and progress logs](CRONTABS.md#m4-intelligence-workers). Known computation-budget exceptions
-skip human training. Checksum failures, invalid source data and unexpected errors
-still propagate; they are not silently converted into a successful model.
+The final Server action is not a weighted average of Outcome and Action classes. It comes from the fixed decision matrix: SELL with SUPER BEAR/BEAR/NEUTRAL becomes SELL; SELL with BULL/SUPER BULL becomes HOLD. HOLD always remains HOLD. BUY with SUPER BEAR/BEAR/NEUTRAL becomes HOLD; BUY with BULL/SUPER BULL becomes BUY.
+
+K candidates below 4 are skipped. Old published model versions and old frozen semantic datasets are not reinterpreted and must be rebuilt.
 
 ## Retain HOLDs; weight votes instead of deleting examples
 
@@ -90,10 +62,9 @@ Two human class-weight policies compete during chronological tuning:
   BUY 0.25, HOLD 0.50, SELL 0.25.
 
 Each weight multiplies a real neighbor's distance-weighted vote. It does not
-fabricate absent classes, duplicate rare examples, or discard HOLDs. These weights
-are separate from the 40/60 model weights. The human model must pass independent
-validation against human annotations; it does not have to improve or agree with
-the automatic model's future labels.
+fabricate absent classes, duplicate rare examples, or discard HOLDs. These class-prior weights are separate from the dynamic Human Training source weight.
+Human Action Training is validated against human annotations; it does not have to
+agree with the algorithmic Outcome source.
 
 The first 60% trains policy candidates, the next 20% selects the policy, and the
 last 20% is a separate holdout. Outcome horizons are purged at both boundaries.
@@ -107,10 +78,9 @@ occur after the contributing annotations and source outcomes were available.
 The report records `samples`, `class_counts`, `knowledge_rows`, `input_keys`,
 `weight_candidates`, `weight_policy`, `class_weights`, chronology and provenance.
 Human holdout precision is named `directional_annotation_agreement`, not future
-return accuracy. Automatic validation stays in top-level `selection` and `holdout`;
+return accuracy. Outcome validation stays in top-level `selection` and `holdout`;
 no combined holdout performance is claimed. Signal/API `scoring` exposes individual
-predictions and configured/effective weights without training vectors. Candle
-Training's UI milestones count each trainer/candle once across revisions, rather
+predictions and configured/effective weights without training vectors. Action Training's UI milestones count each trainer/candle once across revisions, rather
 than current model eligibility; historical labels remain stored.
 
 ## Deduplication and input revisions
@@ -118,7 +88,7 @@ than current model eligibility; historical labels remain stored.
 Before constructing KNN knowledge, the trainer audits candle identities. Exact
 repeated rows at one decision timestamp are consolidated; conflicting rows at the
 same timestamp fail closed. Identical feature vectors or repeated HOLD actions at
-different timestamps remain distinct observations. Human Candle training selects
+different timestamps remain distinct observations. Human Action Training selects
 one latest compatible consensus snapshot per decision time. A submitted trainer opinion still has one database
 record per snapshot/trainer. Auto-label consecutive-action cleanup is unchanged;
 it is not applied as a blanket rewrite of manually submitted labels.
@@ -140,7 +110,7 @@ current snapshot; the explicit existing Delete all training action still deletes
 that trainer's labels for the market, including historical revisions.
 
 Real provenance-bearing snapshots are checked against current source features and
-chart inputs before being used/displayed in Candle Training. Source-less legacy
+chart inputs before being used/displayed in Action Training. Source-less legacy
 research records retain their prior feature/schema compatibility checks until they
 have a known history revision; they are not represented as newly verified source
 history. Corrupt snapshot checksums remain fatal.
@@ -234,3 +204,6 @@ tests cover optional baseline training, actual HOLD retention, holdout independe
 revision range accounting, snapshot reuse/replacement/checksum failure, queue
 idempotence, and owner authorization. Application integration tests require the
 project's locked Composer dependencies and its PHP extensions.
+## Degraded KNN availability
+
+If Action KNN is supported while Outcome KNN is unavailable, SELL remains SELL, HOLD remains HOLD, and BUY becomes HOLD. The Server reports `degraded_action_only`. If only Outcome KNN is supported, the Server returns HOLD with `degraded_outcome_only`. The Client never opens a new BUY from degraded intelligence.

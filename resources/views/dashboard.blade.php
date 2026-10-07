@@ -97,7 +97,7 @@
                         <p class="guide-help">Estimate before source checks and model-specific exclusions.</p></div>
                     <div><h3>2. Model build</h3><p>{{ $details['report'] ? 'A model build has completed.' : 'No model build recorded yet.' }}</p>
                         @if ($details['report'])<p class="guide-help">Model {{ $details['report']['model_id'] }}</p>@endif</div>
-                    <div><h3>3. Validation</h3><x-knn-readiness :report="$details['report']" :coingecko="$details['coingecko']" /><p class="guide-help">Green: automatic KNN. Blue: Human Candle KNN. Yellow: fresh, complete CoinGecko context. Each KNN check requires its own current, validated model with a positive scoring weight. Readiness does not guarantee a signal for every candle.</p></div>
+                    <div><h3>3. Validation</h3><x-knn-readiness :report="$details['report']" :coingecko="$details['coingecko']" /><p class="guide-help">Green: Outcome KNN. Blue: Action KNN. Yellow: fresh, complete CoinGecko context. Each KNN check requires its own current, validated model with a positive scoring weight. Readiness does not guarantee a signal for every candle.</p></div>
                 </div>
                 @if ($progress['eta'])<p><strong>Earliest data estimate: <x-display-time :value="$progress['eta']" /></strong></p>@endif
                 <p class="guide-help">{{ $progress['eta_note'] }} Validated-model ETA: unknown.</p>

@@ -644,7 +644,7 @@ Signature: `trademinator:dispatch-market-intelligence`
 
 Description: Queue weekly KNN and pattern training once per subscribed market and selected period
 
-Queue training for all active subscribed feeds with selected periods on `INTELLIGENCE_QUEUE` (default `intelligence`). Requires enabled intelligence and a persistent queue. Uses the current weekly generation key; already completed generations are not a force-rebuild target. This command only dispatches: **`--timeout=900` belongs on `queue:work`, not here**.
+Queue training for all active subscribed feeds with selected periods on `INTELLIGENCE_QUEUE` (default `intelligence`). Requires enabled intelligence and a persistent queue. Uses the current weekly generation key; already completed generations are not a force-rebuild target. This command only dispatches: **`--timeout=2100` belongs on `queue:work`, not here**.
 
 Parameters: none beyond standard Artisan options.
 
@@ -754,9 +754,9 @@ Implementation: [`AnalyzeValidationGates.php`](../app/Console/Commands/AnalyzeVa
 
 Signature: `trademinator:human-candle-audit {exchange} {symbol} {period} {--dataset= : Current-version target dataset; defaults to the published model dataset} {--timeout=300 : Eligibility inspection budget in seconds, without KNN validation}`
 
-Description: Read-only audit of recorded human candles, current-feature reuse and exclusion reasons
+Description: Read-only audit of Human Action Training annotations, current-feature reuse and exclusion reasons
 
-Inspect human candle eligibility using the **same loader as model training**, without creating a dataset, changing annotations, publishing a model, or running KNN tuning/holdout validation. Run as the application account so private dataset files are readable. The canonical history reader may populate its ordinary cache; authenticated source artifacts are never rewritten.
+Inspect Human Action Training eligibility using the **same loader as model training**, without creating a dataset, changing annotations, publishing a model, or running KNN tuning/holdout validation. Run as the application account so private dataset files are readable. The canonical history reader may populate its ordinary cache; authenticated source artifacts are never rewritten.
 
 Each original annotation is checked against its checksum-verified frozen dataset. A feature-version or schema change alone no longer discards a provenance-bearing annotation: the loader verifies the reviewed OHLCV chart and projects the action onto the current technical feature vector at the same decision time. Changed, inserted or missing chart candles, unavailable evidence, missing current inputs, unauthorized reviewers and inconsistent source snapshots remain exclusions. Corrupt artifacts fail the audit rather than being silently skipped. Source-less legacy research records retain their same-version behavior but cannot cross feature versions or gain missing inputs.
 
@@ -1042,7 +1042,7 @@ php -d memory_limit=512M artisan queue:work --queue=features --stop-when-empty -
 php -d memory_limit=256M artisan queue:work --queue=history --stop-when-empty --max-time=50 --timeout=120 --memory=192 --tries=1
 
 # Model builds, shared signal recording, and backfill rebuild stages.
-php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --max-time=50 --timeout=900 --memory=384 --tries=3
+php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --max-time=50 --timeout=2100 --memory=384 --tries=3
 ```
 
 `FEATURES_QUEUE`, `HISTORY_BACKFILL_QUEUE` and `INTELLIGENCE_QUEUE` can override the names. A scheduler success or an empty database `jobs` table does not prove Redis/other backend queues are empty. Use the actual configured connection and owner monitoring.
@@ -1088,7 +1088,7 @@ php artisan trademinator:dispatch-market-features
 # Drain features and confirm catch-up before relying on new inputs.
 php -d memory_limit=512M artisan queue:work --queue=features --stop-when-empty --max-time=50 --timeout=600 --memory=384 --tries=3
 php artisan trademinator:dispatch-market-intelligence
-php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --max-time=50 --timeout=900 --memory=384 --tries=3
+php -d memory_limit=512M artisan queue:work --queue=intelligence --stop-when-empty --max-time=50 --timeout=2100 --memory=384 --tries=3
 ```
 
 A single bounded worker pass may not finish all continuations. The weekly dispatcher does not force already completed weekly generations to rebuild and has no `--schema` argument; queued builds use configured intelligence settings. Direct `knn-build --schema=full` is a one-market operation.
@@ -1108,7 +1108,7 @@ Fetching today's CoinGecko data cannot reconstruct yesterday's context. Do not a
 
 A finished build is not the same as a validated model. Read the reported status, validation evidence, freshness and abstention reasons. `INTELLIGENCE_MAX_MODEL_AGE_DAYS` is a history/expiry window, **not a mandatory waiting period**. An insufficient-human-label reason requires eligible submitted candle labels; collecting more automatic candles alone does not create them. Unsubmitted browser labels are not training rows.
 
-`optional budget exhausted` identifies an optional training-stage budget limit, not a missing-candle count. Gap repair, more labels and more execution time address different causes. Current intelligence jobs use a 900-second timeout with a separate Human Candle training allowance; see [worker budgets and logging](CRONTABS.md#m4-intelligence-workers). Explicit command success does not override any validation gate.
+`optional budget exhausted` identifies an optional training-stage budget limit, not a missing-candle count. Gap repair, more labels and more execution time address different causes. Current intelligence jobs use a 2100-second timeout with a separate Human Action Training allowance; see [worker budgets and logging](CRONTABS.md#m4-intelligence-workers). Explicit command success does not override any validation gate.
 
 ### Where the KNN inputs are prepared
 
@@ -1145,7 +1145,7 @@ These are operating-system `journalctl` commands: `-t` selects the syslog identi
 
 ### Syslog and trace IDs
 
-Use `trace_id` and `parent_trace_id` to correlate structured command/job events. Command completion is not proof that every downstream job completed. For Human Candle training, inspect `intelligence.human_training.*` progress/timeout events alongside `job.timeout`; a blocked call cannot emit progress while it is blocked. Do not copy secrets or sensitive diagnostic payloads into shared reports.
+Use `trace_id` and `parent_trace_id` to correlate structured command/job events. Command completion is not proof that every downstream job completed. For Human Action Training, inspect `intelligence.human_training.*` progress/timeout events alongside `job.timeout`; a blocked call cannot emit progress while it is blocked. Do not copy secrets or sensitive diagnostic payloads into shared reports.
 
 ### Local GeoIP database
 
@@ -1161,3 +1161,12 @@ php artisan test --compact tests/Feature/TrademinatorCliDocumentationTest.php
 ```
 
 The automated documentation test checks command coverage, normalized signatures/descriptions and lowercase names. It does not prove the prose or examples are correct; verify those against the command implementation and any delegated service when behavior changes.
+
+
+### Current Outcome + Action KNN contract
+
+trademinator:knn-build builds independently tuned Outcome and Action KNNs. H is the frequency-weighted mean spacing of opposite Action pivots. Outcome uses M=tanh(beta*sqrt(H)/V), V=ATR_t/Close_t, and hard boundaries -0.60/-0.20/0.20/0.60. K candidates begin at 4. Human source weight is min(0.60,0.60*sqrt(N_H/750)). Final SELL/HOLD/BUY is produced by the fixed Outcome x Action matrix. The default build budget is INTELLIGENCE_MAX_SECONDS=1800; intelligence workers use --timeout=2100.
+
+### Degraded KNN availability
+
+Action-only SELL/HOLD can be returned with `degraded_action_only`; Action-only BUY and Outcome-only states return HOLD.

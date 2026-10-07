@@ -7,7 +7,6 @@ use App\Models\Exchange;
 use App\Models\HumanCandleLabel;
 use App\Models\Market;
 use App\Models\User;
-use App\Repositories\ExchangeRepository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -58,14 +57,6 @@ function autoLabelDataset(int $count, ?array $candle = null): array
 
     $exchange = Exchange::query()->create(['name' => 'Kraken', 'class' => 'kraken', 'config' => '{}']);
     Market::query()->create(['exchange_id' => $exchange->exchange_id, 'symbol' => 'BTC/USD', 'tick_size' => '0.01']);
-    $repository = Mockery::mock(ExchangeRepository::class);
-    $repository->shouldReceive('setExchange')->once();
-    $repository->shouldReceive('describe')->once()->andReturn(['timeframes' => ['1m' => '1m'], 'precisionMode' => \ccxt\TICK_SIZE]);
-    $repository->shouldReceive('spotMarkets')->once()->andReturn([
-        'BTC/USD' => ['spot' => true, 'precision' => ['price' => 0.01], 'taker' => 0.008],
-    ]);
-    app()->instance(ExchangeRepository::class, $repository);
-
     return [$manifest, $rows];
 }
 

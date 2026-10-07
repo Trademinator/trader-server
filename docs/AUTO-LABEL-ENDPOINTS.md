@@ -11,7 +11,7 @@ actions before pivot selection; HOLD assignment excludes endpoints. Both Candle
 Training auto-label suggestions and candle-period viability enforce the rule again
 after all label-producing passes.
 
-For Candle Training, these are the endpoints of the full frozen dataset supplied
+For Action Training, these are the endpoints of the full frozen dataset supplied
 to the algorithm, not the endpoints of a chart viewport or a 50-candle response
 page. Interior page-edge candles remain eligible. One- and two-candle inputs have
 no eligible interior candles. Empty viability inputs still produce zero labels.

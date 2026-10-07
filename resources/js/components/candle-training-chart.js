@@ -243,7 +243,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     };
     switchDataset = () => {
         if (isDirty() && typeof window.confirm === 'function'
-            && !window.confirm('Discard the unsubmitted Candle Training changes and switch dataset?')) return;
+            && !window.confirm('Discard the unsubmitted Action Training changes and switch dataset?')) return;
         root.querySelector('[data-candle-dataset-form]')?.requestSubmit();
     };
     datasetSelect?.addEventListener('change', switchDataset);
@@ -503,7 +503,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     const stageDeleteAll = () => {
         if (submittingLabels || autoLabelling || deleteAllPending) return;
         if (typeof window.confirm === 'function'
-            && !window.confirm('Stage deletion of all your Candle Training labels for this market and period? The database will not change until Submit.')) return;
+            && !window.confirm('Stage deletion of all your Action Training labels for this market and period? The database will not change until Submit.')) return;
         deleteAllPending = true;
         autoLabelOffset = 0;
         labels.clear();
@@ -522,7 +522,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         const batchSize = Math.max(1, Math.min(50, Math.floor(Number(root.dataset.submitBatchSize)) || 50));
         const times = new Map(Object.entries(data.decisions).map(([time, decision]) => [Number(decision), Number(time)]));
         let submitted = 0, rateLimitRetries = 0;
-        let message = 'Candle Training labels submitted.';
+        let message = 'Action Training labels submitted.';
         try {
             do {
                 if (disposed) return;
@@ -561,7 +561,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             } while (submitted < changes.length || deleteAllPending);
             status.textContent = message;
         } catch (error) {
-            const reason = error instanceof Error ? error.message : 'The staged Candle Training labels could not be submitted.';
+            const reason = error instanceof Error ? error.message : 'The staged Action Training labels could not be submitted.';
             status.textContent = `Saved ${submitted} of ${changes.length} changes. ${reason} Press Submit to retry the remaining changes.`;
         } finally {
             submittingLabels = false;

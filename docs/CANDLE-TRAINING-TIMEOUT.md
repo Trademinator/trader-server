@@ -1,4 +1,4 @@
-# Candle Training request timeout correction
+# Action Training request timeout correction
 
 ## Scope and baseline
 
@@ -31,8 +31,8 @@ connection defect.
    rechecks the opinion on the **resolved current snapshot**, and stops at the
    first unreviewed valid candidate. Lower `human_training.candidate_attempts`
    values are respected, but larger values cannot remove this HTTP work bound.
-3. Candle Training can fall back to the first verified reviewed candle when the
-   bounded search has no unreviewed candidate. Trend Training does not reassign a
+3. Action Training can fall back to the first verified reviewed candle when the
+   bounded search has no unreviewed candidate. Outcome Training does not reassign a
    reviewed fallback. A rare changed revision among many recorded candle times
    can be outside the sample; opening its explicit decision timestamp still
    performs full validation. This is a bounded search, not a claim to classify

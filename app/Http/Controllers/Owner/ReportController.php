@@ -36,7 +36,7 @@ class ReportController extends Controller
         $feeds = MarketFeed::query()->selectRaw('status, COUNT(*) AS total')->groupBy('status')->orderBy('status')->get();
         $overdue = MarketFeed::query()->whereHas('market.subscriptions', fn ($q) => $q->where('active', true))
             ->where('next_pull_at', '<', now()->subMinutes(15))->count();
-        $modelTotals = ['total' => 0, 'automatic' => 0, 'human_candle' => 0, 'coingecko' => 0];
+        $modelTotals = ['total' => 0, 'outcome' => 0, 'action' => 0, 'coingecko' => 0];
         $models = DB::table('intelligence_models as models')->join('intelligence_heads as heads', 'heads.model_id', '=', 'models.model_id')
             ->select('models.model_id', 'models.report')->orderBy('models.model_id')->lazy(100);
         foreach ($models->chunk(100) as $batch) {

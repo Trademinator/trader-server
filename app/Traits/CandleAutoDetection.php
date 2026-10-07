@@ -7,7 +7,7 @@ use Trademinator\Indicators\Traits\Patterns;
 use function Trademinator\BcMath\bcconv;
 
 /**
- * Retrospective helpers for M4 Candle Training labels.
+ * Retrospective helpers for M4 Action Training labels.
  *
  * The order of these routines is intentional: early passes over-label candidate
  * actions and later passes remove or move excess labels. These labels describe

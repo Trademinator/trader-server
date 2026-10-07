@@ -36,7 +36,8 @@ final class CandleTraining
     public function __construct(
         private DatasetStore $datasets,
         private HumanTraining $snapshots,
-        private MarketCatalog $catalog,
+        private ActionAutoLabeler $autoLabeler,
+        private PublishedTakerFee $takerFees,
     ) {}
 
     public static function submissionLimit(): int
@@ -206,22 +207,16 @@ final class CandleTraining
     private function autoLabelContext(DatasetRows $rows): array
     {
         $tickers = [];
+        // Some low-level memory/regression tests intentionally instantiate this
+        // class without its container constructor; keep this pure helper usable.
+        $labeler = isset($this->autoLabeler) ? $this->autoLabeler : new ActionAutoLabeler;
         foreach ($rows as $row) {
             $candle = $row['candle'] ?? null;
             if (! is_array($candle) || array_diff(['open', 'high', 'low', 'close', 'volume'], array_keys($candle)) !== []) {
                 throw ValidationException::withMessages(['dataset' => 'This frozen dataset is missing candle values required for auto-labeling.']);
             }
 
-            // Use the existing package definitions and precision policy rather
-            // than implementing a second, subtly different candle classifier.
-            $single = [$candle];
-            $this->candle_anatomy($single);
-            $tickers[] = [
-                'close' => $single[0]['close'],
-                'is_black()' => $single[0]['is_black()'],
-                'is_white()' => $single[0]['is_white()'],
-                'is_super_doji()' => $single[0]['is_super_doji()'],
-            ];
+            $tickers[] = $labeler->compact($candle);
         }
 
         return $tickers;
@@ -244,18 +239,7 @@ final class CandleTraining
 
         $tickers = $this->autoLabelContext($rows);
 
-        // Order is part of the algorithm: broad labels first, excess removed later.
-        $this->candle_auto_mark_hold_candidates($tickers);
-        $this->mark_all_blacks_and_whites($tickers);
-        $this->remove_consequitive_actions($tickers);
-        $this->remove_unprofitable_transactions($tickers, $takerFee);
-        $this->remove_zigzags($tickers, $takerFee);
-        $this->find_new_bottoms($tickers);
-        $this->remove_consequitive_actions($tickers);
-        $this->hodl_all_dojis($tickers);
-        $this->hodl_middle_chains($tickers);
-        // Enforce after all label-producing passes and before response pagination.
-        $this->unlabel_endpoints($tickers);
+        $tickers = $this->autoLabeler->labels($tickers, $takerFee);
 
         // Keep the full algorithm context, but verify only one chronological
         // page per request. Snapshot UUIDs reflect review order, not candle time.
@@ -517,26 +501,10 @@ final class CandleTraining
         ];
     }
 
-    /** Published CCXT spot taker fee, when the configured exchange exposes one. */
+    /** Published CCXT spot taker fee used by the shared Action auto-labeler. */
     private function takerFee(array $manifest): ?float
     {
-        $matches = Exchange::query()->where('class', $manifest['exchange'])->limit(2)->get();
-        if ($matches->count() !== 1) {
-            return null;
-        }
-        try {
-            foreach ($this->catalog->forExchange($matches->first())['symbols'] as $market) {
-                if (($market['value'] ?? null) !== $manifest['symbol']) {
-                    continue;
-                }
-                $fee = $market['taker_fee'] ?? null;
-
-                return is_numeric($fee) && is_finite((float) $fee) && (float) $fee >= 0 ? (float) $fee : null;
-            }
-        } catch (Throwable) {
-            // Training remains usable when the exchange metadata endpoint is temporarily unavailable.
-        }
-
-        return null;
+        return $this->takerFees->for($manifest['exchange'], $manifest['symbol']);
     }
+
 }

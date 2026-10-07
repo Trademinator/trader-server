@@ -23,8 +23,8 @@ it('restricts intelligence pages to the active subscription owner and escapes ma
     $this->actingAs($other)->get($url)->assertNotFound();
     $this->actingAs($owner)->get($url)->assertSee('HOLD')->assertSee('0.0%')
         ->assertSee('Training has not completed')->assertSee('What is missing?')
-        ->assertSee('Automatic KNN: Not ready — No model built yet')
-        ->assertSee('Human Candle KNN: Not ready — No model built yet')
+        ->assertSee('Outcome KNN: Not ready — No model built yet')
+        ->assertSee('Action KNN: Not ready — No model built yet')
         ->assertSee('M2/M3 jobs alone do not train an M4 model.')
         ->assertSee('fallback zeros')->assertDontSee('ETA')
         ->assertSee('&lt;script&gt;', false)->assertDontSee('<script>alert(1)</script>', false);
@@ -71,17 +71,14 @@ it('renders actual history counts and failed validation requirements for an abst
         $response = $this->actingAs($owner)->get(route('markets.intelligence', $subscription->getKey()));
 
         $response->assertOk()->assertSee('227 retained examples')
-            ->assertSee('Two-KNN scoring')->assertSee('Human Trend is excluded')
-            ->assertSee('Human candle eligibility details')->assertSee('0 recorded distinct candles')
-            ->assertSee('Exclusions below count snapshots, not additional distinct candles.')
-            ->assertSee('Automatic KNN: Not ready')->assertSee('Human Candle KNN: Not ready')
-            ->assertSee('Automatic KNN')->assertSee('Human Candle KNN')->assertSee('Effective weight')
-            ->assertSee('227 out of 380')->assertSee('K selection requirements')
+            ->assertSee('Outcome + Action scoring')->assertSee('Human influence follows')
+            ->assertSee('Outcome KNN: Not ready')->assertSee('Action KNN: Not ready')
+            ->assertSee('Outcome KNN')->assertSee('Action KNN')->assertSee('Human weight')
+            ->assertSee('227 out of 380')->assertSee('Outcome K selection requirements')
             ->assertSee(route('human-training.index', [
                 'exchange' => $exchange->class, 'symbol' => $market->symbol, 'period' => '1m',
             ]))
             ->assertSee('At least 50')->assertSee('Missing / failed')
-            ->assertSee('Not evaluated: K selection must pass first.')
             ->assertSee('Pattern training history')->assertSee('0 out of 100')
             ->assertSee('<progress', false)->assertSee('role="progressbar"', false)
             ->assertDontSee('Build performance');

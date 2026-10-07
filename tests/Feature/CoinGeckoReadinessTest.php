@@ -62,7 +62,7 @@ it('requires fresh complete context for the exact market while remaining indepen
     expect($state)->toBe(['ready' => $ready, 'reason' => $reason]);
     $view = $this->blade('<x-knn-readiness :coingecko="$context" />', ['context' => $state]);
     $view->assertSee('CoinGecko context: '.($ready ? 'Ready' : 'Not ready'))
-        ->assertSee('Automatic KNN: Not ready')->assertSee('Human Candle KNN: Not ready');
+        ->assertSee('Outcome KNN: Not ready')->assertSee('Action KNN: Not ready');
     expect(substr_count((string) $view, '>✓</span>'))->toBe((int) $ready);
 })->with([
     'ready even without technical features or a trained model' => [[], true, 'ready'],
@@ -116,7 +116,7 @@ it('shows yellow readiness consistently on market, dashboard, intelligence and o
             ->assertSee('knn-readiness-coingecko', false);
     }
     expect($this->getJson('/dashboard?q=BTC')->json('html'))->toContain('CoinGecko context: Ready');
-    $this->get('/dashboard?q=no-match')->assertViewHas('totals', ['followed' => 1, 'automatic' => 0, 'human_candle' => 0, 'coingecko' => 1])
+    $this->get('/dashboard?q=no-match')->assertViewHas('totals', ['followed' => 1, 'outcome' => 0, 'action' => 0, 'coingecko' => 1])
         ->assertSee('CoinGecko context: 1 of 1 ready');
 
     $dataset = (string) Str::uuid();
@@ -131,6 +131,6 @@ it('shows yellow readiness consistently on market, dashboard, intelligence and o
     foreach (['/owner/intelligence', '/owner/intelligence/'.$model] as $url) {
         $this->get($url)->assertSee('aria-label="CoinGecko context: Ready"', false);
     }
-    $this->get('/owner')->assertViewHas('modelTotals', ['total' => 1, 'automatic' => 0, 'human_candle' => 0, 'coingecko' => 1])
+    $this->get('/owner')->assertViewHas('modelTotals', ['total' => 1, 'outcome' => 0, 'action' => 0, 'coingecko' => 1])
         ->assertSee('CoinGecko context: 1 of 1 ready');
 });

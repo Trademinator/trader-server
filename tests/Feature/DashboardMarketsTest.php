@@ -1,6 +1,5 @@
 <?php
 
-use App\Domain\Intelligence\HumanCandleKnn;
 use App\Domain\Intelligence\IntelligenceTrainer;
 use App\Domain\Intelligence\ModelStore;
 use App\Models\MarketFeed;
@@ -32,8 +31,8 @@ function dashboardModel(MarketSubscription $subscription, array $overrides = [])
         'status' => 'ready', 'sha256' => str_repeat('0', 64), 'created_at' => now(),
         'report' => json_encode(array_replace(['model_id' => $model, 'dataset_id' => $dataset, 'status' => 'ready',
             'validation_version' => IntelligenceTrainer::VERSION, 'trained_as_of_ms' => now()->getTimestampMs(),
-            'automatic' => ['status' => 'ready'],
-            'ensemble' => ['weights' => ['automatic' => 1, 'human_candle' => 1]]], $overrides))]);
+            'outcome' => ['status' => 'ready', 'reason' => 'validated'],
+            'action' => ['status' => 'abstaining', 'reason' => 'action_model_unavailable']], $overrides))]);
     DB::table('intelligence_heads')->insert(['market_key' => $key, 'model_id' => $model, 'updated_at' => now()]);
 }
 
@@ -45,50 +44,50 @@ it('counts current validated models across all followed markets regardless of pa
     dashboardModel($first);
     dashboardModel(followedDashboardMarket($user, 'ETH/USD', 'coinbase', '1h'), ['trained_as_of_ms' => now()->subDays(30)->getTimestampMs()]);
     dashboardModel(followedDashboardMarket($user, 'ADA/USD', 'bitso', '5m'), ['validation_version' => 'old']);
-    $humanReady = ['version' => HumanCandleKnn::VERSION, 'status' => 'validated', 'influence' => true];
+    $actionReady = ['status' => 'ready', 'reason' => 'validated'];
     dashboardModel(followedDashboardMarket($user, 'XRP/USD', 'kraken', '1m'), [
-        'automatic' => ['status' => 'abstaining', 'reason' => 'holdout_failed'], 'candle_guidance' => $humanReady,
+        'outcome' => ['status' => 'abstaining', 'reason' => 'holdout_failed'], 'action' => $actionReady,
     ]);
-    dashboardModel(followedDashboardMarket($user, 'SOL/USD', 'kraken', '1m'), ['candle_guidance' => $humanReady]);
+    dashboardModel(followedDashboardMarket($user, 'SOL/USD', 'kraken', '1m'), ['action' => $actionReady]);
     dashboardModel(followedDashboardMarket(User::factory()->create(), 'PRIVATE/USD', 'kraken', '1m'));
     $inactive = followedDashboardMarket($user, 'OLD/USD', 'kraken', '1m');
     $inactive->update(['active' => false]);
     dashboardModel($inactive);
 
     foreach (['/dashboard', '/dashboard?page=2', '/dashboard?q=ETH', '/dashboard?q=no-match'] as $url) {
-        $this->actingAs($user)->get($url)->assertViewHas('totals', ['followed' => 5, 'automatic' => 2, 'human_candle' => 2, 'coingecko' => 0])
-            ->assertSee('Automatic KNN: 2 of 5 ready')->assertSee('Human Candle KNN: 2 of 5 ready')
+        $this->actingAs($user)->get($url)->assertViewHas('totals', ['followed' => 5, 'outcome' => 2, 'action' => 2, 'coingecko' => 0])
+            ->assertSee('Outcome KNN: 2 of 5 ready')->assertSee('Action KNN: 2 of 5 ready')
             ->assertSee('Across all markets you follow')->assertDontSee('For the markets on this page');
     }
 });
 
-it('shows a human-only ready model consistently in market lists and dashboard search results', function () {
+it('shows an Action-only ready model consistently in market lists and dashboard search results', function () {
     $this->freezeTime();
     config(['human_training.enabled' => true, 'human_training.candle_enabled' => true]);
     $user = User::factory()->create();
     $subscription = followedDashboardMarket($user, 'XRP/USD', 'kraken', '1m');
     dashboardModel($subscription, [
-        'automatic' => ['status' => 'abstaining', 'reason' => 'holdout_failed'],
-        'candle_guidance' => ['version' => HumanCandleKnn::VERSION, 'status' => 'validated', 'influence' => true],
+        'outcome' => ['status' => 'abstaining', 'reason' => 'holdout_failed'],
+        'action' => ['status' => 'ready', 'reason' => 'validated'],
     ]);
 
     $this->actingAs($user)->get('/markets')
-        ->assertSee('Automatic KNN: Not ready')->assertSee('Human Candle KNN: Ready')
-        ->assertDontSee('aria-label="Automatic KNN: Ready"', false);
+        ->assertSee('Outcome KNN: Not ready')->assertSee('Action KNN: Ready')
+        ->assertDontSee('aria-label="Outcome KNN: Ready"', false);
 
     $html = $this->getJson('/dashboard?q=XRP')->assertJsonPath('count', 1)->json('html');
-    expect($html)->toContain('Automatic KNN: Not ready', 'Human Candle KNN: Ready')
-        ->not->toContain('aria-label="Automatic KNN: Ready"');
+    expect($html)->toContain('Outcome KNN: Not ready', 'Action KNN: Ready')
+        ->not->toContain('aria-label="Outcome KNN: Ready"');
 
     config(['operations.owner_uuid' => $user->getKey()]);
     $this->withSession(['auth.password_confirmed_at' => time()]);
     $model = DB::table('intelligence_heads')->value('model_id');
     foreach (['/owner/intelligence', '/owner/intelligence/'.$model] as $url) {
-        $this->get($url)->assertSee('Automatic KNN: Not ready')->assertSee('Human Candle KNN: Ready')
-            ->assertDontSee('aria-label="Automatic KNN: Ready"', false);
+        $this->get($url)->assertSee('Outcome KNN: Not ready')->assertSee('Action KNN: Ready')
+            ->assertDontSee('aria-label="Outcome KNN: Ready"', false);
     }
-    $this->get('/owner')->assertViewHas('modelTotals', ['total' => 1, 'automatic' => 0, 'human_candle' => 1, 'coingecko' => 0])
-        ->assertSee('Automatic KNN: 0 of 1 ready')->assertSee('Human Candle KNN: 1 of 1 ready');
+    $this->get('/owner')->assertViewHas('modelTotals', ['total' => 1, 'outcome' => 0, 'action' => 1, 'coingecko' => 0])
+        ->assertSee('Outcome KNN: 0 of 1 ready')->assertSee('Action KNN: 1 of 1 ready');
 });
 
 it('searches partial pairs exchange names and periods across pages without leaking other subscriptions', function () {

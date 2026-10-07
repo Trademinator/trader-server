@@ -44,7 +44,8 @@ it('requires verification and scopes dashboard charts to active subscriptions of
         'generation_key' => null, 'sha256' => str_repeat('0', 64), 'report' => json_encode([
             'model_id' => $modelId, 'dataset_id' => $datasetId, 'status' => 'ready',
             'validation_version' => IntelligenceTrainer::VERSION, 'trained_as_of_ms' => now()->getTimestampMs(),
-            'automatic' => ['status' => 'ready'], 'ensemble' => ['weights' => ['automatic' => 1, 'human_candle' => 1]],
+            'outcome' => ['status' => 'ready', 'reason' => 'validated'],
+            'action' => ['status' => 'abstaining', 'reason' => 'action_model_unavailable'],
         ], JSON_THROW_ON_ERROR), 'created_at' => now(),
     ]);
     DB::table('intelligence_heads')->insert(['market_key' => $marketKey, 'model_id' => $modelId, 'updated_at' => now()]);
@@ -55,7 +56,7 @@ it('requires verification and scopes dashboard charts to active subscriptions of
     $this->get(route('dashboard', ['subscription' => $sub->getKey()]))->assertNotFound();
     $this->get('/dashboard')->assertOk()->assertDontSee('BTC/USD')->assertDontSee('privateExchange');
     $this->actingAs($owner)->get('/dashboard')->assertOk()->assertSee('BTC/USD')->assertSee('Waiting for evidence')
-        ->assertSee('aria-label="Automatic KNN: Ready"', false)->assertSee('Human Candle KNN: Not ready')
+        ->assertSee('aria-label="Outcome KNN: Ready"', false)->assertSee('Action KNN: Not ready')
         ->assertSee('does not enable trading')->assertSee('Unknown')->assertSee('&lt;script&gt;', false)
         ->assertDontSee('<script>privateExchange()</script>', false)->assertHeader('Cache-Control', 'no-store, private');
     $this->getJson($url)->assertOk()->assertJsonPath('subscription_id', $sub->getKey());

@@ -32,31 +32,20 @@ final class ModelStore
             ($report['trained_as_of_ms'] ?? 0) < KnowledgeWindow::fromMs(now()->getTimestampMs()) => 'stale_model',
             default => null,
         };
-        $automatic = $report['automatic'] ?? [];
-        $human = $report['candle_guidance'] ?? [];
+
+        $outcomeStatus = $report['outcome']['status'] ?? null;
+        $outcomeReason = $report['outcome']['reason'] ?? 'outcome_model_unavailable';
+        $actionStatus = $report['action']['status'] ?? null;
+        $actionReason = $report['action']['reason'] ?? 'action_model_unavailable';
         $reasons = [
-            'automatic' => match (true) {
-                ($automatic['status'] ?? null) === 'ready' => 'validated',
-                in_array($automatic['reason'] ?? null, [null, 'validated'], true) => 'automatic_model_unavailable',
-                default => $automatic['reason'],
-            },
-            'human_candle' => match (true) {
-                ! OptionalGuidance::enabled('candle') => 'candle_training_disabled',
-                ($human['version'] ?? null) !== HumanCandleKnn::VERSION => 'candle_model_version_mismatch',
-                ($human['status'] ?? null) === 'validated' && ($human['influence'] ?? false) => 'validated',
-                ($human['status'] ?? null) === 'validated' => 'candle_model_unavailable',
-                default => $human['status'] ?? 'candle_model_unavailable',
-            },
+            'outcome' => $outcomeStatus === 'ready'
+                ? 'validated' : ($outcomeReason === 'validated' ? 'outcome_model_unavailable' : $outcomeReason),
+            'action' => $actionStatus === 'ready'
+                ? 'validated' : ($actionReason === 'validated' ? 'action_model_unavailable' : $actionReason),
         ];
         $readiness = [];
         foreach ($reasons as $name => $reason) {
             $reason = $unavailable ?? $reason;
-            if ($reason === 'validated' && ($report['ensemble']['weights'][$name] ?? 0) <= 0) {
-                $reason = 'zero_scoring_weight';
-            }
-            if ($reason === 'validated' && ! self::isReadyReport($report)) {
-                $reason = 'model_unavailable';
-            }
             $readiness[$name] = ['ready' => $reason === 'validated', 'reason' => $reason];
         }
 
@@ -118,7 +107,12 @@ final class ModelStore
         $bytes = serialize($artifact);
         $report = $artifact;
         unset($report['patterns'], $report['lead_lag']['models'], $report['knowledge_sha256']);
-        unset($report['human_guidance']['estimator'], $report['candle_guidance']['estimator'], $report['candle_guidance']['knowledge']);
+        unset(
+            $report['human_guidance']['estimator'], $report['human_guidance']['knowledge'],
+            $report['candle_guidance']['estimator'], $report['candle_guidance']['knowledge'],
+            $report['outcome']['human']['estimator'], $report['outcome']['human']['knowledge'],
+            $report['action']['human']['estimator'], $report['action']['human']['knowledge'],
+        );
         $report['patterns'] = $artifact['patterns']['report'];
         try {
             if (! chmod($knowledgePath.'.tmp', 0600) || ! rename($knowledgePath.'.tmp', $knowledgePath)

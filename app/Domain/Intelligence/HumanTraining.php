@@ -23,9 +23,20 @@ final class HumanTraining
 {
     public const VERSION = 'm4.4-human-snapshot-v1';
 
-    public const LABELS = ['super_bull', 'bull', 'hold', 'bear', 'super_bear'];
+    public const LABELS = ['super_bull', 'bull', 'neutral', 'bear', 'super_bear'];
 
     public function __construct(private DatasetStore $datasets, private TickerRepository $tickers, private CandleTimeframe $timeframe) {}
+
+    /** New Outcome Training uses NEUTRAL; legacy HOLD reviews remain readable. */
+    public static function acceptedLabels(): array
+    {
+        return [...self::LABELS, 'hold'];
+    }
+
+    public static function normalizeLabel(?string $label): ?string
+    {
+        return $label === 'hold' ? 'neutral' : $label;
+    }
 
     /**
      * Return the newest eligible semantic dataset for each requested market.

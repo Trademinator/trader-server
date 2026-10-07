@@ -84,7 +84,7 @@ it('freezes only pre-cutoff candles and strips future targets from the review re
     $this->get('/human-training/'.$review->review_id)->assertOk()->assertSee('Future candles are hidden');
     $this->post('/human-training', ['dataset' => $manifest['dataset_id']])->assertRedirect('/human-training/'.$review->review_id);
     $this->assertDatabaseCount('human_training_reviews', 1);
-    $this->put('/human-training/'.$review->review_id, ['label' => 'hold'])->assertRedirect();
+    $this->put('/human-training/'.$review->review_id, ['label' => 'neutral'])->assertRedirect();
     expect(app(HumanTraining::class)->display($review->fresh())['model_observation']['action'])->toBe('buy');
 });
 

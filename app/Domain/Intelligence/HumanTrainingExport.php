@@ -31,7 +31,7 @@ final class HumanTrainingExport
                 throw new RuntimeException('Cannot restrict export permissions.');
             }
             $write(['type' => 'manifest', 'format' => self::FORMAT, 'snapshot_version' => HumanTraining::VERSION,
-                'trend_labels' => HumanTraining::LABELS, 'candle_actions' => CandleTraining::ACTIONS,
+                'outcome_labels' => HumanTraining::LABELS, 'candle_actions' => CandleTraining::ACTIONS,
                 'exported_at' => $cutoff->toIso8601String(), 'financial_values' => 'decimal_strings',
                 'feature_values' => 'normalized_numbers', 'identity' => 'trainer_uuid_only',
                 'objective_labels' => 'separate_research_datasets']);

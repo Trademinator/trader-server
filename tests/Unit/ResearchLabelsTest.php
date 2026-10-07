@@ -20,9 +20,9 @@ it('defines buy sell and hodl with fees and slippage on both sides', function ()
 it('keeps semantic returns explicitly cost free', function () {
     $definition = new SemanticLabels(2, 3, 10, 0.2);
     $past = [
-        ['close' => 100],
-        ['close' => 101],
-        ['close' => 102],
+        ['high' => 101, 'low' => 99, 'close' => 100],
+        ['high' => 102, 'low' => 100, 'close' => 101],
+        ['high' => 103, 'low' => 101, 'close' => 102],
     ];
     $future = [
         ['close' => 100, 'open' => 100],

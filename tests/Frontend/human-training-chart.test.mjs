@@ -19,7 +19,7 @@ test('assessment always tracks the final visible closed candle', () => {
 });
 
 test('saved human labels have their own provenance and marker direction', () => {
-    for (const [label, shape] of [['bull', 'arrowUp'], ['super_bull', 'arrowUp'], ['bear', 'arrowDown'], ['super_bear', 'arrowDown'], ['hold', 'circle']]) {
+    for (const [label, shape] of [['bull', 'arrowUp'], ['super_bull', 'arrowUp'], ['bear', 'arrowDown'], ['super_bear', 'arrowDown'], ['neutral', 'circle']]) {
         const data = trainingChartData({ decision_at_ms: 120000, series: [candle(60)], label });
         assert.equal(data.markers[0].shape, shape);
         assert.equal(data.markers[0].time, 60);

@@ -1,4 +1,4 @@
-<x-layouts.app title="Candle Training">
+<x-layouts.app title="Action Training">
     @include('markets.guide-styles')
     @include('markets.review-styles')
     <style>
@@ -66,8 +66,8 @@
     <section class="pair-guide pair-review">
         <nav><a href="{{ route('human-training.index') }}">← Human training</a></nav>
         <header class="guide-hero">
-            <p class="review-eyebrow">Candle Training · {{ $state['payload']['exchange'] }} · {{ $state['payload']['symbol'] }} · {{ $state['payload']['period'] }}</p>
-            <h1>Candle Training</h1>
+            <p class="review-eyebrow">Action Training · {{ $state['payload']['exchange'] }} · {{ $state['payload']['symbol'] }} · {{ $state['payload']['period'] }}</p>
+            <h1>Action Training</h1>
             <p>Choose a pair, explore its history and label candles directly on the chart. Pan through the chart to load older or newer candles within the selected dataset.</p>
         </header>
         @if(session('status'))<p class="guide-notice" role="status">{{ session('status') }}</p>@endif
@@ -76,7 +76,7 @@
         @if($state['review_required'] ?? false)
             <p class="guide-notice" role="status">This candle has a replacement snapshot after its inputs changed. Your earlier label remains attached to the old snapshot; review this version before submitting a new label.</p>
         @endif
-        <p class="guide-help">Trend Training and Candle Training are optional enhancements. No manual training quota is required for the ordinary model.</p>
+        <p class="guide-help">Outcome Training and Action Training are optional enhancements. No manual training quota is required for the ordinary model.</p>
         <section class="guide-panel" data-candle-training-chart
                  data-replay-url="{{ route('human-training.candles.show', $state['manifest']['dataset_id']) }}"
                  data-history-url="{{ route('human-training.candles.history', $state['manifest']['dataset_id']) }}"
@@ -100,7 +100,7 @@
             @if($state['payload']['gaps'])<p class="guide-notice guide-error">{{ $state['payload']['gaps'] }} gaps in history. Missing candles are not filled.</p>@endif
 
             <h2>Your recorded label milestones for this market and period</h2>
-            <div class="candle-training-stats" aria-label="Candle Training label milestone counts">
+            <div class="candle-training-stats" aria-label="Action Training label milestone counts">
                 @foreach(['buy' => 'BUY', 'hold' => 'HOLD', 'sell' => 'SELL'] as $action => $title)
                     @php
                         $count = $state['label_stats']['counts'][$action];
@@ -170,7 +170,7 @@
                 <p class="guide-help" data-pending-status>No pending changes. Manual labels, deletions and auto-label suggestions stay only in this browser until Submit.</p>
                 <p class="guide-help" data-history-status role="status"></p>
                 <button type="button" class="review-control" data-history-retry hidden>Retry loading candles</button>
-                <p class="guide-help" data-status role="status">Loading the Candle Training chart…</p>
+                <p class="guide-help" data-status role="status">Loading the Action Training chart…</p>
                 <div class="candle-menu" data-candle-menu hidden role="menu" aria-label="Candle action menu">
                     <strong data-menu-title>Selected candle</strong>
                     <div class="candle-menu-actions">
@@ -183,11 +183,11 @@
                 </div>
                 <noscript><p>The interactive chart requires JavaScript. Use JavaScript to display the chart and label candles.</p></noscript>
             </div>
-            <p class="guide-help">Green ▲ = BUY, gray ● = HOLD, red ▼ = SELL. Purple/orange squares are temporary A/B measurement markers. Manual selections and Auto-label suggestions are the same Candle Training labels: neither reaches the database until you press Submit. Human labels are training annotations, not exchange orders or historical fills. The fee comparison uses the published CCXT taker fee when available and excludes spread, slippage, conversions and account-specific discounts. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
+            <p class="guide-help">Green ▲ = BUY, gray ● = HOLD, red ▼ = SELL. Purple/orange squares are temporary A/B measurement markers. Manual selections and Auto-label suggestions are the same Action Training labels: neither reaches the database until you press Submit. Human labels are training annotations, not exchange orders or historical fills. The fee comparison uses the published CCXT taker fee when available and excludes spread, slippage, conversions and account-specific discounts. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
         </section>
 
         <section class="guide-panel">
-            <p class="guide-help"><strong>Unlabelled does not mean HOLD.</strong> Unlabelled means you supplied no human opinion for this candle, so it is excluded from Candle Training. HOLD is an explicit action label and becomes supervised training data. Deleting a label removes it from future builds; an already-published model is immutable until intelligence is rebuilt.</p>
+            <p class="guide-help"><strong>Unlabelled does not mean HOLD.</strong> Unlabelled means you supplied no human opinion for this candle, so it is excluded from Action Training. HOLD is an explicit action label and becomes supervised training data. Deleting a label removes it from future builds; an already-published model is immutable until intelligence is rebuilt.</p>
         </section>
 
         <div class="guide-grid">

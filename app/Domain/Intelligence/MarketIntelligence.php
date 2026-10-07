@@ -26,7 +26,7 @@ final class MarketIntelligence
         private PatternTrainer $patterns,
         private LeadLagIntelligence $leadLag,
         private HumanCandleKnn $candleKnn,
-        private KnnEnsemble $ensemble,
+        private HumanGuidance $humanOutcome,
         private TickerRepository $tickers,
         private SignalFreshness $freshness,
     ) {}
@@ -76,8 +76,9 @@ final class MarketIntelligence
                 $asOfMs = min($asOfMs ?? $latest->microtimestamp, now()->getTimestampMs());
                 $toMs = min($toMs ?? $asOfMs, $asOfMs);
                 $fromMs = max($fromMs ?? 0, KnowledgeWindow::fromMs($asOfMs));
-                $definition = new SemanticLabels(config('intelligence.horizon'), config('intelligence.lookback'),
-                    config('intelligence.minimum_move_bps'), config('intelligence.extreme_fraction'));
+                // H is only a seed here. DatasetSnapshotBuilder replaces it with the
+                // frequency-weighted Action-pivot horizon before labeling rows.
+                $definition = new SemanticLabels(config('intelligence.horizon'), config('intelligence.lookback'));
                 [$manifest, $schemaSelection] = $this->snapshotWithSchemaPolicy($exchange, $symbol, $period,
                     $definition, $schema, (int) $fromMs, $toMs, $asOfMs, $featureLockOwner, $fallback, $deadline);
                 $dataset = $manifest['dataset_id'];
@@ -198,56 +199,120 @@ final class MarketIntelligence
         $currentCandle = $tickers[(int) $current->microtimestamp];
         $context['reference_price'] = (string) $currentCandle['close'];
         $context['reference_price_source'] = 'closed_candle_close';
-        $automatic = $this->automaticPrediction($model, $current->payload, $history, $current->available_at_ms, $context);
-        $human = $this->candleKnn->predict($model['candle_guidance'], $current->payload, $current->available_at_ms);
-        $result = $this->ensemble->combine($automatic, $human, $model['ensemble']);
-        $result['scoring']['components']['automatic']['input_keys'] = [...$model['keys'], ...$model['pattern_keys'], ...($model['lead_lag_keys'] ?? [])];
-        $result['scoring']['components']['automatic']['schema'] = $model['automatic']['schema'] ?? null;
-        $result['scoring']['components']['automatic']['schema_selection'] = $model['automatic']['schema_selection'] ?? null;
-        $result['scoring']['components']['automatic']['context_keys'] = array_values(array_diff($model['keys'], FeatureEngine::KEYS));
-        $result['scoring']['components']['human_candle']['input_keys'] = $model['candle_guidance']['input_keys'] ?? [];
-        $context['candle_guidance'] = ['status' => $model['candle_guidance']['status'], 'mode' => 'independent_knn',
-            'action_shares' => $result['scoring']['components']['human_candle']['scores']];
 
-        if ($result['reason'] === 'supported' && $result['action'] !== 'hodl') {
-            $thresholds = $model['regime_settings'] ?? ['super_confidence' => 0.8, 'super_effective_neighbors' => 6.0];
-            $super = $result['confidence'] >= $thresholds['super_confidence']
-                && $thresholds['super_effective_neighbors'] <= $result['effective_neighbors'] + 1e-9;
-            $context['regime'] = ($super ? 'super_' : '').($result['action'] === 'buy' ? 'bull' : 'bear');
+        $prepared = $this->predictionVector($model, $current->payload, $history, $current->available_at_ms, $context);
+        $preparedError = $prepared['error'] ?? null;
+
+        $settings = $model['settings'];
+        $sourceFusion = new TrainingSourceFusion((float) $settings['min_confidence']);
+        $neighborKnn = new WeightedKnn(
+            $settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']
+        );
+
+        $outcomeAlgorithmic = OutcomeKnn::abstain(
+            $preparedError ?? ($model['outcome']['algorithmic']['reason'] ?? 'outcome_model_unavailable')
+        );
+        $outcomeK = $model['outcome']['algorithmic']['k'] ?? null;
+        if ($preparedError === null && ($model['outcome']['algorithmic']['status'] ?? null) === 'ready'
+            && is_int($outcomeK) && $outcomeK > 0) {
+            $neighbors = $neighborKnn->neighborsIterable(
+                $this->models->knowledge($model), $prepared['vector'], $outcomeK,
+                $current->available_at_ms, $prepared['weights']
+            );
+            $outcomeAlgorithmic = (new OutcomeKnn($settings))->vote($neighbors, $outcomeK);
         }
+        $outcomeHuman = $this->humanOutcome->predict(
+            $model['outcome']['human'] ?? [], $current->payload, $current->available_at_ms
+        );
+        $outcome = $sourceFusion->combine(
+            $outcomeAlgorithmic, $outcomeHuman, SemanticLabels::OUTCOMES, 'outcome',
+            (int) ($model['outcome']['human']['samples'] ?? 0)
+        );
 
-        return [...$result, ...$context, 'k' => $model['k']];
+        $actionAlgorithmic = WeightedKnn::abstain(
+            $preparedError ?? ($model['action']['algorithmic']['reason'] ?? 'action_model_unavailable')
+        );
+        $actionK = $model['action']['algorithmic']['k'] ?? null;
+        if ($preparedError === null && ($model['action']['algorithmic']['status'] ?? null) === 'ready'
+            && is_int($actionK) && $actionK > 0) {
+            $actionAlgorithmic = $neighborKnn->predictIterable(
+                $this->actionKnowledge($this->models->knowledge($model)), $prepared['vector'], $actionK,
+                $current->available_at_ms, $prepared['weights']
+            );
+        }
+        $actionHuman = $this->candleKnn->predict(
+            $model['action']['human'] ?? [], $current->payload, $current->available_at_ms
+        );
+        $action = $sourceFusion->combine(
+            $actionAlgorithmic, $actionHuman, ['buy', 'hodl', 'sell'], 'action',
+            (int) ($model['action']['human']['samples'] ?? 0)
+        );
+
+        $decision = SignalDecisionMatrix::resolve($action, $outcome);
+        $context['regime'] = $outcome['reason'] === 'supported' ? $outcome['outcome'] : 'neutral';
+        $context['outcome_knn'] = $outcome;
+        $context['action_knn'] = $action;
+
+        return [
+            'action' => $decision['action'],
+            'confidence' => $decision['confidence'],
+            'reason' => $decision['reason'],
+            'neighbors' => $decision['neighbors'],
+            'effective_neighbors' => $decision['effective_neighbors'],
+            'similarity' => $decision['similarity'],
+            'votes' => $action['votes'],
+            'scoring' => [
+                'version' => 'outcome-action-matrix-v2',
+                'decision_mode' => $decision['mode'],
+                'outcome' => $outcome,
+                'action' => $action,
+                'resolved_action' => $decision['action'] === 'hodl' ? 'hold' : $decision['action'],
+            ],
+            ...$context,
+            'k' => $outcomeK,
+            'action_k' => $actionK,
+        ];
     }
 
-    private function automaticPrediction(array $model, array $payload, array $history, int $decisionAt, array &$context): array
+    /** @return array{vector?: array, weights?: array, error?: string} */
+    private function predictionVector(array $model, array $payload, array $history, int $decisionAt, array &$context): array
     {
         $vector = FeatureSchema::vector($payload, $model['keys']);
         if ($vector === null) {
-            return WeightedKnn::abstain('missing_selected_features');
+            return ['error' => 'missing_selected_features'];
         }
         $vector = NormalizedVector::from($vector, $model['keys']);
         $context['patterns_evaluated'] = true;
-        $context['patterns'] = $this->patterns->predict($model['patterns'], $vector,
-            $this->catalog->candidates($history, $model['period']), $decisionAt);
-        if ($model['automatic']['status'] !== 'ready') {
-            return WeightedKnn::abstain($model['automatic']['reason']);
-        }
+        $context['patterns'] = $this->patterns->predict(
+            $model['patterns'], $vector, $this->catalog->candidates($history, $model['period']), $decisionAt
+        );
         if ($model['pattern_keys'] !== []) {
             $vector = [...$vector, ...$this->patterns->features($model['patterns'], $context['patterns'])];
         }
+
         $weights = [];
         if (($model['lead_lag_keys'] ?? []) !== []) {
             if (($model['lead_lag']['version'] ?? null) !== LeadLagTrainer::VERSION) {
-                return WeightedKnn::abstain('model_version_mismatch');
+                return ['error' => 'model_version_mismatch'];
             }
             $leadLag = $this->leadLag->current($model['lead_lag'], $decisionAt);
             $weights = [...array_fill(0, count($vector), 1.0), ...$leadLag['weights']];
             $vector = [...$vector, ...$leadLag['vector']];
             $context['lead_lag'] = $leadLag['signals'];
         }
-        $settings = $model['settings'];
-        $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
 
-        return $knn->predictIterable($this->models->knowledge($model), $vector, $model['k'], $decisionAt, $weights);
+        return compact('vector', 'weights');
     }
+
+    private function actionKnowledge(iterable $rows): iterable
+    {
+        foreach ($rows as $row) {
+            if (! in_array($row['action_label'] ?? null, ['buy', 'hodl', 'sell'], true)) {
+                continue;
+            }
+            $row['label'] = $row['action_label'];
+            yield $row;
+        }
+    }
+
 }

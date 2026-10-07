@@ -19,3 +19,12 @@ it('describes ensemble evidence without claiming an objective future outcome for
         ->and(SignalSemantics::actionMeaning('hodl', 'supported', $scoring))->toBeNull()
         ->and(SignalSemantics::actionMeaning('buy', 'weak_model_consensus', $scoring))->toBeNull();
 });
+
+
+it('describes Outcome Action matrix signals and degraded Action-only sells', function () {
+    $matrix = ['version' => 'outcome-action-matrix-v2'];
+    expect(SignalSemantics::actionMeaning('buy','supported',$matrix))->toBe('supported_buy_by_outcome_action_matrix')
+        ->and(SignalSemantics::actionMeaning('sell','supported',$matrix))->toBe('supported_sell_by_outcome_action_matrix')
+        ->and(SignalSemantics::actionMeaning('sell','degraded_action_only',$matrix))->toBe('degraded_sell_by_action_knn_without_outcome_confirmation')
+        ->and(SignalSemantics::actionMeaning('buy','degraded_action_only',$matrix))->toBeNull();
+});

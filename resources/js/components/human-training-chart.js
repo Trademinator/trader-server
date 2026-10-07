@@ -8,7 +8,7 @@ export function trainingChartData(snapshot) {
     const last = series.at(-1);
     const buy = ['bull', 'super_bull'].includes(label);
     const sell = ['bear', 'super_bear'].includes(label);
-    const markers = last && (buy || sell || label === 'hold') ? [{
+    const markers = last && (buy || sell || ['neutral', 'hold'].includes(label)) ? [{
         time: last.time, position: buy ? 'belowBar' : 'aboveBar',
         color: buy ? '#087b6b' : sell ? '#c33e50' : '#64748b',
         shape: buy ? 'arrowUp' : sell ? 'arrowDown' : 'circle',

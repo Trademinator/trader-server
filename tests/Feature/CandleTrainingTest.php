@@ -47,12 +47,12 @@ function candleTrainingDataset(string $open = '11', string $close = '10', int $c
     return $manifest;
 }
 
-it('shows Candle Training separately from Trend Training', function () {
+it('shows Action Training separately from Outcome Training', function () {
     $user = User::factory()->create();
     config(['operations.owner_uuid' => $user->user_id]);
 
     $this->actingAs($user)->get('/human-training')->assertOk()
-        ->assertSee('Trend Training')->assertSee('Candle Training')
+        ->assertSee('Outcome Training')->assertSee('Action Training')
         ->assertSee('Unlabelled candles mean no human opinion');
 });
 

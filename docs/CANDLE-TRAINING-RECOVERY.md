@@ -1,7 +1,7 @@
-# Candle Training: frozen-history recovery guidance
+# Action Training: frozen-history recovery guidance
 
 A frozen dataset is not silently rewritten when the canonical source history
-changes or is no longer available. Candle Training continues to reject a
+changes or is no longer available. Action Training continues to reject a
 snapshot mismatch with HTTP 422 and the original validation field.
 
 The response now distinguishes the configured server owner (including

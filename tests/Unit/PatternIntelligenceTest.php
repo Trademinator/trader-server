@@ -52,15 +52,15 @@ it('calibrates probabilities monotonically with tied scores and reports proper s
     expect($metrics['calibration_error'])->toBe(0.25);
 });
 
-it('labels bottoms and tops by public price reversals without trading costs', function () {
+it('labels forward Outcome slope classes without trading costs', function () {
     $labels = new SemanticLabels(2, 2, 10);
     $bottom = [patternBar(0, 11, 10, 11, 10), patternBar(60000, 10, 8, 10, 8)];
     $future = [$bottom[1], patternBar(120000, 9, 9, 9, 9), patternBar(180000, 9, 10, 10, 9)];
 
-    expect($labels->label($bottom, $future)['action'])->toBe('buy');
+    expect($labels->label($bottom, $future)['action'])->toBe('super_bull');
     expect($labels->metadata()['fee_bps'])->toBe(0);
     $future[2]['close'] = 7;
-    expect($labels->label($bottom, $future)['action'])->toBe('hodl');
+    expect($labels->label($bottom, $future)['action'])->toBe('bear');
 });
 
 it('compares real Rubix classifiers on purged chronological calibration and evaluation blocks', function () {

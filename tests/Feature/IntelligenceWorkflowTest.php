@@ -43,8 +43,8 @@ it('freezes semantic labels and pattern outcomes only after their genuine candle
     expect($manifest['label_definition']['fee_bps'])->toBe(0);
     expect($manifest['label_definition']['cost_model'])->toBe('none');
     expect($manifest['label_definition']['version'])->toBe(SemanticLabels::VERSION);
-    expect($manifest['label_counts']['buy'])->toBeGreaterThan(0);
-    expect($manifest['label_counts']['sell'])->toBeGreaterThan(0);
+    expect(($manifest['label_counts']['bull'] ?? 0) + ($manifest['label_counts']['super_bull'] ?? 0))->toBeGreaterThan(0);
+    expect(($manifest['label_counts']['bear'] ?? 0) + ($manifest['label_counts']['super_bear'] ?? 0))->toBeGreaterThan(0);
     foreach ($rows as $row) {
         expect($row['label_available_at_ms'])->toBeLessThanOrEqual($cutoff)
             ->and($row)->toHaveKeys(['gross_return', 'buy_price_return', 'sell_base_price_return'])
@@ -64,7 +64,7 @@ it('publishes a validated model with separate chronological tuning and untouched
     $artifact = app(ModelStore::class)->current('kraken', 'BTC/USD', '1m');
 
     expect($artifact['status'])->toBe('ready');
-    expect($artifact['holdout']['semantic_precision'])->toBe(1);
+    expect($artifact['holdout']['macro_f1'])->toBeGreaterThanOrEqual(0.55);
     expect($artifact['holdout_training_labels_available_by_ms'])->toBeLessThan($artifact['holdout_from_ms']);
     expect($artifact['knowledge_rows'])->toBe(240);
     $this->assertDatabaseCount('intelligence_models', 1);
@@ -73,7 +73,7 @@ it('publishes a validated model with separate chronological tuning and untouched
     expect(app(ModelStore::class)->report($artifact['model_id']))->not->toHaveKey('knowledge');
 });
 
-it('stores automatic KNN knowledge separately and streams it for prediction', function () {
+it('stores shared Outcome and Action KNN knowledge separately and streams it for prediction', function () {
     $this->travelTo('2024-01-01 04:05:00 UTC');
     $manifest = IntelligenceFixtures::snapshot();
     $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
@@ -113,7 +113,7 @@ it('keeps final holdout targets out of K selection', function () {
     foreach ($lines as $i => &$line) {
         if ($i >= 192) {
             $row = json_decode($line, true);
-            $row['label'] = 'hodl';
+            $row['label'] = 'neutral';
             $line = json_encode($row)."\n";
         }
     }
@@ -128,7 +128,7 @@ it('keeps final holdout targets out of K selection', function () {
 
     expect($second['selection'])->toBe($first['selection']);
     expect($second['status'])->toBe('abstaining');
-    expect($second['reason'])->toBe('holdout_failed');
+    expect($second['reason'])->toBe('outcome_knn_unavailable');
 });
 
 it('predicts from closed features while ignoring an open candle and abstains when data becomes stale', function () {
@@ -149,7 +149,7 @@ it('predicts from closed features while ignoring an open candle and abstains whe
     expect(app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m')['reason'])->toBe('stale_features');
 });
 
-it('publishes an abstaining model when no semantically valid K exists', function () {
+it('publishes an abstaining model when no predictively valid Outcome K exists', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     $manifest = IntelligenceFixtures::snapshot(240, true);
 
@@ -157,7 +157,7 @@ it('publishes an abstaining model when no semantically valid K exists', function
 
     expect($report['status'])->toBe('abstaining');
     expect($report['k'])->toBeNull();
-    expect($report['reason'])->toBe('no_eligible_k');
+    expect($report['reason'])->toBe('outcome_knn_unavailable');
 });
 
 it('fails safely on corrupted artifacts and rejects model path traversal', function () {
@@ -227,7 +227,7 @@ it('returns zero confidence without any model and rejects mismatched frozen mark
     $this->assertDatabaseCount('intelligence_models', 0);
 });
 
-it('stacks validated pattern probabilities only when they improve the automatic target', function () {
+it('stacks validated pattern probabilities only when they improve the Outcome target', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     config(['intelligence.patterns.enabled' => true, 'intelligence.patterns.min_samples' => 30,
         'intelligence.patterns.min_block_rows' => 5, 'intelligence.patterns.trees' => 5]);
@@ -238,11 +238,11 @@ it('stacks validated pattern probabilities only when they improve the automatic 
     $artifact = app(ModelStore::class)->current('kraken', 'BTC/USD', '1m');
 
     expect($artifact['patterns']['models'])->toHaveKey('bullish_engulfing');
-    expect($artifact['automatic']['pattern_ablation']['candidate_pattern_keys'])
+    expect($artifact['outcome']['pattern_ablation']['candidate_pattern_keys'])
         ->toBe(['pattern.bullish_engulfing.probability', 'pattern.bullish_engulfing.present']);
-    expect($artifact['automatic']['pattern_ablation']['selection_basis'])
+    expect($artifact['outcome']['pattern_ablation']['selection_basis'])
         ->toBe('same_k_same_walk_forward_rows_final_holdout_untouched');
-    expect($artifact['automatic']['pattern_ablation']['selected'])->toBe('technical_only');
+    expect($artifact['outcome']['pattern_ablation']['selected'])->toBe('technical_only');
     expect($artifact['pattern_keys'])->toBe([]);
     foreach ($artifact['knowledge'] as $row) {
         expect($row['vector'])->toHaveCount(1);
@@ -277,7 +277,7 @@ it('requires rebuilding models from the retired maximum-supply feature version',
     expect($signal['confidence'])->toBe(0.0);
 });
 
-it('describes supported direction and stronger evidence as Bull Bear or Super states', function (float $body, string $regime) {
+it('reports the five-class Outcome KNN state directly', function (float $body, string $regime) {
     $this->travelTo('2024-01-01 04:05:00 UTC');
     config(['intelligence.knn.min_effective_neighbors' => 6.0]);
     $manifest = IntelligenceFixtures::snapshot();
@@ -289,7 +289,7 @@ it('describes supported direction and stronger evidence as Bull Bear or Super st
 
     expect($signal['reason'])->toBe('supported');
     expect($signal['regime'])->toBe($regime);
-})->with([[0.0, 'super_bull'], [1.0, 'super_bear'], [0.21, 'bull'], [0.79, 'bear']]);
+})->with([[0.0, 'bull'], [1.0, 'bear'], [0.21, 'bull'], [0.79, 'bear']]);
 
 it('rejects a missing training dataset file before publishing a model', function () {
     $manifest = IntelligenceFixtures::snapshot(40);

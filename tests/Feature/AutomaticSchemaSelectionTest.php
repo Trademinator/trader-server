@@ -25,7 +25,7 @@ afterEach(function () {
     File::deleteDirectory(dirname(config('research.path')));
 });
 
-/** Flat prices deliberately provide no useful BUY/SELL target; eligibility is not readiness. */
+/** Oscillating source prices provide Action pivots; feature availability, not model quality, is under test. */
 function automaticSchemaHistory(int $fullFrom = 150, int $count = 160): int
 {
     $start = IntelligenceFixtures::START;
@@ -38,12 +38,17 @@ function automaticSchemaHistory(int $fullFrom = 150, int $count = 160): int
                 $features[$key] = null;
             }
         }
+        $phase = $i % 20;
+        $close = $phase <= 10 ? 100 + 2 * $phase : 100 + 2 * (20 - $phase);
+        $previousPhase = ($i + 19) % 20;
+        $open = $previousPhase <= 10 ? 100 + 2 * $previousPhase : 100 + 2 * (20 - $previousPhase);
         MarketFeature::query()->forceCreate(['feature_id' => (string) Str::uuid7(), 'exchange' => 'kraken',
             'symbol' => 'BTC/USD', 'period' => '1m', 'microtimestamp' => $at, 'available_at_ms' => $at + 60000,
             'version' => FeatureEngine::VERSION, 'payload' => ['version' => FeatureEngine::VERSION,
-                'microtimestamp' => $at, 'available_at_ms' => $at + 60000, 'close' => 10.0, 'features' => $features]]);
+                'microtimestamp' => $at, 'available_at_ms' => $at + 60000, 'close' => $close, 'features' => $features]]);
         Ticker::query()->create(['exchange' => 'kraken', 'symbol' => 'BTC/USD', 'period' => '1m', 'microtimestamp' => $at,
-            'payload' => json_encode(['open' => '10', 'high' => '11', 'low' => '9', 'close' => '10', 'volume' => '1'])]);
+            'payload' => json_encode(['open' => (string) $open, 'high' => (string) (max($open, $close) + 0.2),
+                'low' => (string) (min($open, $close) - 0.2), 'close' => (string) $close, 'volume' => '1'])]);
     }
 
     return $start + $count * 60000;
@@ -120,10 +125,10 @@ it('applies the opt-in policy before building a single immutable dataset and doe
         '--schema' => 'full', '--context-fallback' => 'technical'])->assertSuccessful();
 
     $model = app(ModelStore::class)->current('kraken', 'BTC/USD', '1m');
-    expect($model['automatic']['schema'])->toBe('technical');
+    expect($model['outcome']['schema'])->toBe('technical');
     expect($model['keys'])->toBe(FeatureEngine::KEYS);
-    expect($model['automatic']['schema_selection']['requested_schema'])->toBe('full');
-    expect($model['automatic']['status'])->toBe('abstaining');
+    expect($model['outcome']['schema_selection']['requested_schema'])->toBe('full');
+    expect($model['outcome']['status'])->toBe('abstaining');
     expect($model['settings']['min_semantic_precision'])->toBe(0.55);
     expect($model['settings']['max_contradiction_rate'])->toBe(0.05);
     $this->assertDatabaseCount('research_datasets', 1);
@@ -136,9 +141,9 @@ it('never retries a technically sufficient full build after K selection fails', 
 
     $report = app(MarketIntelligence::class)->build('kraken', 'BTC/USD', '1m', schema: 'full', contextFallback: 'technical');
 
-    expect($report['automatic']['schema'])->toBe('full');
-    expect($report['automatic']['reason'])->toBe('no_eligible_k');
-    expect($report['automatic']['history_status'])->toBe('tuning_evaluated');
+    expect($report['outcome']['schema'])->toBe('full');
+    expect($report['outcome']['reason'])->toBe('no_eligible_k');
+    expect($report['outcome']['history_status'])->toBe('tuning_evaluated');
     $this->assertDatabaseCount('intelligence_models', 1);
     $this->assertDatabaseCount('research_datasets', 1);
 });
@@ -146,15 +151,14 @@ it('never retries a technically sufficient full build after K selection fails', 
 it('keeps strict full behavior by default and supports an explicit override of configuration', function () {
     $this->travelTo('2024-01-01 04:00:00 UTC');
     automaticSchemaHistory();
-    $strict = app(MarketIntelligence::class)->build('kraken', 'BTC/USD', '1m', schema: 'full');
+    expect(fn () => app(MarketIntelligence::class)->build('kraken', 'BTC/USD', '1m', schema: 'full'))
+        ->toThrow(RuntimeException::class, 'No eligible labelled rows');
     config(['intelligence.context_fallback' => 'technical']);
     $configured = app(MarketIntelligence::class)->build('kraken', 'BTC/USD', '1m', schema: 'full');
-    $explicit = app(MarketIntelligence::class)->build('kraken', 'BTC/USD', '1m', schema: 'full', contextFallback: 'none');
+    expect(fn () => app(MarketIntelligence::class)->build('kraken', 'BTC/USD', '1m', schema: 'full', contextFallback: 'none'))
+        ->toThrow(RuntimeException::class, 'No eligible labelled rows');
 
-    expect($strict['automatic']['schema'])->toBe('full');
-    expect($strict['automatic']['history_status'])->toBe('insufficient_tuning_history');
-    expect($configured['automatic']['schema'])->toBe('technical');
-    expect($explicit['automatic']['schema'])->toBe('full');
+    expect($configured['outcome']['schema'])->toBe('technical');
 });
 
 it('does not reselect an explicitly frozen dataset when fallback is configured', function () {
@@ -165,7 +169,7 @@ it('does not reselect an explicitly frozen dataset when fallback is configured',
     $report = app(MarketIntelligence::class)->build('kraken', 'BTC/USD', '1m', dataset: $manifest['dataset_id']);
 
     expect($report['dataset_id'])->toBe($manifest['dataset_id']);
-    expect($report['automatic']['schema_selection']['reason'])->toBe('frozen_dataset');
+    expect($report['outcome']['schema_selection']['reason'])->toBe('frozen_dataset');
     $this->assertDatabaseCount('research_datasets', 1);
 });
 
@@ -174,13 +178,13 @@ it('distinguishes opted-in generation results and remains idempotent on redelive
     automaticSchemaHistory();
     $builder = app(MarketIntelligence::class);
     $generation = hash('sha256', 'same-week');
-    $strict = $builder->build('kraken', 'BTC/USD', '1m', schema: 'full', generation: $generation);
+    expect(fn () => $builder->build('kraken', 'BTC/USD', '1m', schema: 'full', generation: $generation))
+        ->toThrow(RuntimeException::class, 'No eligible labelled rows');
     $fallback = $builder->build('kraken', 'BTC/USD', '1m', schema: 'full', generation: $generation, contextFallback: 'technical');
     $repeat = $builder->build('kraken', 'BTC/USD', '1m', schema: 'full', generation: $generation, contextFallback: 'technical');
 
-    expect($fallback['model_id'])->not->toBe($strict['model_id']);
     expect($repeat['model_id'])->toBe($fallback['model_id']);
-    $this->assertDatabaseCount('intelligence_models', 2);
+    $this->assertDatabaseCount('intelligence_models', 1);
 });
 
 it('shares the feature lock and never releases the caller-owned lock', function () {
@@ -194,7 +198,7 @@ it('shares the feature lock and never releases the caller-owned lock', function 
         expect($lock->isOwnedByCurrentProcess())->toBeTrue();
         $report = app(MarketIntelligence::class)->build('kraken', 'BTC/USD', '1m', schema: 'full',
             featureLockOwner: $lock->owner(), contextFallback: 'technical');
-        expect($report['automatic']['schema'])->toBe('technical');
+        expect($report['outcome']['schema'])->toBe('technical');
         expect($lock->isOwnedByCurrentProcess())->toBeTrue();
     } finally {
         $lock->release();

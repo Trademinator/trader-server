@@ -1,17 +1,17 @@
-# Human candle annotation reuse after feature upgrades
+# Human Action Training annotation reuse after feature upgrades
 
 ## Scope
 
-This repair was prepared against deployed revision `31c3c42a3db956f987a665a577412e49b2678bb7`. It addresses Human Candle KNN reporting zero eligible samples when recorded annotations refer to older feature versions or core-schema datasets while the current model uses a full schema.
+This repair was prepared against deployed revision `31c3c42a3db956f987a665a577412e49b2678bb7`. It addresses Action KNN reporting zero eligible samples when recorded annotations refer to older feature versions or core-schema datasets while the current model uses a full schema.
 
-No database migration, annotation rewrite, SQL relabeling, feature-version forgery, or automatic validation override is required. Original snapshot IDs, checksums, chart payloads, trainer identities, actions and annotation timestamps remain unchanged. The patch does not alter automatic KNN coverage, trading risk settings, validation thresholds, class-prior selection, holdout purging or the established newest-compatible-snapshot deduplication policy.
+No database migration, annotation rewrite, SQL relabeling, feature-version forgery, or automatic validation override is required. Original snapshot IDs, checksums, chart payloads, trainer identities, actions and annotation timestamps remain unchanged. The patch does not alter Outcome KNN coverage, trading risk settings, validation thresholds, class-prior selection, holdout purging or the established newest-compatible-snapshot deduplication policy.
 
 ## Training behavior
 
 1. Count recorded labels and distinct candles separately. Apply the snapshot-version, history-window, authorization and annotation-cutoff filters with explicit counts.
 2. Verify each original dataset manifest and complete row checksum using the disk-backed dataset index. Check every candidate snapshot's checksum and its original market, time, schema, vector, feature checksum and horizon against its frozen row. Source corruption fails loudly.
 3. For provenance-bearing annotations, verify the original reviewed OHLCV chart against canonical history, including missing or newly inserted bars. Decimal formatting differences alone are accepted; real decimal differences are not rounded away. A longer original chart remains protected when the configured chart window shrinks.
-4. Read the current technical feature vector for that same candle, not the obsolete vector embedded in the original annotation. Missing selected inputs and evidence unavailable at the decision are exclusions. The human loader does not require the candle to appear in the automatic full-schema dataset or have CoinGecko context.
+4. Read the current technical feature vector for that same candle, not the obsolete vector embedded in the original annotation. Missing selected inputs and evidence unavailable at the decision are exclusions. The human loader does not require the candle to appear in the algorithmic full-schema dataset or have CoinGecko context.
 5. Keep one compatible opinion per candle, then run the existing chronological human KNN tuning and final holdout. Private human knowledge retains original annotation provenance plus the current feature/chart digests used in this build. These per-row details are not included in the public model report.
 
 This remains retrospective chronological research: the original historical annotation/maturity timestamps and the post-annotation inference gate are preserved. Re-derived causal inputs are not a claim that this model existed, or could have traded, at the original historical time.
@@ -79,9 +79,9 @@ sudo -u apache php -d memory_limit=512M artisan \
   trademinator:knn-build bitso 'ATOM/USD' 15m --schema=full
 ```
 
-The output includes a new `model_id`, `candle_guidance.samples`, `candle_guidance.class_counts`, `candle_guidance.annotation_diagnostics`, and the human validation result. The web intelligence page displays the saved eligibility details after the new model is published.
+The output includes a new `model_id`, `action.human.samples`, `action.human.class_counts`, `action.human.annotation_diagnostics`, and the human validation result. The web intelligence page displays the saved eligibility details after the new model is published.
 
-Enough samples do not guarantee validation: `tuning_failed`, `holdout_failed` or another abstention can be a legitimate next result. This patch does not lower the validation gates to make the market ready. Automatic KNN can independently remain unavailable while a human model is evaluated. A command's successful exit is not a claim that a model validated.
+Enough samples do not guarantee validation: `tuning_failed`, `holdout_failed` or another abstention can be a legitimate next result. This patch does not lower the validation gates to make the market ready. Outcome KNN can independently remain unavailable while a human model is evaluated. A command's successful exit is not a claim that a model validated.
 
 To inspect the resulting artifact, replace `MODEL_UUID` with the ID printed by the build:
 

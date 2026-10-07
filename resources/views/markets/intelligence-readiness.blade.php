@@ -1,7 +1,7 @@
 <section class="guide-panel">
     <h2>What is missing?</h2>
     <x-knn-readiness :report="$report" :coingecko="$coingecko" />
-    <p class="guide-help">Green: automatic KNN. Blue: Human Candle KNN. Yellow: fresh, complete CoinGecko context for this market. A KNN check means the model is current, validated and enabled for scoring; it can still abstain on an individual candle. Human Candle training is optional. Human Trend is excluded from scoring.</p>
+    <p class="guide-help">Green: Outcome KNN. Blue: Action KNN. Yellow: fresh, complete CoinGecko context for this market. A KNN check means the model is current, validated and enabled for scoring; it can still abstain on an individual candle. Human Training is optional. Human Outcome Training contributes to Outcome KNN and Human Action Training contributes to Action KNN using the dynamic human-training weight.</p>
     @can('manage-server')
         <p><a class="review-control" href="{{ route('owner.history-recovery.show', $item->market) }}">Repair history and rebuild</a></p>
     @endcan

@@ -24,73 +24,44 @@
             @if (isset($signal['decision_at_ms']))
                 <p>Closed-candle decision time: <x-display-time :value="$signal['decision_at_ms']" unit="milliseconds" /></p>
             @endif
-            <p class="guide-help">Confidence describes weighted historical agreement and similarity. It is not a calibrated probability of profit. Bull / Bear follow supported directional signals; Super also requires at least 80% confidence and six effective neighbors. The client applies trading fees, balances and execution rules.</p>
+            <p class="guide-help">Confidence describes the supported Outcome and Action KNN evidence; it is not a calibrated probability of profit. Market state is the Outcome KNN class over the market-derived horizon. The client still applies trading fees, balances and execution rules.</p>
             @if ($progress['evidence_evaluated'])
                 <x-intelligence-progress label="Effective neighbors required" :value="$signal['effective_neighbors']" :target="$progress['settings']['min_effective_neighbors']" :decimals="1" />
-                <x-intelligence-progress label="Weighted agreement × similarity required" :value="max($signal['votes']) * $signal['similarity'] * 100" :target="($report['ensemble']['min_confidence'] ?? $progress['settings']['min_confidence']) * 100" :decimals="1" suffix="%" />
+                <x-intelligence-progress label="Final KNN confidence required" :value="$signal['confidence'] * 100" :target="$progress['settings']['min_confidence'] * 100" :decimals="1" suffix="%" />
                 <p class="guide-help">These evidence meters can rise or fall with each market state. They are not training progress. Published confidence remains zero while the model abstains.</p>
             @endif
         </section>
         @include('markets.intelligence-readiness')
         @include('markets.intelligence-lead-lag')
-        @if(isset($report['ensemble']))
-            <section class="guide-panel"><h2>Two-KNN scoring</h2>
+        @if($report)
+            <section class="guide-panel"><h2>Outcome + Action scoring</h2>
                 <x-knn-readiness :report="$report" :coingecko="$coingecko" />
-                <p>The automatic model learns future outcomes. Human Candle learns submitted BUY, HOLD and SELL annotations using the same selected technical features, without CoinGecko context.</p>
-                @if(isset($signal['scoring']))
+                <p><strong>Outcome KNN</strong> predicts SUPER BEAR, BEAR, NEUTRAL, BULL or SUPER BULL over the market-derived horizon. <strong>Action KNN</strong> predicts BUY, HOLD or SELL. Human Training adjusts each KNN independently and never replaces its algorithmic training.</p>
+                @if(isset($signal['outcome_knn'], $signal['action_knn']))
                     <div class="review-table-wrap"><table>
-                        <thead><tr><th scope="col">Model</th><th scope="col">Action</th><th scope="col">BUY / HOLD / SELL scores</th><th scope="col">Configured weight</th><th scope="col">Effective weight</th><th scope="col">Evidence</th></tr></thead>
+                        <thead><tr><th scope="col">KNN</th><th scope="col">Prediction</th><th scope="col">Confidence</th><th scope="col">Algorithmic weight</th><th scope="col">Human weight</th></tr></thead>
                         <tbody>
-                        @foreach(['automatic' => 'Automatic KNN', 'human_candle' => 'Human Candle KNN'] as $key => $label)
-                            @php
-                                $component = $signal['scoring']['components'][$key];
-                            @endphp
-                            <tr><th scope="row">{{ $label }}</th><td>{{ $component['reason'] === 'supported' ? strtoupper($component['action']) : 'Abstaining' }}</td>
-                                <td>{{ implode(' / ', array_map(fn ($score) => \App\Helpers\Decimal::format($score * 100, 1).'%', $component['scores'])) }}</td>
-                                <td>{{ \App\Helpers\Decimal::format($signal['scoring']['configured_weights'][$key], 2) }}</td>
-                                <td>{{ \App\Helpers\Decimal::format($signal['scoring']['effective_weights'][$key] * 100, 1) }}%</td>
-                                <td>{{ str_replace('_', ' ', $component['reason']) }}</td></tr>
-                        @endforeach
+                            @foreach(['outcome_knn' => 'Outcome KNN', 'action_knn' => 'Action KNN'] as $key => $label)
+                                @php $component = $signal[$key]; @endphp
+                                <tr>
+                                    <th scope="row">{{ $label }}</th>
+                                    <td>{{ strtoupper(str_replace('_', ' ', $component[$key === 'outcome_knn' ? 'outcome' : 'action'])) }}</td>
+                                    <td>{{ \App\Helpers\Decimal::format($component['confidence'] * 100, 1) }}%</td>
+                                    <td>{{ \App\Helpers\Decimal::format(($component['sources']['effective_weights']['algorithmic'] ?? 0) * 100, 1) }}%</td>
+                                    <td>{{ \App\Helpers\Decimal::format(($component['sources']['effective_weights']['human'] ?? 0) * 100, 1) }}%</td>
+                                </tr>
+                            @endforeach
                         </tbody>
                     </table></div>
+                    <p>Decision matrix result: <strong>{{ strtoupper($signal['action'] === 'hodl' ? 'hold' : $signal['action']) }}</strong>.</p>
                 @endif
-                @if(isset($report['automatic']['schema_selection']))
-                    <p>Automatic input schema: <strong>{{ $report['automatic']['schema_selection']['effective_schema'] }}</strong>
-                        (requested: {{ $report['automatic']['schema_selection']['requested_schema'] }}).
-                        {{ ucwords(str_replace('_', ' ', $report['automatic']['schema_selection']['reason'])) }}.
-                        @if(($report['automatic']['history_status'] ?? null) === 'insufficient_tuning_history')
-                            No tuning folds: insufficient eligible automatic history.
-                        @endif
-                    </p>
+                @if(isset($report['outcome']['schema_selection']))
+                    <p>Outcome input schema: <strong>{{ $report['outcome']['schema_selection']['effective_schema'] }}</strong>
+                        (requested: {{ $report['outcome']['schema_selection']['requested_schema'] }}).
+                        {{ ucwords(str_replace('_', ' ', $report['outcome']['schema_selection']['reason'])) }}.</p>
                 @endif
-                <p>{{ \App\Helpers\Decimal::format($report['candle_guidance']['samples'] ?? 0) }} eligible annotated candles · {{ str_replace('_', ' ', $report['candle_guidance']['status']) }}</p>
-                @if(isset($report['candle_guidance']['annotation_diagnostics']))
-                    @php
-                        $annotationAudit = $report['candle_guidance']['annotation_diagnostics'];
-                    @endphp
-                    <details class="guide-help">
-                        <summary>Human candle eligibility details</summary>
-                        <p>{{ \App\Helpers\Decimal::format($annotationAudit['recorded_distinct_candles']) }} recorded distinct candles;
-                            {{ \App\Helpers\Decimal::format($annotationAudit['projected_candles']) }} eligible candles use current features after chart verification.
-                            {{ \App\Helpers\Decimal::format($annotationAudit['duplicate_eligible_snapshots']) }} duplicate eligible snapshots are counted only once.</p>
-                        <p>Exclusions below count snapshots, not additional distinct candles. Counts describe this model build, not later annotations.</p>
-                        <div class="review-table-wrap"><table>
-                            <thead><tr><th scope="col">Exclusion reason</th><th scope="col">Snapshots</th></tr></thead>
-                            <tbody>
-                            @foreach(array_merge($annotationAudit['prefiltered_snapshots'], $annotationAudit['excluded']) as $reason => $count)
-                                @if($count > 0)
-                                    <tr><th scope="row">{{ ucwords(str_replace('_', ' ', $reason)) }}</th><td>{{ \App\Helpers\Decimal::format($count) }}</td></tr>
-                                @endif
-                            @endforeach
-                            </tbody>
-                        </table></div>
-                    </details>
-                @endif
-                @if(isset($report['candle_guidance']['holdout']))
-                    <p>Human Candle held-out directional annotation agreement: {{ \App\Helpers\Decimal::format($report['candle_guidance']['holdout']['directional_annotation_agreement'] * 100, 1) }}%.</p>
-                @endif
-                <p class="guide-help">An abstaining model receives zero effective weight. Supported HOLD votes remain evidence. Human Trend is excluded. Social/news scoring is not connected; CoinGecko context is used only when included in the automatic model’s effective schema. Scores are not probabilities of profit, and neighbor counts are not added across models.</p>
-                @can('train-intelligence')<a href="{{ route('human-training.index', ['exchange' => $item->market->exchange->class, 'symbol' => $item->market->symbol, 'period' => $period]) }}">Open human training</a>@endcan
+                <p class="guide-help">Human influence follows W_H = min(60%, 60% × √(N_H / 750)). An unavailable human source contributes zero. Outcome KNN never creates an action by itself; the final SELL/HOLD/BUY comes from the fixed 3×5 decision matrix.</p>
+                @can('train-intelligence')<a href="{{ route('human-training.index', ['exchange' => $item->market->exchange->class, 'symbol' => $item->market->symbol, 'period' => $period]) }}">Open Human Training</a>@endcan
             </section>
         @endif
         <section class="guide-panel">
@@ -120,19 +91,17 @@
                 <h2>Model validation</h2>
                 <dl>
                     <dt>Intelligence readiness</dt><dd><x-knn-readiness :report="$report" :coingecko="$coingecko" /></dd>
-                    <dt>Automatic selected K</dt><dd>{{ $report['k'] ?? 'No eligible value' }}</dd>
-                    <dt>Automatic knowledge rows</dt><dd>{{ \App\Helpers\Decimal::format($report['knowledge_rows']) }} retained examples</dd>
-                    @if(isset($report['candle_guidance']['knowledge_rows']))
-                        <dt>Human Candle K / knowledge rows</dt><dd>{{ $report['candle_guidance']['k'] }} / {{ \App\Helpers\Decimal::format($report['candle_guidance']['knowledge_rows']) }}</dd>
-                    @endif
+                    <dt>Outcome K</dt><dd>{{ $report['k'] ?? 'No eligible value' }}</dd>
+                    <dt>Action K</dt><dd>{{ $report['action_k'] ?? 'No eligible value' }}</dd>
+                    <dt>Shared knowledge rows</dt><dd>{{ \App\Helpers\Decimal::format($report['knowledge_rows']) }} retained examples</dd>
                     @if (isset($report['training_data']['window']))
                         <dt>History window</dt><dd>{{ \App\Helpers\Decimal::format($report['training_data']['window']['days']) }} days, starting <x-display-time :value="$report['training_data']['window']['from_ms']" unit="milliseconds" /></dd>
                     @endif
                     <dt>Training cutoff</dt><dd><x-display-time :value="$report['trained_as_of_ms']" unit="milliseconds" /></dd>
                     @if ($report['holdout'])
-                        <dt>Automatic later-period precision</dt><dd>{{ \App\Helpers\Decimal::format($report['holdout']['semantic_precision'] * 100, 1) }}%</dd>
-                        <dt>Directional coverage</dt><dd>{{ \App\Helpers\Decimal::format($report['holdout']['coverage'] * 100, 1) }}%</dd>
-                        <dt>Top/bottom contradictions</dt><dd>{{ \App\Helpers\Decimal::format($report['holdout']['contradiction_rate'] * 100, 1) }}%</dd>
+                        <dt>Outcome macro F1</dt><dd>{{ \App\Helpers\Decimal::format(($report['holdout']['macro_f1'] ?? 0) * 100, 1) }}%</dd>
+                        <dt>Outcome accuracy</dt><dd>{{ \App\Helpers\Decimal::format(($report['holdout']['accuracy'] ?? 0) * 100, 1) }}%</dd>
+                        <dt>Outcome coverage</dt><dd>{{ \App\Helpers\Decimal::format(($report['holdout']['coverage'] ?? 0) * 100, 1) }}%</dd>
                     @endif
                 </dl>
                 <p class="guide-help">New builds retain every eligible example within the configured history window. The validation minimum does not cap the knowledge pool.</p>
@@ -162,14 +131,14 @@
                         </details>
                     @endif
                 @endif
-                <h3>Automatic K selection requirements</h3>
+                <h3>Outcome K selection requirements</h3>
                 @if ($progress['tuning'])
                     <p>{{ $report['k'] === null ? 'Closest candidate by number of passed checks' : 'Selected candidate' }}: K = {{ $progress['tuning']['k'] }}. All checks must pass for the same candidate.</p>
                     @include('markets.intelligence-gates', ['gates' => $progress['tuning']['gates']])
                 @else
                     <p>No tuning results are available yet.</p>
                 @endif
-                <h3>Automatic separate later-period validation</h3>
+                <h3>Outcome separate later-period validation</h3>
                 @if ($progress['holdout'])
                     @include('markets.intelligence-gates', ['gates' => $progress['holdout']])
                 @else
@@ -199,8 +168,8 @@
                         'lead_lag_ms' => 'Lead / lag',
                         'knn_tuning_ms' => 'KNN tuning',
                         'holdout_ms' => 'Holdout validation',
-                        'human_guidance_ms' => 'Human guidance',
-                        'candle_guidance_ms' => 'Candle guidance',
+                        'human_guidance_ms' => 'Human Outcome Training',
+                        'candle_guidance_ms' => 'Human Action Training',
                         'persistence_ms' => 'Model persistence',
                     ];
                 @endphp

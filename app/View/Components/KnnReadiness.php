@@ -15,14 +15,14 @@ class KnnReadiness extends Component
     {
         $states = ModelStore::knnReadiness($report);
         $states['coingecko'] = $coingecko ?? ['ready' => false, 'reason' => 'coingecko_features_unavailable'];
-        foreach (['automatic' => 'Automatic KNN', 'human_candle' => 'Human Candle KNN', 'coingecko' => 'CoinGecko context'] as $name => $label) {
+        foreach (['outcome' => 'Outcome KNN', 'action' => 'Action KNN', 'coingecko' => 'CoinGecko context'] as $name => $label) {
             $ready = $counts !== null || $states[$name]['ready'];
             $description = $counts !== null
                 ? $label.': '.Decimal::format($counts[$name] ?? 0).' of '.Decimal::format($total).' ready'
                 : $label.': '.($ready ? 'Ready' : 'Not ready — '.$this->explanation($states[$name]['reason']));
             $this->indicators[$name] = ['ready' => $ready, 'description' => $description,
                 'label' => match ($name) {
-                    'automatic' => 'Automatic', 'human_candle' => 'Human', default => 'CoinGecko'
+                    'outcome' => 'Outcome', 'action' => 'Action', default => 'CoinGecko'
                 },
                 'count' => $counts[$name] ?? 0];
         }
@@ -43,7 +43,7 @@ class KnnReadiness extends Component
             'model_version_mismatch', 'candle_model_version_mismatch' => 'Rebuild required for the current model version',
             'stale_model' => 'Model expired; rebuild required',
             'zero_scoring_weight' => 'Scoring weight is zero',
-            'candle_training_disabled', 'disabled' => 'Human Candle training is disabled',
+            'candle_training_disabled', 'disabled' => 'Human Action Training is disabled',
             'insufficient_candle_labels' => 'More eligible candle labels are needed',
             'insufficient_action_diversity' => 'More than one action class is needed',
             'no_eligible_k', 'tuning_failed' => 'Tuning validation has not passed',

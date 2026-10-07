@@ -3,7 +3,9 @@
 namespace App\Domain\Research;
 
 use App\Domain\Features\FeatureEngine;
+use App\Domain\Intelligence\ActionAutoLabeler;
 use App\Domain\Intelligence\KnowledgeWindow;
+use App\Domain\Intelligence\PublishedTakerFee;
 use App\Domain\Intelligence\PatternCatalog;
 use App\Domain\MarketData\CandleProvenance;
 use App\Domain\MarketData\CandleTimeframe;
@@ -19,7 +21,12 @@ use Throwable;
 
 final class DatasetSnapshotBuilder
 {
-    public function __construct(private DatasetStore $store, private TickerRepository $tickers) {}
+    public function __construct(
+        private DatasetStore $store,
+        private TickerRepository $tickers,
+        private ActionAutoLabeler $actionLabels,
+        private PublishedTakerFee $takerFees,
+    ) {}
 
     /**
      * An internal caller may lend an already-held feature lock. The owner is
@@ -78,6 +85,26 @@ final class DatasetSnapshotBuilder
                 if ($first === null) {
                     throw new RuntimeException('No M2 features in this range. Run trademinator:build-features first.');
                 }
+
+                $algorithmicActions = [];
+                if ($definition instanceof SemanticLabels) {
+                    $takerFee = $this->takerFees->for($exchange, $symbol);
+                    if ($takerFee === null) {
+                        throw new RuntimeException('Outcome horizon requires the published exchange taker fee used by Action auto-labeling.');
+                    }
+                    $actionContext = [];
+                    $actionHistory = $this->tickers->streamHistory(
+                        $exchange, $symbol, $period, (int) $first->microtimestamp, $asOfMs
+                    );
+                    foreach ($actionHistory as $microtimestamp => $candle) {
+                        $actionContext[] = $this->actionLabels->compact($candle, (int) $microtimestamp);
+                    }
+                    $labelledActions = $this->actionLabels->labels($actionContext, $takerFee);
+                    $definition = $definition->withHorizon($this->actionLabels->horizon($labelledActions));
+                    $algorithmicActions = $this->actionLabels->byTimestamp($labelledActions);
+                    unset($actionContext, $actionHistory, $labelledActions);
+                }
+
                 $candles = $this->tickers->streamHistory(
                     $exchange, $symbol, $period, (int) $first->microtimestamp, $asOfMs
                 );
@@ -98,7 +125,7 @@ final class DatasetSnapshotBuilder
                 if ($definition instanceof SemanticLabels) {
                     $counts['semantic_warmup'] = 0;
                 }
-                $labels = array_fill_keys(['buy', 'sell', 'hodl'], 0);
+                $labels = array_fill_keys($definition instanceof SemanticLabels ? SemanticLabels::OUTCOMES : ['buy', 'sell', 'hodl'], 0);
                 $hash = hash_init('sha256');
                 $count = 0;
                 $firstDecision = $lastDecision = null;
@@ -201,6 +228,7 @@ final class DatasetSnapshotBuilder
                         'microtimestamp' => $timestamp, 'decision_at_ms' => $decision,
                         'entry_at_ms' => $entry['microtimestamp'], 'label_available_at_ms' => $labelAvailable,
                         'vector' => $vector, 'label' => $label['action'],
+                        'action_label' => $definition instanceof SemanticLabels ? ($algorithmicActions[$timestamp] ?? null) : null,
                         'entry_price' => (string) $entry['open'], 'exit_price' => (string) $exit['close'],
                         'gross_return' => $label['gross_return'],
                         'source' => ['feature_id' => $feature->getKey(), 'history_start_ms' => $payload['history_start_ms'] ?? null,

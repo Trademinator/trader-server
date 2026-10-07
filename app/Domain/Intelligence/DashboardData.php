@@ -124,7 +124,7 @@ final class DashboardData
             $keys[] = $this->key($selected->market);
         }
         $reports = $this->reports($keys);
-        $totals = ['followed' => 0, 'automatic' => 0, 'human_candle' => 0, 'coingecko' => 0];
+        $totals = ['followed' => 0, 'outcome' => 0, 'action' => 0, 'coingecko' => 0];
         $this->subscriptions($user)->setEagerLoads([])->with('market.exchange', 'market.feed')
             ->chunkById(100, function ($items) use (&$totals): void {
                 $reports = $this->reports($items->map(fn ($item) => $this->key($item->market))->all());

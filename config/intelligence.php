@@ -6,24 +6,14 @@ return [
     'queue' => env('INTELLIGENCE_QUEUE', 'intelligence'),
     'schema' => env('INTELLIGENCE_SCHEMA', 'core'),
     'context_fallback' => env('INTELLIGENCE_CONTEXT_FALLBACK', 'none'),
-    'horizon' => 12,
+    // Bootstrap/fallback depth only. Each dataset replaces this with H derived from Action pivot frequencies.\n    'horizon' => 12,
     'lookback' => 20,
-    'minimum_move_bps' => 10.0,
-    'extreme_fraction' => 0.2,
     // Automatic dataset/model deadline; human training adds its own allowance.
-    'max_seconds' => 480,
+    'max_seconds' => max(60, (int) env('INTELLIGENCE_MAX_SECONDS', 1800)),
     // Both the training history window and the published model's maximum age.
     'max_model_age_days' => (int) env('INTELLIGENCE_MAX_MODEL_AGE_DAYS', 14),
     'max_signal_age_periods' => (int) env('INTELLIGENCE_MAX_SIGNAL_AGE_PERIODS', 2),
     'max_signal_age_seconds' => max(60, (int) env('INTELLIGENCE_MAX_SIGNAL_AGE_SECONDS', 86400)),
-    // Relative action-score weights, frozen into each published model.
-    'ensemble' => [
-        'weights' => [
-            'automatic' => (float) env('INTELLIGENCE_AUTOMATIC_WEIGHT', 0.40),
-            'human_candle' => (float) env('INTELLIGENCE_HUMAN_CANDLE_WEIGHT', 0.60),
-        ],
-        'min_confidence' => (float) env('INTELLIGENCE_ENSEMBLE_MIN_CONFIDENCE', 0.60),
-    ],
     'knn' => [
         'min_train_size' => 250, // Validation warmup only; all eligible history is retained.
         'test_size' => 100,
