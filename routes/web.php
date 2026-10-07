@@ -112,9 +112,11 @@ Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-
     Route::get('status', [StatusController::class, 'index'])->name('status');
     Route::delete('status/purge', [StatusController::class, 'purge'])->middleware(['password.confirm', 'throttle:6,1,owner-status-purge'])->name('status.purge');
     Route::get('coingecko-mappings', [CoinGeckoMappingController::class, 'index'])->name('coingecko-mappings.index');
-    Route::get('coingecko-mappings/coins', [CoinGeckoMappingController::class, 'coins'])->middleware('throttle:30,1')->name('coingecko-mappings.coins');
-    Route::put('coingecko-mappings/{mapping}', [CoinGeckoMappingController::class, 'update'])->middleware('throttle:12,1')->name('coingecko-mappings.update');
-    Route::delete('coingecko-mappings/{mapping}', [CoinGeckoMappingController::class, 'destroy'])->middleware('throttle:12,1')->name('coingecko-mappings.destroy');
+    // Named throttle prefixes isolate CoinGecko search/writes from general owner page traffic.
+    // Keep writes bounded, but do not spend their 12/minute allowance on GET requests.
+    Route::get('coingecko-mappings/coins', [CoinGeckoMappingController::class, 'coins'])->middleware('throttle:30,1,owner-coingecko-search')->name('coingecko-mappings.coins');
+    Route::put('coingecko-mappings/{mapping}', [CoinGeckoMappingController::class, 'update'])->middleware('throttle:12,1,owner-coingecko-write')->name('coingecko-mappings.update');
+    Route::delete('coingecko-mappings/{mapping}', [CoinGeckoMappingController::class, 'destroy'])->middleware('throttle:12,1,owner-coingecko-write')->name('coingecko-mappings.destroy');
     Route::get('intelligence/{model}', [ReportController::class, 'model'])->name('intelligence.show');
     Route::get('events', [MarketEventController::class, 'index'])->name('events');
     Route::put('events/{candidate}', [MarketEventController::class, 'update'])->whereUuid('candidate')->name('events.update');

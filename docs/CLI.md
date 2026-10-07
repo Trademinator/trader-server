@@ -1,6 +1,6 @@
 # Trademinator CLI reference
 
-Canonical operator reference for all **39 `trademinator:*` commands**, the local `inspire` command, and the committed metadata utility. Common Laravel operating commands are listed separately; package-provided commands vary with installed dependencies, so `php artisan list` remains the complete runtime inventory.
+Canonical operator reference for all **40 `trademinator:*` commands**, the local `inspire` command, and the committed metadata utility. Common Laravel operating commands are listed separately; package-provided commands vary with installed dependencies, so `php artisan list` remains the complete runtime inventory.
 
 Command signatures, descriptions and behavior were checked against repository source at `c0ce12f87ec570783381fd7854f03905ae2bc5bd`. Update this file whenever a command or its parameters change. `tests/Feature/TrademinatorCliDocumentationTest.php` checks the registered project-command inventory, exact normalized signatures and descriptions.
 
@@ -590,6 +590,36 @@ php artisan trademinator:backtest DATASET_UUID --strategy=trend --train=500 --te
 ```
 
 Implementation: [`BacktestResearchDataset.php`](../app/Console/Commands/BacktestResearchDataset.php).
+
+## trademinator:outcome-audit
+
+Signature: `trademinator:outcome-audit {exchange} {symbol} {period} {--dataset= : Current semantic dataset; defaults to the published model dataset} {--k= : Fixed K for all research comparisons; defaults to the published Outcome K} {--timeout=3600 : Read-only research budget in seconds}`
+
+Description: Read-only Outcome KNN research across horizons and feature groups with final holdout reserved
+
+Read-only Outcome KNN research command. It never publishes a model, moves an intelligence head, changes readiness, or evaluates the final reserved holdout. The command uses one fixed K across comparisons so horizon and feature-group diagnostics do not silently retune K on the same research data.
+
+The report reserves the final 20% of the frozen dataset by decision time and reports it as `final_holdout.evaluated=false`. Research comparisons use only earlier rows whose alternative Outcome labels are available before that cutoff.
+
+The horizon sweep evaluates approximately `H/2`, `H`, `1.5H`, and `2H`. On technical/full source datasets it uses the Technical feature group for all horizons; otherwise it reports `source_schema`. At the current H, it separately compares Core, Technical, and Technical + validated pattern features when those inputs are available.
+
+Each evaluated variant reports:
+
+- five-class supported accuracy, Macro-F1 and per-class precision/recall/F1;
+- the chronological majority-class baseline and improvement over it;
+- the collapsed three-class BEAR / NEUTRAL / BULL confusion matrix, accuracy and Macro-F1;
+- ordinal diagnostics: exact accuracy, within-one-class accuracy, mean absolute class error, same-direction accuracy, opposite-direction rate and extreme-opposite rate;
+- coverage, confidence and the current Outcome validation gates for reference.
+
+Examples:
+
+```bash
+php -d memory_limit=512M artisan trademinator:outcome-audit bitso 'ATOM/USD' 15m
+php -d memory_limit=512M artisan trademinator:outcome-audit bitso 'ATOM/USD' 15m --k=7 --timeout=3600
+php -d memory_limit=512M artisan trademinator:outcome-audit bitso 'ATOM/USD' 15m --dataset=DATASET_UUID --k=7
+```
+
+Use this command to investigate Outcome target/horizon/feature quality before changing production validation rules. After choosing a research direction, validate that redesign on a still-untouched final holdout before changing readiness or signal scoring.
 
 ## trademinator:knn-build
 
