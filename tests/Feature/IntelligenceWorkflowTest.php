@@ -227,7 +227,7 @@ it('returns zero confidence without any model and rejects mismatched frozen mark
     $this->assertDatabaseCount('intelligence_models', 0);
 });
 
-it('stacks only probabilities from a pattern model validated strictly before each KNN sample', function () {
+it('stacks validated pattern probabilities only when they improve the automatic target', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     config(['intelligence.patterns.enabled' => true, 'intelligence.patterns.min_samples' => 30,
         'intelligence.patterns.min_block_rows' => 5, 'intelligence.patterns.trees' => 5]);
@@ -237,14 +237,15 @@ it('stacks only probabilities from a pattern model validated strictly before eac
     app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
     $artifact = app(ModelStore::class)->current('kraken', 'BTC/USD', '1m');
 
-    expect($artifact['pattern_keys'])->toBe(['pattern.bullish_engulfing.probability', 'pattern.bullish_engulfing.present']);
-    $knownAt = $artifact['patterns']['models']['bullish_engulfing']['available_at_ms'];
+    expect($artifact['patterns']['models'])->toHaveKey('bullish_engulfing');
+    expect($artifact['automatic']['pattern_ablation']['candidate_pattern_keys'])
+        ->toBe(['pattern.bullish_engulfing.probability', 'pattern.bullish_engulfing.present']);
+    expect($artifact['automatic']['pattern_ablation']['selection_basis'])
+        ->toBe('same_k_same_walk_forward_rows_final_holdout_untouched');
+    expect($artifact['automatic']['pattern_ablation']['selected'])->toBe('technical_only');
+    expect($artifact['pattern_keys'])->toBe([]);
     foreach ($artifact['knowledge'] as $row) {
-        expect($row['decision_at_ms'])->toBeGreaterThan($knownAt);
-        expect($row['vector'])->toHaveCount(3);
-    }
-    foreach ($artifact['selection']['folds'] as $fold) {
-        expect($fold['test_from_ms'])->toBeGreaterThan($knownAt);
+        expect($row['vector'])->toHaveCount(1);
     }
 });
 

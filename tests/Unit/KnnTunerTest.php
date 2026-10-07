@@ -23,17 +23,30 @@ function tuningSettings(): array
         'min_semantic_precision' => 0.55, 'min_coverage' => 0.01, 'max_contradiction_rate' => 0.05];
 }
 
-it('selects K within the training-only square-root cap and purges unfinished labels', function () {
+it('sizes K from the first-fold training capacity and purges unfinished labels', function () {
     $report = (new KnnTuner(new WeightedKnn))->tune(tuningRows(), tuningSettings(), microtime(true) + 10);
 
-    expect($report['k_max'])->toBe(6);
-    expect($report['k'])->toBeGreaterThanOrEqual(3)->toBeLessThanOrEqual(6);
+    expect($report['k_min'])->toBe(4);
+    expect($report['k_max'])->toBe(36);
+    expect($report['k'])->toBeGreaterThanOrEqual(4)->toBeLessThanOrEqual(36);
     expect($report['folds'][0]['train_rows'])->toBe(36);
     expect($report['folds'][1]['train_rows'])->toBe(48);
     expect(end($report['folds'])['train_rows'])->toBeGreaterThan(100);
     foreach ($report['folds'] as $fold) {
         expect($fold['labels_available_by_ms'])->toBeLessThan($fold['test_from_ms']);
     }
+});
+
+it('does not evaluate K values without effective-neighbor headroom and reports failed gates', function () {
+    $settings = tuningSettings();
+    $settings['min_semantic_precision'] = 1.1;
+    $report = (new KnnTuner(new WeightedKnn(1, 3, 0.5)))->tune(tuningRows(), $settings, microtime(true) + 10);
+
+    expect($report['k_min'])->toBe(4);
+    expect(array_column($report['candidates'], 'k'))->not->toContain(1)->not->toContain(2)->not->toContain(3);
+    $directional = collect($report['candidates'])->first(fn (array $candidate): bool => $candidate['directional'] > 0);
+    expect($directional['gates']['semantic_precision'])->toBeFalse();
+    expect($directional['failed_gates'])->toContain('semantic_precision');
 });
 
 it('produces the same tuning result from already prepared rows', function () {

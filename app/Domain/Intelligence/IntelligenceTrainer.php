@@ -12,7 +12,7 @@ use RuntimeException;
 
 final class IntelligenceTrainer
 {
-    public const VERSION = 'm5-two-knn-v1';
+    public const VERSION = 'm5-two-knn-v2';
 
     public function __construct(
         private DatasetStore $datasets,
@@ -20,6 +20,7 @@ final class IntelligenceTrainer
         private PatternTrainer $patterns,
         private LeadLagIntelligence $leadLag,
         private HumanCandleKnn $candleKnn,
+        private AutomaticPatternAblation $patternAblation,
     ) {}
 
     public function train(string $dataset, ?float $deadline = null, ?string $generation = null, array $buildPerformance = [], array $schemaSelection = []): array
@@ -101,21 +102,41 @@ final class IntelligenceTrainer
             $buildPerformance['stages']['lead_lag_ms'] = $this->elapsedMs($stageStarted);
             $leadLagBundle = $leadLag['bundle'];
             unset($leadLag['bundle']);
-            $leadLagExcluded = 0;
-            $patternKeys = $patternSettings['as_knn_features'] ? $this->patterns->featureKeys($patternBundle) : [];
-            if ($patternKeys !== []) {
-                $knownAt = max(array_column($patternBundle['models'], 'available_at_ms'));
-                $rows = array_values(array_filter($rows, fn (array $row): bool => $row['decision_at_ms'] > $knownAt));
-                foreach ($rows as &$row) {
-                    $predictions = $this->patterns->predict($patternBundle, $row['vector'], $row['patterns'], $row['decision_at_ms']);
-                    $row['vector'] = [...$row['vector'], ...$this->patterns->features($patternBundle, $predictions)];
+            $candidatePatternKeys = $patternSettings['as_knn_features'] ? $this->patterns->featureKeys($patternBundle) : [];
+            $patternKeys = [];
+            $patternKnownAt = $candidatePatternKeys === [] ? null : max(array_column($patternBundle['models'], 'available_at_ms'));
+            $patternAblation = [
+                'version' => AutomaticPatternAblation::VERSION,
+                'selection_basis' => 'same_k_same_walk_forward_rows_final_holdout_untouched',
+                'selected' => 'technical_only',
+                'reason' => $candidatePatternKeys === [] ? 'no_validated_pattern_features' : 'no_comparison_k',
+                'candidate_pattern_keys' => $candidatePatternKeys,
+                'common_rows' => 0,
+            ];
+
+            $baseRows = $rows;
+            $stackedRows = null;
+            if ($patternKnownAt !== null) {
+                $stackedRows = [];
+                foreach ($baseRows as &$row) {
+                    if ($row['decision_at_ms'] > $patternKnownAt) {
+                        $stacked = $row;
+                        $predictions = $this->patterns->predict($patternBundle, $row['vector'], $row['patterns'], $row['decision_at_ms']);
+                        $stacked['vector'] = [...$stacked['vector'], ...$this->patterns->features($patternBundle, $predictions)];
+                        unset($stacked['patterns']);
+                        $stackedRows[] = $stacked;
+                    }
+                    unset($row['patterns']);
+                }
+                unset($row);
+            } else {
+                foreach ($baseRows as &$row) {
+                    unset($row['patterns']);
                 }
                 unset($row);
             }
-            foreach ($rows as &$row) {
-                unset($row['patterns']);
-            }
-            unset($row);
+            unset($rows);
+
             $patternTreeSpools = [];
             foreach ($patternBundle['models'] as &$patternModel) {
                 $estimator = $patternModel['estimator'] ?? null;
@@ -124,29 +145,73 @@ final class IntelligenceTrainer
                 }
             }
             unset($patternModel);
-            if ($leadLagBundle['keys'] !== []) {
-                $before = count($rows);
-                $rows = array_values(array_filter($rows, fn (array $row): bool => $row['decision_at_ms'] > $leadLagBundle['available_at_ms']));
-                $leadLagExcluded = $before - count($rows);
-                foreach ($rows as &$row) {
-                    $evidence = $this->leadLag->features($leadLagBundle, $leadLag['series'], $row['decision_at_ms']);
-                    $row['feature_weights'] = [...array_fill(0, count($row['vector']), 1.0), ...$evidence['weights']];
-                    $row['vector'] = [...$row['vector'], ...$evidence['vector']];
-                }
-                unset($row);
-            }
+
+            $leadLagSeries = $leadLag['series'];
             unset($leadLag['series']);
+            [$baseRows, $baseLeadLagExcluded] = $this->applyLeadLag($baseRows, $leadLagBundle, $leadLagSeries);
+            $stackedLeadLagExcluded = 0;
+            if ($stackedRows !== null) {
+                [$stackedRows, $stackedLeadLagExcluded] = $this->applyLeadLag($stackedRows, $leadLagBundle, $leadLagSeries);
+            }
+            unset($leadLagSeries);
+
             $knn = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
-            $knn->validatePreparedRows($rows);
+            $knn->validatePreparedRows($baseRows);
+            if ($stackedRows !== null) {
+                $knn->validatePreparedRows($stackedRows);
+            }
             $tuner = new KnnTuner($knn);
-            $testStart = (int) floor(count($rows) * 0.8);
-            $test = array_slice($rows, $testStart);
-            $cutoff = $test[0]['decision_at_ms'] ?? 0;
-            $training = array_values(array_filter(array_slice($rows, 0, $testStart),
-                fn (array $row): bool => $row['label_available_at_ms'] < $cutoff));
+            [$baseTraining, $baseTest, $cutoff] = $this->splitRows($baseRows);
 
             $stageStarted = hrtime(true);
-            $selection = $tuner->tunePrepared($training, $settings, $deadline);
+            $selection = $tuner->tunePrepared($baseTraining, $settings, $deadline);
+            $rows = $baseRows;
+            $training = $baseTraining;
+            $test = $baseTest;
+            $leadLagExcluded = $baseLeadLagExcluded;
+
+            $comparison = $this->patternAblation->comparisonCandidate($selection);
+            if ($stackedRows !== null && $stackedRows !== [] && $comparison !== null) {
+                $comparisonK = $comparison['k'];
+                $commonBaseTraining = array_values(array_filter($baseTraining,
+                    fn (array $row): bool => $row['decision_at_ms'] > $patternKnownAt));
+                $stackedTraining = array_values(array_filter($stackedRows,
+                    fn (array $row): bool => $row['decision_at_ms'] < $cutoff
+                        && $row['label_available_at_ms'] < $cutoff));
+
+                if (count($commonBaseTraining) >= $settings['min_train_size']
+                    && count($stackedTraining) === count($commonBaseTraining)) {
+                    $technicalComparison = $tuner->evaluateWalkForwardPrepared(
+                        $commonBaseTraining, $settings, $comparisonK, $deadline
+                    );
+                    $stackedComparison = $tuner->evaluateWalkForwardPrepared(
+                        $stackedTraining, $settings, $comparisonK, $deadline
+                    );
+                    $patternAblation = $this->patternAblation->chooseAtK(
+                        $technicalComparison['report'], $stackedComparison['report'],
+                        $candidatePatternKeys, count($commonBaseTraining)
+                    );
+                    $patternAblation['common_tuning_rows'] = count($commonBaseTraining);
+
+                    if ($patternAblation['selected'] === 'technical_plus_patterns') {
+                        $patternKeys = $candidatePatternKeys;
+                        $rows = $stackedRows;
+                        $training = $stackedTraining;
+                        $test = array_values(array_filter($stackedRows,
+                            fn (array $row): bool => $row['decision_at_ms'] >= $cutoff));
+                        $leadLagExcluded = $stackedLeadLagExcluded;
+                        $selection = $this->replaceSelectionCandidate(
+                            $selection, $stackedComparison['report'], $stackedComparison['folds'], $comparisonK
+                        );
+                    }
+                    unset($technicalComparison, $stackedComparison);
+                } else {
+                    $patternAblation['reason'] = 'insufficient_common_chronological_rows';
+                    $patternAblation['common_rows'] = min(count($commonBaseTraining), count($stackedTraining));
+                }
+                unset($commonBaseTraining, $stackedTraining);
+            }
+            unset($baseRows, $stackedRows, $baseTraining, $baseTest);
             $buildPerformance['stages']['knn_tuning_ms'] = $this->elapsedMs($stageStarted);
 
             $stageStarted = hrtime(true);
@@ -204,7 +269,8 @@ final class IntelligenceTrainer
                     'validation_target' => 'future_semantic_outcomes', 'schema' => $manifest['schema'],
                     'schema_selection' => $schemaSelection ?: ['requested_schema' => $manifest['schema'],
                         'effective_schema' => $manifest['schema'], 'fallback_policy' => 'none', 'reason' => 'frozen_dataset'],
-                    'history_status' => $selection['folds'] === [] ? 'insufficient_tuning_history' : 'tuning_evaluated'],
+                    'history_status' => $selection['folds'] === [] ? 'insufficient_tuning_history' : 'tuning_evaluated',
+                    'pattern_ablation' => $patternAblation],
                 'regime_settings' => ['super_confidence' => 0.8, 'super_effective_neighbors' => 6.0],
                 'pattern_keys' => $patternKeys, 'label_definition' => $manifest['label_definition'],
                 'trained_as_of_ms' => $manifest['as_of_ms'], 'available_at_ms' => $availableAt,
@@ -244,6 +310,56 @@ final class IntelligenceTrainer
             }
             $lock->release();
         }
+    }
+
+    private function splitRows(array $rows): array
+    {
+        $testStart = (int) floor(count($rows) * 0.8);
+        $test = array_slice($rows, $testStart);
+        $cutoff = $test[0]['decision_at_ms'] ?? 0;
+        $training = array_values(array_filter(array_slice($rows, 0, $testStart),
+            fn (array $row): bool => $row['label_available_at_ms'] < $cutoff));
+
+        return [$training, $test, $cutoff];
+    }
+
+    private function applyLeadLag(array $rows, array $bundle, array $series): array
+    {
+        if ($bundle['keys'] === []) {
+            return [$rows, 0];
+        }
+        $before = count($rows);
+        $rows = array_values(array_filter($rows, fn (array $row): bool => $row['decision_at_ms'] > $bundle['available_at_ms']));
+        foreach ($rows as &$row) {
+            $evidence = $this->leadLag->features($bundle, $series, $row['decision_at_ms']);
+            $row['feature_weights'] = [...array_fill(0, count($row['vector']), 1.0), ...$evidence['weights']];
+            $row['vector'] = [...$row['vector'], ...$evidence['vector']];
+        }
+        unset($row);
+
+        return [$rows, $before - count($rows)];
+    }
+
+    private function replaceSelectionCandidate(array $selection, array $candidate, array $folds, int $k): array
+    {
+        $replaced = false;
+        foreach ($selection['candidates'] as &$existing) {
+            if (($existing['k'] ?? null) === $k) {
+                $existing = $candidate;
+                $replaced = true;
+                break;
+            }
+        }
+        unset($existing);
+        if (! $replaced) {
+            $selection['candidates'][] = $candidate;
+            usort($selection['candidates'], fn (array $a, array $b): int => $a['k'] <=> $b['k']);
+        }
+        $selection['k'] = $k;
+        $selection['folds'] = $folds;
+        $selection['selection'] = 'pattern_ablation_same_k_then_holdout';
+
+        return $selection;
     }
 
     private function elapsedMs(int $startedNs): int
