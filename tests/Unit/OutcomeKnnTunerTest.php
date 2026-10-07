@@ -56,7 +56,48 @@ it('excludes Outcome abstentions from the confusion matrix and scores them only 
         ->and($report['supported_macro_f1'])->toBe(0.2)
         ->and($report['baseline']['macro_f1'])->toBe(0.0)
         ->and($report['baseline']['improvement'])->toBe(0.2)
+        ->and($report['ordinal']['exact_accuracy'])->toBe(1.0)
+        ->and($report['ordinal']['within_one_class_accuracy'])->toBe(1.0)
+        ->and($report['ordinal']['mean_absolute_class_error'])->toEqual(0.0)
+        ->and($report['ordinal']['same_direction_accuracy'])->toBe(1.0)
+        ->and($report['ordinal']['opposite_direction_rate'])->toBe(0.0)
+        ->and($report['ordinal']['extreme_opposite_rate'])->toBe(0.0)
         ->and($report['eligible'])->toBeTrue();
+});
+
+it('reports ordinal Outcome error severity without changing eligibility gates', function () {
+    $settings = outcomeValidationSettings();
+    $settings['outcome']['min_macro_f1'] = 0.0;
+    $settings['outcome']['min_baseline_improvement'] = 0.0;
+    $settings['outcome']['min_supported_predictions'] = 5;
+    $training = [
+        ['vector' => [0.0], 'label' => 'super_bear', 'decision_at_ms' => 1, 'label_available_at_ms' => 2],
+        ['vector' => [0.2], 'label' => 'bear', 'decision_at_ms' => 2, 'label_available_at_ms' => 3],
+        ['vector' => [0.4], 'label' => 'neutral', 'decision_at_ms' => 3, 'label_available_at_ms' => 4],
+        ['vector' => [0.6], 'label' => 'bull', 'decision_at_ms' => 4, 'label_available_at_ms' => 5],
+        ['vector' => [0.8], 'label' => 'super_bull', 'decision_at_ms' => 5, 'label_available_at_ms' => 6],
+    ];
+    $test = [
+        ['vector' => [0.2], 'label' => 'super_bear', 'decision_at_ms' => 10, 'label_available_at_ms' => 20],
+        ['vector' => [0.8], 'label' => 'bear', 'decision_at_ms' => 11, 'label_available_at_ms' => 21],
+        ['vector' => [0.4], 'label' => 'neutral', 'decision_at_ms' => 12, 'label_available_at_ms' => 22],
+        ['vector' => [0.0], 'label' => 'bull', 'decision_at_ms' => 13, 'label_available_at_ms' => 23],
+        ['vector' => [0.0], 'label' => 'super_bull', 'decision_at_ms' => 14, 'label_available_at_ms' => 24],
+    ];
+
+    $knn = new WeightedKnn(1.0, 1.0, 0.5);
+    $report = (new OutcomeKnnTuner($knn, new OutcomeKnn($settings)))
+        ->evaluatePrepared($training, $test, 1, $settings, microtime(true) + 10);
+
+    expect($report['ordinal']['class_order'])->toBe(['super_bear', 'bear', 'neutral', 'bull', 'super_bull'])
+        ->and($report['ordinal']['supported_predictions'])->toBe(5)
+        ->and($report['ordinal']['exact_accuracy'])->toBe(0.2)
+        ->and($report['ordinal']['within_one_class_accuracy'])->toBe(0.4)
+        ->and($report['ordinal']['mean_absolute_class_error'])->toBe(2.2)
+        ->and($report['ordinal']['same_direction_accuracy'])->toBe(0.4)
+        ->and($report['ordinal']['opposite_direction_rate'])->toBe(0.6)
+        ->and($report['ordinal']['extreme_opposite_rate'])->toBe(0.2)
+        ->and(array_column($report['ordinal']['distance'], 'count'))->toBe([1, 1, 0, 2, 1]);
 });
 
 it('requires Outcome to beat a chronological majority-class baseline', function () {

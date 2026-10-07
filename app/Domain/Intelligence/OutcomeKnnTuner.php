@@ -160,12 +160,14 @@ final class OutcomeKnnTuner
             'coverage' => $coverage >= $minimumCoverage,
         ];
 
+        $ordinal = $this->ordinalMetrics($state['confusion']);
         unset($state['baseline_confusion']);
 
         return [...$state, 'abstained' => $state['evaluated'] - $state['supported'],
             'accuracy' => $accuracy, 'supported_accuracy' => $accuracy,
             'macro_f1' => $macroF1, 'supported_macro_f1' => $macroF1,
-            'semantic_precision' => $macroF1, 'per_class' => $perClass, 'coverage' => $coverage,
+            'semantic_precision' => $macroF1, 'per_class' => $perClass, 'ordinal' => $ordinal,
+            'coverage' => $coverage,
             'baseline' => [
                 'strategy' => 'training_majority_class_on_same_supported_rows',
                 'accuracy' => $baselineAccuracy,
@@ -206,6 +208,63 @@ final class OutcomeKnnTuner
         }
 
         return [array_sum(array_column($perClass, 'f1')) / count($perClass), $perClass];
+    }
+
+    private function ordinalMetrics(array $confusion): array
+    {
+        $positions = array_flip(SemanticLabels::OUTCOMES);
+        $distanceCounts = array_fill(0, count(SemanticLabels::OUTCOMES), 0);
+        $total = $exact = $withinOne = $sameDirection = $oppositeDirection = $extremeOpposite = 0;
+        $absoluteError = 0;
+
+        foreach (SemanticLabels::OUTCOMES as $actual) {
+            foreach (SemanticLabels::OUTCOMES as $predicted) {
+                $count = (int) $confusion[$actual][$predicted];
+                if ($count === 0) {
+                    continue;
+                }
+
+                $actualPosition = $positions[$actual] - 2;
+                $predictedPosition = $positions[$predicted] - 2;
+                $distance = abs($actualPosition - $predictedPosition);
+                $total += $count;
+                $absoluteError += $distance * $count;
+                $distanceCounts[$distance] += $count;
+                $exact += $distance === 0 ? $count : 0;
+                $withinOne += $distance <= 1 ? $count : 0;
+
+                $actualDirection = $actualPosition <=> 0;
+                $predictedDirection = $predictedPosition <=> 0;
+                $sameDirection += $actualDirection === $predictedDirection ? $count : 0;
+                $oppositeDirection += $actualDirection !== 0
+                    && $predictedDirection !== 0
+                    && $actualDirection !== $predictedDirection ? $count : 0;
+                $extremeOpposite += ($actualPosition === -2 && $predictedPosition === 2)
+                    || ($actualPosition === 2 && $predictedPosition === -2) ? $count : 0;
+            }
+        }
+
+        $rate = fn (int $count): float => $total > 0 ? $count / $total : 0.0;
+
+        return [
+            'class_order' => SemanticLabels::OUTCOMES,
+            'supported_predictions' => $total,
+            'exact_accuracy' => $rate($exact),
+            'within_one_class_accuracy' => $rate($withinOne),
+            'mean_absolute_class_error' => $total > 0 ? $absoluteError / $total : 0.0,
+            'same_direction_accuracy' => $rate($sameDirection),
+            'opposite_direction_rate' => $rate($oppositeDirection),
+            'extreme_opposite_rate' => $rate($extremeOpposite),
+            'distance' => array_map(
+                fn (int $count, int $distance): array => [
+                    'distance' => $distance,
+                    'count' => $count,
+                    'rate' => $rate($count),
+                ],
+                $distanceCounts,
+                array_keys($distanceCounts),
+            ),
+        ];
     }
 
     private function majorityLabel(array $rows): string
