@@ -13,10 +13,16 @@ function quoteTestMarket(string $symbol, string $currency, string $status, ?stri
     $exchange = Exchange::query()->firstOrCreate(['class' => 'quote-test'], ['name' => 'Quote Test', 'config' => '{}']);
     $market = Market::query()->create(['exchange_id' => $exchange->exchange_id, 'symbol' => $symbol, 'tick_size' => '0.01']);
     MarketSubscription::query()->create(['user_id' => User::factory()->create()->user_id, 'market_id' => $market->market_id, 'active' => true]);
-    CoinGeckoMarketMapping::query()->create([
-        'market_id' => $market->market_id, 'base_symbol' => explode('/', $symbol)[0],
-        'vs_currency' => $currency, 'coin_id' => $coinId, 'status' => $status,
-    ]);
+    // Market creation may already have inserted a pending mapping.
+    CoinGeckoMarketMapping::query()->updateOrCreate(
+        ['market_id' => $market->market_id],
+        [
+            'base_symbol' => explode('/', $symbol)[0],
+            'vs_currency' => $currency,
+            'coin_id' => $coinId,
+            'status' => $status,
+        ],
+    );
 }
 
 beforeEach(function () {
