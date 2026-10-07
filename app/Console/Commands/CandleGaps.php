@@ -35,6 +35,7 @@ final class CandleGaps extends Command
         $commands = [];
         $feedCount = 0;
         $problemCount = 0;
+        $busyCount = 0;
 
         foreach ($repairs->feeds($exchange, $symbol, $period)->lazyById(100, 'market_id') as $feed) {
             $feedCount++;
@@ -97,7 +98,7 @@ final class CandleGaps extends Command
             }
 
             if ($scanBusy) {
-                $problemCount++;
+                $busyCount++;
                 $rows[] = [
                     $exchangeClass,
                     $marketSymbol,
@@ -184,9 +185,19 @@ final class CandleGaps extends Command
         }
 
         if ($problemCount === 0) {
-            $this->info("No missing closed candles found across {$feedCount} active feed(s).");
+            if ($busyCount === 0) {
+                $this->info("No missing closed candles found across {$feedCount} active feed(s).");
+            } else {
+                $this->info('No confirmed candle-gap problems were detected.');
+            }
         } else {
             $this->warn("{$problemCount} of {$feedCount} active feed(s) need attention.");
+        }
+
+        if ($busyCount > 0) {
+            $this->comment($busyCount === 1
+                ? '1 active feed could not be scanned because a market-data worker was updating it.'
+                : "{$busyCount} active feeds could not be scanned because market-data workers were updating them.");
         }
 
         return self::SUCCESS;

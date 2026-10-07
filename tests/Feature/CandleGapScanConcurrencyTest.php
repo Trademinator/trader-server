@@ -56,6 +56,9 @@ it('reports a busy gap scan instead of racing a market worker', function () {
         expect($output)
             ->toContain('SCAN BUSY')
             ->toContain('Another market-data worker is currently updating this feed.')
+            ->toContain('No confirmed candle-gap problems were detected.')
+            ->toContain('1 active feed could not be scanned because a market-data worker was updating it.')
+            ->not->toContain('need attention')
             ->not->toContain('SCAN ERROR');
 
         expect(DB::table('candle_gap_repairs')->count())->toBe(0);
