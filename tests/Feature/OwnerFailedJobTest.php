@@ -89,7 +89,7 @@ it('links all three actions from the owner backlog without exposing exception me
     $owner = failedJobOwner();
     $job = recordedFailedJob();
 
-    $this->actingAs($owner)->get(route('owner.overview'))
+    $this->actingAs($owner)->get(route('owner.queue-backlog'))
         ->assertSee('View')->assertSee('Requeue')->assertSee('Discard')
         ->assertSee('action="'.route('owner.failed-jobs.show', $job).'"', false)
         ->assertSee('action="'.route('owner.failed-jobs.retry', $job).'"', false)
@@ -114,7 +114,7 @@ it('sorts failed job headers in both directions and shows exception names', func
         ]),
     ];
 
-    $response = $this->actingAs($owner)->get(route('owner.overview', [
+    $response = $this->actingAs($owner)->get(route('owner.queue-backlog', [
         'failed_sort' => $sort, 'failed_direction' => $direction,
     ]));
 
@@ -135,8 +135,8 @@ it('sorts failed job headers in both directions and shows exception names', func
 ]);
 
 it('rejects invalid failed job sorting parameters', function (string $field, string $value) {
-    $this->actingAs(failedJobOwner())->from('/owner')->get(route('owner.overview', [$field => $value]))
-        ->assertRedirect('/owner')->assertSessionHasErrors($field);
+    $this->actingAs(failedJobOwner())->from('/owner/queue-backlog')->get(route('owner.queue-backlog', [$field => $value]))
+        ->assertRedirect('/owner/queue-backlog')->assertSessionHasErrors($field);
 })->with([
     'sort expression' => ['failed_sort', 'failed_at desc; DROP TABLE failed_jobs'],
     'direction expression' => ['failed_direction', 'desc, uuid'],
@@ -180,7 +180,7 @@ it('requeues exactly the selected job on its original connection and queue with 
 
     $this->actingAs($owner)->post(route('owner.failed-jobs.retry', $job), [
         'connection' => 'sync', 'queue' => 'forged', 'id' => 'all',
-    ])->assertRedirectToRoute('owner.overview')->assertSessionHasNoErrors()
+    ])->assertRedirectToRoute('owner.queue-backlog')->assertSessionHasNoErrors()
         ->assertSessionHas('status', 'Job '.$job.' requeued on history / history-recovery.');
 
     $this->assertDatabaseMissing('failed_jobs', ['uuid' => $job]);
@@ -202,7 +202,7 @@ it('discards only the selected failure without changing queued jobs', function (
     $pending = DB::table('jobs')->first();
 
     $this->actingAs($owner)->delete(route('owner.failed-jobs.destroy', $job))
-        ->assertRedirectToRoute('owner.overview')->assertSessionHasNoErrors()
+        ->assertRedirectToRoute('owner.queue-backlog')->assertSessionHasNoErrors()
         ->assertSessionHas('status', 'Failed job '.$job.' discarded without running it.');
 
     $this->assertDatabaseMissing('failed_jobs', ['uuid' => $job]);
@@ -218,7 +218,7 @@ it('retains the failed job when its original queue cannot accept the retry', fun
     $job = recordedFailedJob(['connection' => 'broken']);
 
     $this->actingAs($owner)->post(route('owner.failed-jobs.retry', $job))
-        ->assertRedirectToRoute('owner.overview')
+        ->assertRedirectToRoute('owner.queue-backlog')
         ->assertSessionHasErrors(['failed_job' => 'The job could not be requeued. Check the server log for details before trying again.']);
 
     $this->assertDatabaseHas('failed_jobs', ['uuid' => $job]);
@@ -281,7 +281,7 @@ it('completes the selected action directly after password confirmation', functio
 
     $this->post($confirmation->viewData('formAction'), [
         ...$confirmation->viewData('formFields'), 'password' => 'password',
-    ])->assertRedirectToRoute('owner.overview')->assertSessionHasNoErrors();
+    ])->assertRedirectToRoute('owner.queue-backlog')->assertSessionHasNoErrors();
 
     $this->assertDatabaseMissing('failed_jobs', ['uuid' => $job]);
     $this->assertDatabaseCount('jobs', $queued);
@@ -332,7 +332,7 @@ it('reports stale row actions without affecting other failed jobs', function (st
     $other = recordedFailedJob();
 
     $this->actingAs($owner)->call($method, route($route, (string) Str::uuid()))
-        ->assertRedirectToRoute('owner.overview')
+        ->assertRedirectToRoute('owner.queue-backlog')
         ->assertSessionHasErrors(['failed_job' => 'This failed job no longer exists. It may already have been requeued or discarded.']);
 
     $this->assertDatabaseHas('failed_jobs', ['uuid' => $other]);

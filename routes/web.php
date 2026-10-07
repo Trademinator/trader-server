@@ -94,6 +94,7 @@ Route::prefix('human-training')->name('human-training.')->middleware(['auth', 'v
 
 Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-owner', 'throttle:60,1'])->group(function () {
     Route::get('/', [ReportController::class, 'index'])->name('overview');
+    Route::get('queue-backlog', [ReportController::class, 'queueBacklog'])->name('queue-backlog');
     Route::get('failed-jobs/{job}', [FailedJobController::class, 'show'])->whereUuid('job')->name('failed-jobs.show');
     Route::post('failed-jobs/{job}/retry', [FailedJobController::class, 'retry'])->whereUuid('job')
         ->middleware(['throttle:12,1,failed-jobs', ConfirmFailedJobPassword::class])->name('failed-jobs.retry');

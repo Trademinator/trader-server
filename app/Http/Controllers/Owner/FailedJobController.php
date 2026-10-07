@@ -47,13 +47,13 @@ final class FailedJobController extends Controller
         $response = Cache::lock('owner:failed-job:'.$job, 300)->get(function () use ($job, $requeue, $log): RedirectResponse {
             $failedJob = $this->failedJobs->find($job);
             if ($failedJob === null) {
-                return to_route('owner.overview')->withErrors([
+                return to_route('owner.queue-backlog')->withErrors([
                     'failed_job' => 'This failed job no longer exists. It may already have been requeued or discarded.',
                 ]);
             }
 
             if ($requeue && ! in_array(config('queue.connections.'.$failedJob->connection.'.driver'), ['database', 'redis', 'beanstalkd', 'sqs'], true)) {
-                return to_route('owner.overview')->withErrors([
+                return to_route('owner.queue-backlog')->withErrors([
                     'failed_job' => 'This job’s original connection is not configured as a supported background queue. The failure record was kept.',
                 ]);
             }
@@ -69,14 +69,14 @@ final class FailedJobController extends Controller
                         throw new RuntimeException('The failed job could not be requeued.');
                     }
                 } elseif (! $this->failedJobs->forget($job)) {
-                    return to_route('owner.overview')->withErrors([
+                    return to_route('owner.queue-backlog')->withErrors([
                         'failed_job' => 'This failed job no longer exists. It may already have been requeued or discarded.',
                     ]);
                 }
             } catch (Throwable $error) {
                 report($error);
 
-                return to_route('owner.overview')->withErrors([
+                return to_route('owner.queue-backlog')->withErrors([
                     'failed_job' => $requeue
                         ? 'The job could not be requeued. Check the server log for details before trying again.'
                         : 'The failure record could not be discarded. Check the server log for details before trying again.',
@@ -87,12 +87,12 @@ final class FailedJobController extends Controller
                 'job_id' => $job, 'queue' => $failedJob->queue, 'outcome' => 'completed',
             ]);
 
-            return to_route('owner.overview')->with('status', $requeue
+            return to_route('owner.queue-backlog')->with('status', $requeue
                 ? 'Job '.$job.' requeued on '.$failedJob->connection.' / '.$failedJob->queue.'.'
                 : 'Failed job '.$job.' discarded without running it.');
         });
 
-        return $response ?: to_route('owner.overview')->withErrors([
+        return $response ?: to_route('owner.queue-backlog')->withErrors([
             'failed_job' => 'Another action is already in progress for this failed job. Refresh the backlog before trying again.',
         ]);
     }

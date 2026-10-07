@@ -17,5 +17,5 @@
         <h2>Exception and stack trace</h2>
         <pre>{{ $job->exception ?: 'No exception details were recorded.' }}</pre>
     </section>
-    <p><a href="{{ route('owner.overview') }}#queue-backlog">Back to queue backlog</a></p>
+    <p><a href="{{ route('owner.queue-backlog') }}#queue-backlog">Back to queue backlog</a></p>
 </x-owner.layout>

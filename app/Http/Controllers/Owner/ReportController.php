@@ -23,14 +23,8 @@ use Illuminate\View\View;
 
 class ReportController extends Controller
 {
-    public function index(Request $request, GeoLocation $geo, CoinGeckoReadiness $contextReadiness, QueueBacklog $backlog): View
+    public function index(GeoLocation $geo, CoinGeckoReadiness $contextReadiness): View
     {
-        $failedFilters = $request->validate([
-            'failed_sort' => ['nullable', Rule::in(['uuid', 'connection', 'exception', 'failed_at'])],
-            'failed_direction' => ['nullable', Rule::in(['asc', 'desc'])],
-        ]);
-        $failedSort = $failedFilters['failed_sort'] = $failedFilters['failed_sort'] ?? 'failed_at';
-        $failedDirection = $failedFilters['failed_direction'] = $failedFilters['failed_direction'] ?? ($failedSort === 'failed_at' ? 'desc' : 'asc');
         $users = User::query()->toBase()->selectRaw('COUNT(*) AS total, COUNT(email_verified_at) AS verified, COUNT(suspended_at) AS suspended')->first();
         $subscriptions = MarketSubscription::query()->where('active', true)->count();
         $feeds = MarketFeed::query()->selectRaw('status, COUNT(*) AS total')->groupBy('status')->orderBy('status')->get();
@@ -51,6 +45,24 @@ class ReportController extends Controller
                 }
             }
         }
+        $traffic = DB::table('access_daily_stats')->where('day', now('UTC')->toDateString())
+            ->selectRaw('COALESCE(SUM(requests), 0) AS total, COALESCE(SUM(CASE WHEN status_code >= 500 THEN requests ELSE 0 END), 0) AS errors')->first();
+        $latestPull = MarketFeed::query()->max('last_pulled_at');
+        $latestModel = DB::table('intelligence_models')->max('created_at');
+        $geoStatus = $geo->status();
+
+        return view('owner.overview', compact('users', 'subscriptions', 'feeds', 'overdue', 'modelTotals',
+            'traffic', 'latestPull', 'latestModel', 'geoStatus'));
+    }
+
+    public function queueBacklog(Request $request, QueueBacklog $backlog): View
+    {
+        $failedFilters = $request->validate([
+            'failed_sort' => ['nullable', Rule::in(['uuid', 'connection', 'exception', 'failed_at'])],
+            'failed_direction' => ['nullable', Rule::in(['asc', 'desc'])],
+        ]);
+        $failedSort = $failedFilters['failed_sort'] = $failedFilters['failed_sort'] ?? 'failed_at';
+        $failedDirection = $failedFilters['failed_direction'] = $failedFilters['failed_direction'] ?? ($failedSort === 'failed_at' ? 'desc' : 'asc');
         $queueBacklog = $backlog->snapshot();
         $failedQuery = DB::connection(config('queue.failed.database'))->table(config('queue.failed.table', 'failed_jobs'))
             ->select('uuid', 'connection', 'queue', 'exception', 'failed_at');
@@ -67,14 +79,8 @@ class ReportController extends Controller
             unset($job->exception);
         });
         $queueDriver = config('queue.default');
-        $traffic = DB::table('access_daily_stats')->where('day', now('UTC')->toDateString())
-            ->selectRaw('COALESCE(SUM(requests), 0) AS total, COALESCE(SUM(CASE WHEN status_code >= 500 THEN requests ELSE 0 END), 0) AS errors')->first();
-        $latestPull = MarketFeed::query()->max('last_pulled_at');
-        $latestModel = DB::table('intelligence_models')->max('created_at');
-        $geoStatus = $geo->status();
 
-        return view('owner.overview', compact('users', 'subscriptions', 'feeds', 'overdue', 'modelTotals', 'queueBacklog', 'failed',
-            'failedFilters', 'failedSort', 'failedDirection', 'queueDriver', 'traffic', 'latestPull', 'latestModel', 'geoStatus'));
+        return view('owner.queue-backlog', compact('queueBacklog', 'failed', 'failedFilters', 'failedSort', 'failedDirection', 'queueDriver'));
     }
 
     public function subscriptions(Request $request): View

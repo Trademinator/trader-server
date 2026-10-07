@@ -29,11 +29,35 @@
                 @endcan
                 @can('manage-server')
                     <x-navlist.group :heading="__('Server owner')">
-                        <x-navlist.item before="phosphor-gear-fine" :href="route('owner.overview')" :current="request()->routeIs('owner.*') && ! request()->routeIs('owner.status*')">
-                            {{ __('Server administration') }}
+                        <x-navlist.item before="phosphor-house-line" :href="route('owner.overview')" :current="request()->routeIs('owner.overview')">
+                            {{ __('Overview') }}
+                        </x-navlist.item>
+                        <x-navlist.item before="phosphor-chart-line" :href="route('owner.access')" :current="request()->routeIs('owner.access')">
+                            {{ __('Access statistics') }}
+                        </x-navlist.item>
+                        <x-navlist.item before="phosphor-archive" :href="route('owner.archives')" :current="request()->routeIs('owner.archives*')">
+                            {{ __('Archives') }}
+                        </x-navlist.item>
+                        <x-navlist.item before="phosphor-link" :href="route('owner.coingecko-mappings.index')" :current="request()->routeIs('owner.coingecko-mappings.*')">
+                            {{ __('CoinGecko mappings') }}
+                        </x-navlist.item>
+                        <x-navlist.item before="phosphor-calendar-check" :href="route('owner.events')" :current="request()->routeIs('owner.events*')">
+                            {{ __('Event review') }}
+                        </x-navlist.item>
+                        <x-navlist.item before="phosphor-brain" :href="route('owner.intelligence')" :current="request()->routeIs('owner.intelligence*')">
+                            {{ __('Intelligence') }}
+                        </x-navlist.item>
+                        <x-navlist.item before="phosphor-stack" :href="route('owner.queue-backlog')" :current="request()->routeIs('owner.queue-backlog', 'owner.failed-jobs.*')">
+                            {{ __('Queue backlog') }}
                         </x-navlist.item>
                         <x-navlist.item before="phosphor-chart-line" :href="route('owner.status')" :current="request()->routeIs('owner.status*')">
                             {{ __('Status') }}
+                        </x-navlist.item>
+                        <x-navlist.item before="phosphor-credit-card" :href="route('owner.subscriptions')" :current="request()->routeIs('owner.subscriptions', 'owner.markets.*', 'owner.history-recovery.*')">
+                            {{ __('Subscriptions') }}
+                        </x-navlist.item>
+                        <x-navlist.item before="phosphor-users" :href="route('owner.users')" :current="request()->routeIs('owner.users*')">
+                            {{ __('Users') }}
                         </x-navlist.item>
                     </x-navlist.group>
                 @endcan

@@ -40,7 +40,7 @@ it('reports waiting delayed and reserved database jobs separately without exposi
         backlogJob('custom:<script>alert(1)</script>'),
     ]);
 
-    $response = $this->actingAs($owner)->get('/owner');
+    $response = $this->actingAs($owner)->get('/owner/queue-backlog');
 
     $response->assertSee('Waiting')->assertSee('Delayed')->assertSee('Reserved')
         ->assertSee('custom:&lt;script&gt;', false)->assertDontSee('<script>alert(1)</script>', false)
@@ -113,7 +113,7 @@ it('discovers Redis queues and their states alongside database jobs without bloc
     $queue->setConnectionName('redis');
     Queue::shouldReceive('connection')->with('redis')->once()->andReturn($queue);
 
-    $response = $this->actingAs($owner)->get('/owner');
+    $response = $this->actingAs($owner)->get('/owner/queue-backlog');
 
     $response->assertSee('redis / redis')->assertSee('database-only')->assertSee('archive:urgent')->assertSee('running-only');
     $snapshot = $response->viewData('queueBacklog');
@@ -164,7 +164,7 @@ it('reports unavailable connections without claiming the backlog is empty or lea
     config(['operations.queue_backlog_connections' => ['redis']]);
     Queue::shouldReceive('connection')->with('redis')->once()->andThrow(new RuntimeException('PRIVATE_PASSWORD'));
 
-    $response = $this->actingAs($owner)->get('/owner');
+    $response = $this->actingAs($owner)->get('/owner/queue-backlog');
 
     $response->assertSee('Unable to read queue connection redis')->assertSee('Queue backlog could not be fully read.')
         ->assertDontSee('No queued jobs')->assertDontSee('PRIVATE_PASSWORD');
