@@ -4,6 +4,7 @@ namespace App\Domain\Features;
 
 use App\Domain\Operations\ActionLog;
 use App\Models\CoinGeckoMarketMapping;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -112,13 +113,33 @@ final class CoinGeckoCollector
         $saved = 0;
         foreach ($groups as $currency => $ids) {
             foreach (array_chunk(array_values(array_unique($ids)), 100) as $batch) {
-                $coins = $this->client->get('/coins/markets', [
-                    'vs_currency' => $currency,
-                    'ids' => implode(',', $batch),
-                    'per_page' => 100,
-                    'page' => 1,
-                    'sparkline' => 'false',
-                ]);
+                try {
+                    $coins = $this->client->get('/coins/markets', [
+                        'vs_currency' => $currency,
+                        'ids' => implode(',', $batch),
+                        'per_page' => 100,
+                        'page' => 1,
+                        'sparkline' => 'false',
+                    ]);
+                } catch (RequestException $exception) {
+                    // Recover legacy mappings resolved before quote validation.
+                    // All unrelated provider errors must still propagate.
+                    if ($exception->response->status() !== 400
+                        || $exception->response->json('error') !== 'invalid vs_currency') {
+                        throw $exception;
+                    }
+
+                    CoinGeckoMarketMapping::query()
+                        ->where('status', 'resolved')
+                        ->whereRaw('LOWER(vs_currency) = ?', [$currency])
+                        ->update([
+                            'status' => 'unsupported',
+                            'last_error' => 'CoinGecko rejected the exact quote currency '.strtoupper($currency).' for /coins/markets.',
+                            'updated_at' => now(),
+                        ]);
+
+                    continue;
+                }
                 foreach ($coins as $coin) {
                     if (! in_array($coin['id'] ?? null, $batch, true) || ! isset($coin['last_updated']) || abs(now()->getTimestamp() - strtotime($coin['last_updated'])) > config('features.coingecko.max_age_seconds')) {
                         continue;

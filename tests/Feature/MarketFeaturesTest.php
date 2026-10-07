@@ -152,6 +152,7 @@ it('backfills and resolves CoinGecko mappings for active subscriptions', functio
 
     Http::preventStrayRequests();
     Http::fake([
+        'api.coingecko.com/api/v3/simple/supported_vs_currencies' => Http::response(['usd', 'cad', 'mxn']),
         'api.coingecko.com/api/v3/search*' => Http::response(['coins' => [[
             'id' => 'bitcoin', 'name' => 'Bitcoin', 'symbol' => 'btc', 'market_cap_rank' => 1,
         ]]]),
@@ -183,6 +184,7 @@ it('marks ambiguous CoinGecko symbols instead of guessing a coin ID', function (
 
     Http::preventStrayRequests();
     Http::fake([
+        'api.coingecko.com/api/v3/simple/supported_vs_currencies' => Http::response(['usd', 'cad', 'mxn']),
         'api.coingecko.com/api/v3/search*' => Http::response(['coins' => [
             ['id' => 'abc-one', 'name' => 'ABC One', 'symbol' => 'abc'],
             ['id' => 'abc-two', 'name' => 'ABC Two', 'symbol' => 'ABC'],
@@ -193,7 +195,7 @@ it('marks ambiguous CoinGecko symbols instead of guessing a coin ID', function (
     $mapping = CoinGeckoMarketMapping::query()->firstOrFail();
     expect($mapping->status)->toBe('ambiguous')
         ->and($mapping->coin_id)->toBeNull();
-    Http::assertSentCount(1);
+    Http::assertSentCount(2);
 });
 
 it('does not substitute USD context for USDT or ignore provider errors', function () {

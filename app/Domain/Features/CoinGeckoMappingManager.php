@@ -62,8 +62,32 @@ final class CoinGeckoMappingManager
             ->groupBy(fn (CoinGeckoMarketMapping $mapping): string => strtoupper((string) $mapping->base_symbol));
 
         $counts = ['resolved' => 0, 'ambiguous' => 0, 'unmapped' => 0];
+        if ($pending->isEmpty()) {
+            return $counts;
+        }
+
+        // Validate exact spot quotes against the provider, never substitute USD.
+        $supported = array_fill_keys(array_map('strtolower',
+            $this->client->get('/simple/supported_vs_currencies')), true);
 
         foreach ($pending as $symbol => $mappings) {
+            $eligible = $mappings->filter(function (CoinGeckoMarketMapping $mapping) use ($supported): bool {
+                $currency = strtolower((string) $mapping->vs_currency);
+                if (isset($supported[$currency])) {
+                    return true;
+                }
+
+                $mapping->update([
+                    'status' => 'unsupported',
+                    'last_error' => 'CoinGecko does not support the exact quote currency '.strtoupper($currency).' for /coins/markets.',
+                ]);
+
+                return false;
+            });
+            if ($eligible->isEmpty()) {
+                continue;
+            }
+
             $response = $this->client->get('/search', ['query' => $symbol]);
             $coins = collect($response['coins'] ?? [])
                 ->filter(fn ($coin): bool => is_array($coin)
@@ -76,15 +100,15 @@ final class CoinGeckoMappingManager
                 $error = $coins->isEmpty()
                     ? 'CoinGecko returned no exact symbol match.'
                     : 'CoinGecko returned multiple exact symbol matches; manual mapping is required.';
-                $this->markGroup($mappings, $status, $error);
-                $counts[$status] += $mappings->count();
+                $this->markGroup($eligible, $status, $error);
+                $counts[$status] += $eligible->count();
 
                 continue;
             }
 
             $coin = $coins->first();
             $category = $this->resolvePrimaryCategory((string) $coin['id']);
-            foreach ($mappings as $mapping) {
+            foreach ($eligible as $mapping) {
                 $mapping->update([
                     'coin_id' => (string) $coin['id'],
                     'coin_name' => isset($coin['name']) ? (string) $coin['name'] : null,
