@@ -1,6 +1,5 @@
 <?php
 
-use App\Jobs\PrunePortableArchives;
 use App\Jobs\TrainMarketIntelligence;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -60,5 +59,6 @@ Schedule::command('trademinator:prune-access-statistics')
 Schedule::command('trademinator:archive-eligible-tickers')
     ->dailyAt('04:10')->onOneServer()->withoutOverlapping(120)->runInBackground();
 
-// Multipart portable exports/imports are staged in private storage and expire automatically.
-Schedule::job(new PrunePortableArchives)->dailyAt('04:40')->onOneServer();
+// Prune expired multipart export/import staging files and metadata, never permanent archives.
+Schedule::command('trademinator:prune-portable-archives')
+    ->dailyAt('04:40')->onOneServer()->withoutOverlapping(60)->runInBackground();

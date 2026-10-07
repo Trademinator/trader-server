@@ -99,6 +99,7 @@ Each link contains the exact signature, parameter meanings, execution/side-effec
 | Archives and portable data | [`trademinator:archive-rebuild-catalog`](#trademinatorarchive-rebuild-catalog) |
 | Archives and portable data | [`trademinator:portable-export`](#trademinatorportable-export) |
 | Archives and portable data | [`trademinator:portable-import`](#trademinatorportable-import) |
+| Archives and portable data | [`trademinator:prune-portable-archives`](#trademinatorprune-portable-archives) |
 | Administration | [`trademinator:mailgun-check`](#trademinatormailgun-check) |
 | Administration | [`trademinator:prune-access-statistics`](#trademinatorprune-access-statistics) |
 
@@ -957,6 +958,24 @@ php artisan trademinator:portable-import storage/app/private/exports/tickers-202
 ```
 
 Implementation: [`PortableImport.php`](../app/Console/Commands/PortableImport.php).
+
+## trademinator:prune-portable-archives
+
+Signature: `trademinator:prune-portable-archives`
+
+Description: Delete expired temporary multipart portable archive transfers and files.
+
+Delete expired **staged multipart** import/export directories under `ARCHIVE_PORTABLE_PATH` and their `portable_archive_transfers` metadata (including related part metadata). Expiration is controlled by `ARCHIVE_PORTABLE_RETENTION_HOURS` (default 24). Deletion is immediate; this command does **not** delete permanent cold-history archives or hot ticker rows. The scan is performed in bounded batches, and the command reports how many transfers were pruned.
+
+Parameters: none beyond standard Artisan options.
+
+```bash
+php artisan trademinator:prune-portable-archives
+```
+
+Scheduled daily at 04:40 (application timezone), on one server with an overlap lock and background execution. No archive queue worker is required for this cleanup.
+
+Implementation: [`PrunePortableArchives.php`](../app/Console/Commands/PrunePortableArchives.php).
 
 ## trademinator:mailgun-check
 

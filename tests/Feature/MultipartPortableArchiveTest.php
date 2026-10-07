@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 
 beforeEach(function () {
     $this->portableRoot = storage_path('framework/testing/portable-'.bin2hex(random_bytes(4)));
@@ -99,4 +100,51 @@ it('exports bounded gzip parts and waits for every verified part before importin
     expect($import->status)->toBe('completed')
         ->and((int) $import->completed_parts)->toBe(3)
         ->and(Ticker::query()->count())->toBe(5);
+});
+
+it('prunes expired multipart transfer files and metadata in bounded batches via Artisan', function () {
+    $rows = [];
+    for ($i = 0; $i < 103; $i++) {
+        $rows[] = [
+            'portable_archive_transfer_id' => (string) Str::uuid7(),
+            'direction' => $i % 2 === 0 ? 'export' : 'import',
+            'status' => 'completed',
+            'expires_at' => now()->subHour(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+    }
+
+    $activeId = (string) Str::uuid7();
+    $rows[] = [
+        'portable_archive_transfer_id' => $activeId,
+        'direction' => 'import',
+        'status' => 'uploading',
+        'expires_at' => now()->addDay(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ];
+    DB::table('portable_archive_transfers')->insert($rows);
+
+    $expiredExportDir = $this->portableRoot.'/export/'.$rows[0]['portable_archive_transfer_id'];
+    $expiredImportDir = $this->portableRoot.'/import/'.$rows[1]['portable_archive_transfer_id'];
+    $activeDir = $this->portableRoot.'/import/'.$activeId;
+    foreach ([$expiredExportDir, $expiredImportDir, $activeDir] as $directory) {
+        mkdir($directory, 0770, true);
+        file_put_contents($directory.'/part-000001.jsonl.gz', 'temporary data');
+    }
+
+    $this->artisan('trademinator:prune-portable-archives')
+        ->expectsOutput('Pruned 103 expired portable archive transfer(s).')
+        ->assertSuccessful();
+
+    expect(DB::table('portable_archive_transfers')->count())->toBe(1)
+        ->and(DB::table('portable_archive_transfers')->where('portable_archive_transfer_id', $activeId)->exists())->toBeTrue()
+        ->and(is_dir($expiredExportDir))->toBeFalse()
+        ->and(is_dir($expiredImportDir))->toBeFalse()
+        ->and(is_file($activeDir.'/part-000001.jsonl.gz'))->toBeTrue();
+
+    $this->artisan('trademinator:prune-portable-archives')
+        ->expectsOutput('Pruned 0 expired portable archive transfer(s).')
+        ->assertSuccessful();
 });

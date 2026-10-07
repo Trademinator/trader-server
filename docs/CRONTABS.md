@@ -40,6 +40,7 @@ Those two entries cover collection and M2 features. M4 training also requires th
 | `trademinator:dispatch-market-signals` | Every minute | Queue current immutable Server observations once per actively subscribed shared market on the intelligence queue. |
 | `trademinator:refresh-market-discovery` | Hourly at minute 10, application timezone | Refresh optional, bounded CoinGecko discovery/context in the background; never subscribe or trade. |
 | `trademinator:prune-access-statistics` | Daily at 02:40, application timezone | Apply configured retention to access aggregates and daily visitor hashes. |
+| `trademinator:prune-portable-archives` | Daily at 04:40, application timezone | Delete expired multipart import/export staging files and database transfer metadata; permanent archives and hot candles are unaffected. |
 | `trademinator:dispatch-market-features` | Every five minutes | Queue M2 feature builds for subscribed markets with selected candle periods. |
 | `trademinator:collect-market-context` | Hourly | Resolve pending subscription-driven CoinGecko mappings and collect timestamped market context. |
 | `trademinator:dispatch-market-intelligence` | Monday at 04:00, application timezone | Queue one intelligence build per subscribed market and selected period; each build auto-labels the full model-age window once, feeds Action KNN, derives d/H, then trains Outcome KNN when at least 30 valid d observations exist. |
@@ -193,5 +194,7 @@ After deployment, check `php artisan schedule:list`, the intelligence worker log
 ## M4.3 archive export and verification
 
 The Laravel scheduler runs `trademinator:archive-eligible-tickers` daily at **04:10** in the application timezone using `onOneServer()`, `withoutOverlapping(120)`, and `runInBackground()`. It exports and verifies complete monthly ticker shards older than `ARCHIVE_AFTER_DAYS`. It never prunes hot rows.
+
+At **04:40** daily, `trademinator:prune-portable-archives` runs as a background Artisan command using `onOneServer()` and `withoutOverlapping(60)`. It removes expired temporary multipart transfer files and associated database metadata based on `ARCHIVE_PORTABLE_RETENTION_HOURS` (default 24); it does not delete permanent archive shards or hot ticker rows. This cleanup does not depend on an `archive` queue worker. You can run it manually using `php artisan trademinator:prune-portable-archives`.
 
 No daemon is required. Keep the existing once-per-minute `schedule:run` cron and ensure `ARCHIVE_PATH` points to durable shared storage when multiple application nodes must read the same cold-history tier.

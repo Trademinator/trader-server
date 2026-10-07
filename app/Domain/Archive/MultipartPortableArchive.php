@@ -514,13 +514,17 @@ final class MultipartPortableArchive
 
     public function pruneExpired(): int
     {
-        $rows = DB::table('portable_archive_transfers')->where('expires_at', '<=', now())->get(['portable_archive_transfer_id', 'direction']);
-        foreach ($rows as $row) {
-            $this->removeDirectory($this->transferDirectory($row->direction, $row->portable_archive_transfer_id));
-            DB::table('portable_archive_transfers')->where('portable_archive_transfer_id', $row->portable_archive_transfer_id)->delete();
-        }
+        $pruned = 0;
+        DB::table('portable_archive_transfers')->where('expires_at', '<=', now())
+            ->chunkById(100, function (Collection $rows) use (&$pruned): void {
+                foreach ($rows as $row) {
+                    $this->removeDirectory($this->transferDirectory($row->direction, $row->portable_archive_transfer_id));
+                    $pruned += DB::table('portable_archive_transfers')
+                        ->where('portable_archive_transfer_id', $row->portable_archive_transfer_id)->delete();
+                }
+            }, 'portable_archive_transfer_id');
 
-        return $rows->count();
+        return $pruned;
     }
 
     private function finalizeExport(string $transferId): void
