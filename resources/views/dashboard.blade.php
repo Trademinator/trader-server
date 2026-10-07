@@ -69,12 +69,12 @@
                     :human-training="auth()->user()->can('train-intelligence')"
                     :client-activity="true"
                     :auto-refresh="true"
-                    :aria-label="$market->symbol.' price history with recorded Server, Client, and human-training markers'"
-                    legend="Closed exchange candles with recorded Server signals and Client reports.">
+                    :aria-label="$market->symbol.' price history with recorded Server decisions, Client activity, and my Action Training labels'"
+                    legend="Closed exchange candles with recorded Server decisions and Client reports.">
                     <noscript><p>Enable JavaScript for the interactive chart. Recent candle values and the signal journal remain available.</p></noscript>
                 </x-market-candlestick>
                 <p class="guide-help">Server: ↑ BUY · ↓ SELL · ● HOLD · ■ Waiting. Client: C BUY/C SELL decisions and FILL markers include reported fill price. Client reports are shown only when the authenticated user submitted them.</p>
-                <p class="guide-help">Markers appear at the first candle opening at or after the event was recorded. Historical Server signals are never recalculated with a newer model; Client reports remain linked to the original signal.</p>
+                <p class="guide-help">Markers appear at the first candle opening at or after the event was recorded. Historical Server decisions are never recalculated with a newer model; Client reports remain linked to the original signal.</p>
                 <p class="guide-help">TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a> · Market data collected by Trademinator.</p>
                 <details class="mt-3"><summary>Recent closed candle values</summary><div class="dashboard-table-wrap"><table><thead><tr><th>Open time (<x-timezone-label />)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
                     @forelse (array_reverse(array_slice($chart['series'], -10)) as $candle)<tr><td><x-display-time :value="$candle['time'] * 1000" unit="milliseconds" /></td><td>{{ $number($candle['open'], 8) }}</td><td>{{ $number($candle['high'], 8) }}</td><td>{{ $number($candle['low'], 8) }}</td><td>{{ $number($candle['close'], 8) }}</td><td>{{ $number($candle['volume'], 8) }}</td></tr>@empty<tr><td colspan="6">No closed candles yet.</td></tr>@endforelse

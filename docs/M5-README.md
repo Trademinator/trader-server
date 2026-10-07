@@ -104,7 +104,7 @@ Paper requests remain idempotent per caller-supplied key. The Server also permit
 The market chart can display three independent marker sets:
 
 - Server observations;
-- human-training labels;
+- Action Training labels from the authenticated trainer;
 - authenticated Client reports.
 
 Client acted reports and actual fills are styled separately. Fill markers include the reported fill price. The signal journal shows the Client event history linked to each original Server signal; it never rewrites a Server signal because a later model or Client report changed.

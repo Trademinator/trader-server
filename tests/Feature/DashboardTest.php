@@ -141,6 +141,7 @@ it('paginates dashboard candles in both directions within the captured browsing 
     expect(max(array_column($newer['series'], 'time')) * 1000)->toBeLessThan($until);
 
     $this->get(route('dashboard', ['subscription' => $sub->getKey()]))->assertOk()
-        ->assertSee('Earliest data')->assertSee('Show human training')->assertSee('>Train<', false)
+        ->assertSee('Earliest data')->assertSee('Show Server decisions')
+        ->assertSee('Show my Action Training labels')->assertSee('>Train<', false)
         ->assertSee('Full intelligence report');
 });

@@ -20,8 +20,8 @@
             @if ($refresh)<button type="button" class="dashboard-button" data-refresh>Refresh chart</button>@endif
             @if ($fit)<button type="button" class="dashboard-button" data-fit>Fit candles</button>@endif
             @if ($earliest)<button type="button" class="dashboard-button" data-earliest>Earliest data</button>@endif
-            @if ($serverSignals)<label><input type="checkbox" data-markers checked> Show Server signals</label>@endif
-            @if ($humanTraining)<label><input type="checkbox" data-human-training> Show human training</label>@endif
+            @if ($serverSignals)<label><input type="checkbox" data-markers checked> Show Server decisions</label>@endif
+            @if ($humanTraining)<label><input type="checkbox" data-human-training> Show my Action Training labels</label>@endif
             @if ($clientActivity)<label><input type="checkbox" data-client-activity checked> Show Client activity</label>@endif
             @if ($autoRefresh)<label><input type="checkbox" data-auto checked> Refresh every minute</label>@endif
         </div>
