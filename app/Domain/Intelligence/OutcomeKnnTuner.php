@@ -17,7 +17,7 @@ final class OutcomeKnnTuner
         $maximum = min($settings['k_cap'], $trainSize, count($rows));
         if ($maximum < $minimum) {
             return ['k' => null, 'k_min' => $minimum, 'k_max' => $maximum, 'folds' => [], 'candidates' => [],
-                'selection' => 'macro_f1_then_accuracy_confidence_coverage',
+                'selection' => 'supported_macro_f1_then_baseline_improvement_accuracy_confidence_coverage',
                 'reason' => 'no_k_can_satisfy_effective_neighbor_floor'];
         }
         $initialCandidates = array_values(array_unique(array_filter([5, 9, 17, 33, 65, $maximum],
@@ -32,6 +32,7 @@ final class OutcomeKnnTuner
         $folds = [];
         foreach ((new WalkForward)->folds($rows, $trainSize, $settings['test_size'], $settings['gap'], true, null) as $fold) {
             $training = array_map(fn (int $i): array => $rows[$i], $fold['train']);
+            $baseline = $this->majorityLabel($training);
             $folds[] = ['fold' => $fold['fold'], 'train_rows' => count($training),
                 'labels_available_by_ms' => max(array_column($training, 'label_available_at_ms')),
                 'test_from_ms' => $rows[$fold['test'][0]]['decision_at_ms']];
@@ -43,7 +44,7 @@ final class OutcomeKnnTuner
                 $neighbors = $this->neighbors->neighborsPrepared($training, $row['vector'], $maximum,
                     $row['decision_at_ms'], $row['feature_weights'] ?? []);
                 foreach ($reports as $k => &$report) {
-                    $this->accumulate($report, $row, $this->outcomes->vote($neighbors, $k));
+                    $this->accumulate($report, $row, $this->outcomes->vote($neighbors, $k), $baseline);
                 }
                 unset($report);
             }
@@ -65,7 +66,7 @@ final class OutcomeKnnTuner
 
         return ['k' => $this->best($reports), 'k_min' => $minimum, 'k_max' => $maximum, 'folds' => $folds,
             'candidates' => array_values($reports),
-            'selection' => 'macro_f1_then_accuracy_confidence_coverage'];
+            'selection' => 'supported_macro_f1_then_baseline_improvement_accuracy_confidence_coverage'];
     }
 
     public function evaluateWalkForwardPrepared(array $rows, array $settings, int $k, float $deadline): array
@@ -74,6 +75,7 @@ final class OutcomeKnnTuner
         $folds = [];
         foreach ((new WalkForward)->folds($rows, $settings['min_train_size'], $settings['test_size'], $settings['gap'], true, null) as $fold) {
             $training = array_map(fn (int $i): array => $rows[$i], $fold['train']);
+            $baseline = $this->majorityLabel($training);
             $folds[] = ['fold' => $fold['fold'], 'train_rows' => count($training),
                 'labels_available_by_ms' => max(array_column($training, 'label_available_at_ms')),
                 'test_from_ms' => $rows[$fold['test'][0]]['decision_at_ms']];
@@ -84,7 +86,7 @@ final class OutcomeKnnTuner
                 $row = $rows[$index];
                 $nearest = $this->neighbors->neighborsPrepared($training, $row['vector'], $k,
                     $row['decision_at_ms'], $row['feature_weights'] ?? []);
-                $this->accumulate($state, $row, $this->outcomes->vote($nearest, $k));
+                $this->accumulate($state, $row, $this->outcomes->vote($nearest, $k), $baseline);
             }
         }
 
@@ -94,13 +96,14 @@ final class OutcomeKnnTuner
     public function evaluatePrepared(array $training, array $test, int $k, array $settings, float $deadline): array
     {
         $state = $this->emptyReport($k);
+        $baseline = $this->majorityLabel($training);
         foreach ($test as $row) {
             if (microtime(true) > $deadline) {
                 throw new RuntimeException('Outcome KNN evaluation time budget exceeded.');
             }
             $neighbors = $this->neighbors->neighborsPrepared($training, $row['vector'], $k,
                 $row['decision_at_ms'], $row['feature_weights'] ?? []);
-            $this->accumulate($state, $row, $this->outcomes->vote($neighbors, $k));
+            $this->accumulate($state, $row, $this->outcomes->vote($neighbors, $k), $baseline);
         }
 
         return $this->finish($state, $settings);
@@ -108,20 +111,24 @@ final class OutcomeKnnTuner
 
     private function emptyReport(int $k): array
     {
+        $matrix = array_fill_keys(SemanticLabels::OUTCOMES,
+            array_fill_keys(SemanticLabels::OUTCOMES, 0));
+
         return ['k' => $k, 'evaluated' => 0, 'supported' => 0, 'correct' => 0, 'confidence' => 0.0,
-            'confusion' => array_fill_keys(SemanticLabels::OUTCOMES,
-                array_fill_keys(SemanticLabels::OUTCOMES, 0))];
+            'confusion' => $matrix, 'baseline_confusion' => $matrix];
     }
 
-    private function accumulate(array &$state, array $row, array $prediction): void
+    private function accumulate(array &$state, array $row, array $prediction, string $baseline): void
     {
         $actual = $row['label'];
-        $predicted = $prediction['outcome'];
         $state['evaluated']++;
-        $state['confusion'][$actual][$predicted]++;
         if ($prediction['reason'] !== 'supported') {
             return;
         }
+
+        $predicted = $prediction['outcome'];
+        $state['confusion'][$actual][$predicted]++;
+        $state['baseline_confusion'][$actual][$baseline]++;
         $state['supported']++;
         $state['correct'] += (int) ($actual === $predicted);
         $state['confidence'] += $prediction['confidence'];
@@ -131,31 +138,92 @@ final class OutcomeKnnTuner
     {
         $coverage = $state['evaluated'] ? $state['supported'] / $state['evaluated'] : 0.0;
         $accuracy = $state['supported'] ? $state['correct'] / $state['supported'] : 0.0;
-        $f1 = [];
-        foreach (SemanticLabels::OUTCOMES as $class) {
-            $tp = $state['confusion'][$class][$class];
-            $predicted = array_sum(array_column($state['confusion'], $class));
-            $actual = array_sum($state['confusion'][$class]);
-            $precision = $predicted ? $tp / $predicted : 0.0;
-            $recall = $actual ? $tp / $actual : 0.0;
-            $f1[] = ($precision + $recall) > 0 ? 2 * $precision * $recall / ($precision + $recall) : 0.0;
-        }
-        $macroF1 = array_sum($f1) / count($f1);
-        $minimumSupported = max(5, (int) $settings['min_directional_predictions']);
+        [$macroF1, $perClass] = $this->classificationMetrics($state['confusion']);
+        [$baselineMacroF1, $baselinePerClass] = $this->classificationMetrics($state['baseline_confusion']);
+        $baselineCorrect = array_sum(array_map(
+            fn (string $class): int => $state['baseline_confusion'][$class][$class],
+            SemanticLabels::OUTCOMES
+        ));
+        $baselineAccuracy = $state['supported'] ? $baselineCorrect / $state['supported'] : 0.0;
+        $outcome = $settings['outcome'] ?? [];
+        $minimumMacroF1 = (float) ($outcome['min_macro_f1'] ?? 0.20);
+        $minimumImprovement = (float) ($outcome['min_baseline_improvement'] ?? 0.02);
+        $minimumSupported = max(5, (int) ($outcome['min_supported_predictions'] ?? 25));
+        $minimumCoverage = (float) ($outcome['min_coverage'] ?? 0.01);
+        $improvement = $macroF1 - $baselineMacroF1;
 
         $gates = [
             'validation_rows' => $state['evaluated'] >= $settings['min_validation_rows'],
             'supported_predictions' => $state['supported'] >= $minimumSupported,
-            'macro_f1' => $macroF1 >= $settings['min_semantic_precision'],
-            'coverage' => $coverage >= $settings['min_coverage'],
+            'macro_f1' => $macroF1 >= $minimumMacroF1,
+            'baseline_improvement' => $improvement >= $minimumImprovement,
+            'coverage' => $coverage >= $minimumCoverage,
         ];
 
-        return [...$state, 'accuracy' => $accuracy, 'macro_f1' => $macroF1,
-            'semantic_precision' => $macroF1, 'coverage' => $coverage,
+        unset($state['baseline_confusion']);
+
+        return [...$state, 'abstained' => $state['evaluated'] - $state['supported'],
+            'accuracy' => $accuracy, 'supported_accuracy' => $accuracy,
+            'macro_f1' => $macroF1, 'supported_macro_f1' => $macroF1,
+            'semantic_precision' => $macroF1, 'per_class' => $perClass, 'coverage' => $coverage,
+            'baseline' => [
+                'strategy' => 'training_majority_class_on_same_supported_rows',
+                'accuracy' => $baselineAccuracy,
+                'macro_f1' => $baselineMacroF1,
+                'per_class' => $baselinePerClass,
+                'improvement' => $improvement,
+                'minimum_improvement' => $minimumImprovement,
+            ],
+            'thresholds' => [
+                'min_macro_f1' => $minimumMacroF1,
+                'min_baseline_improvement' => $minimumImprovement,
+                'min_supported_predictions' => $minimumSupported,
+                'min_coverage' => $minimumCoverage,
+            ],
             'mean_confidence' => $state['supported'] ? $state['confidence'] / $state['supported'] : 0.0,
             'stability' => 1.0, 'gates' => $gates,
             'failed_gates' => array_keys(array_filter($gates, fn (bool $passed): bool => ! $passed)),
             'eligible' => ! in_array(false, $gates, true)];
+    }
+
+    private function classificationMetrics(array $confusion): array
+    {
+        $perClass = [];
+        foreach (SemanticLabels::OUTCOMES as $class) {
+            $tp = $confusion[$class][$class];
+            $predicted = array_sum(array_column($confusion, $class));
+            $actual = array_sum($confusion[$class]);
+            $precision = $predicted ? $tp / $predicted : 0.0;
+            $recall = $actual ? $tp / $actual : 0.0;
+            $f1 = ($precision + $recall) > 0 ? 2 * $precision * $recall / ($precision + $recall) : 0.0;
+            $perClass[$class] = [
+                'precision' => $precision,
+                'recall' => $recall,
+                'f1' => $f1,
+                'support' => $actual,
+                'predicted' => $predicted,
+            ];
+        }
+
+        return [array_sum(array_column($perClass, 'f1')) / count($perClass), $perClass];
+    }
+
+    private function majorityLabel(array $rows): string
+    {
+        $counts = array_fill_keys(SemanticLabels::OUTCOMES, 0);
+        foreach ($rows as $row) {
+            if (isset($counts[$row['label'] ?? null])) {
+                $counts[$row['label']]++;
+            }
+        }
+        $winner = SemanticLabels::OUTCOMES[0];
+        foreach (SemanticLabels::OUTCOMES as $class) {
+            if ($counts[$class] > $counts[$winner]) {
+                $winner = $class;
+            }
+        }
+
+        return $winner;
     }
 
     private function best(array $reports): ?int

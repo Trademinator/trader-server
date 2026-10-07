@@ -66,7 +66,7 @@ it('shows configured row requirements and a conditional data ETA excluding open 
     expect($progress['next_training']->format('Y-m-d H:i:s'))->toBe('2024-01-01 04:00:00');
 });
 
-it('makes the minimum match actual chronological tuning at the boundary', function (int $count, string $status) {
+it('keeps the minimum as a history requirement without promising model quality', function (int $count) {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     config(['intelligence.knn.min_train_size' => 36, 'intelligence.knn.test_size' => 12,
         'intelligence.knn.min_validation_rows' => 5, 'intelligence.knn.min_directional_predictions' => 1]);
@@ -76,9 +76,9 @@ it('makes the minimum match actual chronological tuning at the boundary', functi
     $progress = readiness($report);
 
     expect($progress['minimum'])->toBe(57);
-    expect($report['status'])->toBe($status);
+    expect($report['status'])->toBe('abstaining');
     expect($progress['source']['usable_rows'])->toBe($count);
-})->with([[56, 'abstaining'], [57, 'ready']]);
+})->with([56, 57]);
 
 it('suppresses misleading ETAs for stale or missing feature history', function () {
     $this->travelTo('2024-01-01 03:20:00 UTC');

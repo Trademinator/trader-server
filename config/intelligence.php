@@ -31,6 +31,13 @@ return [
         'max_contradiction_rate' => 0.05,
         'min_coverage' => 0.01,
     ],
+    'outcome' => [
+        // Five-class Outcome quality gates. These are intentionally separate from Action KNN.
+        'min_macro_f1' => min(1.0, max(0.0, (float) env('INTELLIGENCE_OUTCOME_MIN_MACRO_F1', 0.20))),
+        'min_baseline_improvement' => min(1.0, max(0.0, (float) env('INTELLIGENCE_OUTCOME_MIN_BASELINE_IMPROVEMENT', 0.02))),
+        'min_supported_predictions' => max(5, (int) env('INTELLIGENCE_OUTCOME_MIN_SUPPORTED_PREDICTIONS', 25)),
+        'min_coverage' => min(1.0, max(0.0, (float) env('INTELLIGENCE_OUTCOME_MIN_COVERAGE', 0.01))),
+    ],
     'patterns' => [
         'enabled' => true,
         'as_knn_features' => true,

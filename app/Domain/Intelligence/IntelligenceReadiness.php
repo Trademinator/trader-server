@@ -24,6 +24,7 @@ final class IntelligenceReadiness
     public function describe(string $exchange, string $symbol, ?string $period, ?MarketFeed $feed, ?array $report, array $signal): array
     {
         $settings = $report['settings'] ?? config('intelligence.knn');
+        $outcomeSettings = $settings['outcome'] ?? config('intelligence.outcome');
         $horizon = (int) ($report['label_definition']['horizon'] ?? config('intelligence.horizon'));
         $minimum = TrainingRequirements::minimumRows($settings, $horizon);
         $data = [
@@ -52,18 +53,21 @@ final class IntelligenceReadiness
         }
         if ($report !== null) {
             $candidates = $report['selection']['candidates'] ?? [];
-            usort($candidates, function (array $a, array $b) use ($settings): int {
-                $passed = fn (array $candidate): int => count(array_filter(TrainingRequirements::gates($candidate, $settings), fn (array $gate): bool => $gate['passed']));
+            $gatesFor = fn (array $metrics): array => array_key_exists('supported', $metrics)
+                ? TrainingRequirements::outcomeGates($metrics, $settings, $outcomeSettings)
+                : TrainingRequirements::gates($metrics, $settings);
+            usort($candidates, function (array $a, array $b) use ($gatesFor): int {
+                $passed = fn (array $candidate): int => count(array_filter($gatesFor($candidate), fn (array $gate): bool => $gate['passed']));
 
                 return [$passed($b), $b['semantic_precision'], -$b['k']] <=> [$passed($a), $a['semantic_precision'], -$a['k']];
             });
             $selected = array_values(array_filter($candidates, fn (array $candidate): bool => $candidate['k'] === $report['k']));
             $candidate = $selected[0] ?? $candidates[0] ?? null;
             if ($candidate !== null) {
-                $data['tuning'] = ['k' => $candidate['k'], 'gates' => TrainingRequirements::gates($candidate, $settings)];
+                $data['tuning'] = ['k' => $candidate['k'], 'gates' => $gatesFor($candidate)];
             }
             if ($report['holdout'] ?? null) {
-                $data['holdout'] = TrainingRequirements::gates($report['holdout'], $settings);
+                $data['holdout'] = $gatesFor($report['holdout']);
             }
         }
         if ($period === null) {

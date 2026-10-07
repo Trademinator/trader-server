@@ -5,6 +5,10 @@
         'Semantic precision' => 'Correct BUY or SELL predictions divided by all BUY or SELL predictions. Correct means matching the historical turning-point label. For example, 6 correct predictions out of 10 means 60%. This does not measure profit after trading costs.',
         'Directional coverage' => 'BUY or SELL predictions divided by all evaluated rows, including HOLD and abstentions. For example, 10 directional predictions across 100 evaluated rows means 10% coverage.',
         'Top/bottom contradictions' => 'The percentage of BUY or SELL predictions that buy at a recent top or sell at a recent bottom, as defined by the historical labeling rules. Lower is better. A zero value with no directional predictions does not establish a valid model.',
+        'Supported Outcome predictions' => 'Outcome predictions whose evidence passed the KNN neighbor and confidence checks. Abstentions are excluded from the Outcome confusion matrix and quality score.',
+        'Supported Outcome Macro-F1' => 'The unweighted average F1 across SUPER BEAR, BEAR, NEUTRAL, BULL and SUPER BULL, calculated only from supported Outcome predictions. Abstentions are measured separately as coverage.',
+        'Improvement over Outcome baseline' => 'How much supported Outcome Macro-F1 exceeds a chronological baseline that always predicts the majority Outcome class from the corresponding training fold. The baseline never uses future labels.',
+        'Outcome coverage' => 'Supported Outcome predictions divided by all evaluated rows. Abstentions lower coverage but do not count as NEUTRAL predictions.',
     ];
 @endphp
 <div class="review-table-wrap">

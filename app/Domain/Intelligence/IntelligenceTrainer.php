@@ -12,7 +12,7 @@ use RuntimeException;
 
 final class IntelligenceTrainer
 {
-    public const VERSION = 'm6-outcome-action-knn-v2';
+    public const VERSION = 'm6-outcome-action-knn-v3';
 
     public function __construct(
         private DatasetStore $datasets,
@@ -50,6 +50,7 @@ final class IntelligenceTrainer
         foreach ($datasetRows as $row) {
             if ($row['decision_at_ms'] < $window['from_ms']) {
                 $ageExcluded++;
+
                 continue;
             }
             $outcomeLabel = $row['label'] ?? null;
@@ -86,6 +87,7 @@ final class IntelligenceTrainer
 
         $rowAudit = ['input_rows' => count($rows), 'unique_rows' => count($rows), 'duplicates' => 0];
         $settings = config('intelligence.knn');
+        $settings['outcome'] = config('intelligence.outcome');
         $deadline ??= microtime(true) + config('intelligence.max_seconds');
         $publicationDeadline = OptionalGuidance::publicationDeadline($deadline);
         $lock = Cache::lock('trademinator:intelligence:'.ModelStore::marketKey(
