@@ -6,7 +6,8 @@ return [
     'queue' => env('INTELLIGENCE_QUEUE', 'intelligence'),
     'schema' => env('INTELLIGENCE_SCHEMA', 'core'),
     'context_fallback' => env('INTELLIGENCE_CONTEXT_FALLBACK', 'none'),
-    // Bootstrap/fallback depth only. Each dataset replaces this with H derived from Action pivot frequencies.\n    'horizon' => 12,
+    // Bootstrap/fallback depth only. Each dataset replaces this with H derived from Action pivot frequencies.
+    'horizon' => 12,
     'lookback' => 20,
     // Automatic dataset/model deadline; human training adds its own allowance.
     'max_seconds' => max(60, (int) env('INTELLIGENCE_MAX_SECONDS', 1800)),
