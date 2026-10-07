@@ -13,6 +13,7 @@ use App\Http\Controllers\Owner\FailedJobController;
 use App\Http\Controllers\Owner\HistoryRecoveryController;
 use App\Http\Controllers\Owner\MarketEventController;
 use App\Http\Controllers\Owner\ReportController;
+use App\Http\Controllers\Owner\StatusController;
 use App\Http\Controllers\Owner\UserController;
 use App\Http\Controllers\Settings;
 use App\Http\Middleware\ConfirmFailedJobPassword;
@@ -106,6 +107,8 @@ Route::prefix('owner')->name('owner.')->middleware(['auth', 'verified', 'server-
     Route::post('history-recovery/{market}', [HistoryRecoveryController::class, 'store'])->whereUuid('market')
         ->middleware(['throttle:6,1,history-recovery', ConfirmHistoryRecoveryPassword::class])->name('history-recovery.store');
     Route::get('intelligence', [ReportController::class, 'intelligence'])->name('intelligence');
+    Route::get('status', [StatusController::class, 'index'])->name('status');
+    Route::delete('status/purge', [StatusController::class, 'purge'])->middleware(['password.confirm', 'throttle:6,1'])->name('status.purge');
     Route::get('intelligence/{model}', [ReportController::class, 'model'])->name('intelligence.show');
     Route::get('events', [MarketEventController::class, 'index'])->name('events');
     Route::put('events/{candidate}', [MarketEventController::class, 'update'])->whereUuid('candidate')->name('events.update');

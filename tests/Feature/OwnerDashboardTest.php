@@ -51,7 +51,7 @@ it('grants the owner gate only for a valid configured matching UUID', function (
 it('refuses every owner report to ordinary users before resolving private records', function (string $path) {
     serverOwner();
     $this->actingAs(User::factory()->create())->get($path)->assertForbidden();
-})->with(['/owner', '/owner/users', '/owner/subscriptions', '/owner/intelligence', '/owner/access',
+})->with(['/owner', '/owner/users', '/owner/subscriptions', '/owner/intelligence', '/owner/status', '/owner/access',
     '/owner/users/00000000-0000-4000-8000-000000000001', '/owner/markets/00000000-0000-4000-8000-000000000001',
     '/owner/intelligence/00000000-0000-4000-8000-000000000001']);
 
@@ -149,4 +149,25 @@ it('blocks subscriptions through the service for suspended accounts', function (
     expect(fn () => app(MarketSubscriptions::class)->subscribe($target, $exchange, 'BTC/USD', '0.01'))
         ->toThrow(InvalidArgumentException::class, 'The account is suspended.');
     expect(MarketSubscription::query()->count())->toBe(0);
+});
+
+it('shows version status and purges only obsolete feature versions', function () {
+    $owner = serverOwner();
+    $base = [
+        'exchange' => 'kraken', 'symbol' => 'BTC/USD', 'period' => '1m',
+        'microtimestamp' => now()->getTimestampMs(), 'available_at_ms' => now()->getTimestampMs(),
+        'payload' => '{}', 'created_at' => now(), 'updated_at' => now(),
+    ];
+    DB::table('market_features')->insert([
+        [...$base, 'feature_id' => (string) Str::uuid(), 'version' => AppDomainFeaturesFeatureEngine::VERSION],
+        [...$base, 'feature_id' => (string) Str::uuid(), 'microtimestamp' => $base['microtimestamp'] - 60000, 'version' => 'obsolete-feature-v0'],
+    ]);
+
+    $this->actingAs($owner)->get('/owner/status')->assertOk()
+        ->assertSee('Version status')->assertSee('obsolete-feature-v0')->assertSee('Purge eligible');
+
+    $this->delete('/owner/status/purge', ['scope' => 'features'])->assertRedirect();
+
+    expect(DB::table('market_features')->where('version', 'obsolete-feature-v0')->count())->toBe(0)
+        ->and(DB::table('market_features')->where('version', AppDomainFeaturesFeatureEngine::VERSION)->count())->toBe(1);
 });
