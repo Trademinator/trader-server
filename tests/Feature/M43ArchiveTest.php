@@ -47,6 +47,27 @@ it('creates verified monthly shards and can serve cold ticker history after hot 
     expect($rows)->toHaveCount(2)->and($rows[1]['close'])->toBe('101.00000000');
 });
 
+it('serves cold history without rewriting verified archive metadata', function () {
+    $repo = app(TickerRepository::class);
+    $first = gmmktime(0, 0, 0, 1, 4, 2026) * 1000;
+    $repo->saveTickers('kraken', 'BTC/USD', '1m', [m43Candle($first, '100.00000000')]);
+    $result = app(TickerArchive::class)->archiveMonth('kraken', 'BTC/USD', '1m', 2026, 1);
+    $manifestPath = $this->archiveRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $result['manifest']);
+    $manifestBefore = file_get_contents($manifestPath);
+    DB::table('archive_catalog')->where('path', $result['manifest'])->update([
+        'verification_error' => 'sentinel', 'updated_at' => '2020-01-01 00:00:00',
+    ]);
+    Ticker::query()->delete();
+
+    $rows = iterator_to_array($repo->streamHistory('kraken', 'BTC/USD', '1m', $first, $first), true);
+    $catalog = DB::table('archive_catalog')->where('path', $result['manifest'])->first();
+
+    expect($rows)->toHaveCount(1)
+        ->and(file_get_contents($manifestPath))->toBe($manifestBefore)
+        ->and($catalog->verification_error)->toBe('sentinel')
+        ->and((string) $catalog->updated_at)->toBe('2020-01-01 00:00:00');
+});
+
 it('preserves archive identity when an existing catalog row is refreshed', function () {
     $repo = app(TickerRepository::class);
     $first = gmmktime(0, 0, 0, 1, 3, 2026) * 1000;

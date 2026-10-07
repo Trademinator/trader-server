@@ -4,6 +4,11 @@
     @endphp
     @include('markets.guide-styles')
     @include('markets.intelligence-styles')
+    <style>
+        @media (max-width: 640px) {
+            .dashboard-category-grid-inline { grid-template-columns: 1fr !important; }
+        }
+    </style>
     <div class="dashboard-page flex flex-col gap-5">
         <header class="dashboard-hero">
             <div class="flex flex-wrap items-start justify-between gap-4">
@@ -44,7 +49,7 @@
                 </div>
                 <p class="guide-help">Observed <x-display-time :value="$conditions['observed_at_ms']" unit="milliseconds" />. Broad market context; chart prices below come from the selected exchange.</p>
                 @if ($conditions['categories'])
-                    <div class="grid gap-3 mt-3" style="grid-template-columns: repeat(5, minmax(0, 1fr));" aria-label="Largest category movements in the available sample">
+                    <div class="grid gap-3 mt-3 dashboard-category-grid-inline" style="grid-template-columns: repeat(5, minmax(0, 1fr));" aria-label="Largest category movements in the available sample">
                         @foreach ($conditions['categories'] as $category)
                             <div class="dashboard-stat">
                                 <span>{{ $category['name'] }}</span>

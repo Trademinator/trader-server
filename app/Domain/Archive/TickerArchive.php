@@ -107,6 +107,18 @@ final class TickerArchive
 
     public function verifyManifest(string $manifestRelative): array
     {
+        [$manifest, $manifestPath] = $this->validatedManifest($manifestRelative);
+        $manifest['verification'] = ['state' => 'verified', 'error' => null];
+        $manifest['verified_at'] = now('UTC')->toIso8601String();
+        file_put_contents($manifestPath, PortableJson::encode($manifest)."\n", LOCK_EX);
+        $this->catalog->upsert($manifest, $manifestRelative);
+
+        return $manifest;
+    }
+
+    /** Validate cold storage without mutating its manifest or catalog row. */
+    private function validatedManifest(string $manifestRelative): array
+    {
         $root = rtrim((string) config('archive.root'), DIRECTORY_SEPARATOR);
         $manifestPath = $this->safePath($root, $manifestRelative);
         if (! is_file($manifestPath)) {
@@ -132,12 +144,8 @@ final class TickerArchive
         if ($rows !== $manifest['row_count'] || $first !== $manifest['first_key'] || $last !== $manifest['last_key']) {
             throw new ArchiveIntegrityException('Archive row count or boundary keys do not match its manifest.');
         }
-        $manifest['verification'] = ['state' => 'verified', 'error' => null];
-        $manifest['verified_at'] = now('UTC')->toIso8601String();
-        file_put_contents($manifestPath, PortableJson::encode($manifest)."\n", LOCK_EX);
-        $this->catalog->upsert($manifest, $manifestRelative);
 
-        return $manifest;
+        return [$manifest, $manifestPath];
     }
 
     public function verifyAll(): array
@@ -187,7 +195,7 @@ final class TickerArchive
                 throw new ArchiveIntegrityException('Overlapping archive catalog ranges require OWNER repair before cold-history reads.');
             }
             $previousEnd = (int) $catalog->range_end_ms;
-            $manifest = $this->verifyManifest($catalog->path);
+            [$manifest] = $this->validatedManifest($catalog->path);
             $root = rtrim((string) config('archive.root'), DIRECTORY_SEPARATOR);
             $manifestPath = $this->safePath($root, $catalog->path);
             $dataPath = $this->manifestDataPath($root, $manifestPath, $manifest['data_file']);

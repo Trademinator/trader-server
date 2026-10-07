@@ -112,6 +112,27 @@ it('combines consecutive repair pages into one command while preserving unavaila
     expect(DB::table('candle_gap_repairs')->where('status', 'unavailable')->count())->toBe(3);
 });
 
+it('reports a missing cold-history manifest without corrupting transaction state', function () {
+    $root = storage_path('framework/testing/recursive-gaps-missing-manifest-'.bin2hex(random_bytes(4)));
+    config(['archive.enabled' => true, 'archive.root' => $root, 'archive.gzip_level' => 1]);
+    $start = strtotime('2026-01-01 UTC') * 1000;
+    recursiveGapStore([$start, $start + 900000], '15m');
+
+    try {
+        $result = app(TickerArchive::class)->archiveMonth('bitso', 'ATOM/USD', '15m', 2026, 1);
+        DB::table('tickers')->delete();
+        unlink($root.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $result['manifest']));
+        $repository = app(TickerRepository::class);
+        $repository->invalidateHistory('bitso', 'ATOM/USD', '15m');
+
+        expect(fn () => $repository->missingClosedCandleRanges('bitso', 'ATOM/USD', '15m', $start + 1800000))
+            ->toThrow(ArchiveIntegrityException::class, 'Archive manifest is missing');
+        expect(DB::transactionLevel())->toBe(0);
+    } finally {
+        File::deleteDirectory($root);
+    }
+});
+
 it('counts archived candles once and still rejects conflicting hot and cold payloads', function () {
     $root = storage_path('framework/testing/recursive-gaps-'.bin2hex(random_bytes(4)));
     config(['archive.enabled' => true, 'archive.root' => $root, 'archive.gzip_level' => 1]);
