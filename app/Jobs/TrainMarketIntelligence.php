@@ -2,9 +2,11 @@
 
 namespace App\Jobs;
 
+use App\Domain\Intelligence\IntelligenceNotReady;
 use App\Domain\Intelligence\IntelligenceTrainer;
 use App\Domain\Intelligence\MarketIntelligence;
 use App\Domain\Intelligence\ModelStore;
+use App\Domain\Operations\ActionLog;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -50,9 +52,24 @@ final class TrainMarketIntelligence implements ShouldBeUnique, ShouldQueue
             if (Cache::has($key)) {
                 return;
             }
-            $intelligence->build($this->exchange, $this->symbol, $this->period,
-                schema: $this->schema ?? (string) config('intelligence.schema'),
-                generation: hash('sha256', $this->uniqueId()));
+            try {
+                $intelligence->build($this->exchange, $this->symbol, $this->period,
+                    schema: $this->schema ?? (string) config('intelligence.schema'),
+                    generation: hash('sha256', $this->uniqueId()));
+            } catch (IntelligenceNotReady $notReady) {
+                $selection = $notReady->diagnostics;
+                app(ActionLog::class)->write('intelligence.training.skipped', [
+                    'exchange' => $this->exchange, 'symbol' => $this->symbol, 'period' => $this->period,
+                    'reason' => $selection['reason'] ?? 'insufficient_history', 'outcome' => 'skipped',
+                    'feature_rows' => $selection['feature_rows'] ?? 0,
+                    'eligible_rows' => max(
+                        $selection['potential_history']['full']['potential_mature_rows'] ?? 0,
+                        $selection['potential_history']['technical']['potential_mature_rows'] ?? 0,
+                    ),
+                ]);
+
+                return;
+            }
             Cache::put($key, true, now()->addDays(14));
         } finally {
             $lock->release();

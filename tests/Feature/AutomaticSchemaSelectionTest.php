@@ -2,6 +2,7 @@
 
 use App\Domain\Features\FeatureEngine;
 use App\Domain\Intelligence\AutomaticSchemaSelection;
+use App\Domain\Intelligence\IntelligenceNotReady;
 use App\Domain\Intelligence\MarketIntelligence;
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\Research\FeatureSchema;
@@ -88,6 +89,23 @@ it('does not claim that an insufficient technical history is a useful fallback',
 
     expect($selection['effective_schema'])->toBe('full');
     expect($selection['reason'])->toBe('insufficient_both_feature_histories');
+});
+
+it('stops before dataset construction when neither full nor technical history is trainable', function () {
+    $this->travelTo('2024-01-01 04:00:00 UTC');
+    automaticSchemaHistory(count: 20);
+
+    try {
+        app(MarketIntelligence::class)->build('kraken', 'BTC/USD', '1m', schema: 'full', contextFallback: 'technical');
+        $this->fail('Expected intelligence build to report insufficient history.');
+    } catch (IntelligenceNotReady $error) {
+        expect($error->diagnostics['reason'])->toBe('insufficient_both_feature_histories')
+            ->and($error->diagnostics['potential_history']['full']['sufficient'])->toBeFalse()
+            ->and($error->diagnostics['potential_history']['technical']['sufficient'])->toBeFalse();
+    }
+
+    $this->assertDatabaseCount('research_datasets', 0);
+    $this->assertDatabaseCount('intelligence_models', 0);
 });
 
 it('honors source availability and reports individual missing inputs', function () {

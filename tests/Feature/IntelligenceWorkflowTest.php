@@ -1,14 +1,19 @@
 <?php
 
+use App\Domain\Features\FeatureEngine;
 use App\Domain\Intelligence\IntelligenceTrainer;
 use App\Domain\Intelligence\MarketIntelligence;
 use App\Domain\Intelligence\ModelStore;
+use App\Domain\Operations\ActionContext;
+use App\Domain\Operations\ActionLog;
 use App\Domain\Research\DatasetSnapshotBuilder;
 use App\Domain\Research\DatasetStore;
+use App\Domain\Research\FeatureSchema;
 use App\Domain\Research\SemanticLabels;
 use App\Jobs\TrainMarketIntelligence;
 use App\Models\Exchange;
 use App\Models\Market;
+use App\Models\MarketFeature;
 use App\Models\MarketFeed;
 use App\Models\MarketSubscription;
 use App\Models\User;
@@ -17,6 +22,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger;
 use Tests\Support\IntelligenceFixtures;
 
 beforeEach(function () {
@@ -202,6 +209,34 @@ it('dispatches one intelligence job for a shared market and rejects synchronous 
         && $job->exchange === 'kraken' && $job->symbol === 'BTC/USD' && $job->week === '2024-01-01');
     config(['queue.default' => 'sync']);
     $this->artisan('trademinator:dispatch-market-intelligence')->assertFailed();
+});
+
+it('treats insufficient full and technical history as a successful weekly skip', function () {
+    $this->travelTo('2024-01-01 04:00:00 UTC');
+    config(['intelligence.schema' => 'full', 'intelligence.context_fallback' => 'technical']);
+    for ($i = 0; $i < 20; $i++) {
+        $at = IntelligenceFixtures::START + $i * 60000;
+        $features = array_fill_keys(FeatureSchema::keys('full'), 0.5);
+        $features['trend.direction'] = $features['candle.direction'] = 0;
+        MarketFeature::query()->forceCreate(['feature_id' => (string) Str::uuid7(), 'exchange' => 'kraken',
+            'symbol' => 'BTC/USD', 'period' => '1m', 'microtimestamp' => $at, 'available_at_ms' => $at + 60000,
+            'version' => FeatureEngine::VERSION, 'payload' => ['version' => FeatureEngine::VERSION,
+                'microtimestamp' => $at, 'available_at_ms' => $at + 60000, 'close' => 100.0, 'features' => $features]]);
+    }
+    $handler = new TestHandler;
+    app()->instance(ActionLog::class, new ActionLog(new Logger('test-actions', [$handler]), app(ActionContext::class)));
+    $job = new TrainMarketIntelligence('kraken', 'BTC/USD', '1m', '2024-01-01');
+
+    $job->handle(app(MarketIntelligence::class));
+
+    $this->assertDatabaseCount('research_datasets', 0);
+    $this->assertDatabaseCount('intelligence_models', 0);
+    expect(Cache::has('trademinator:intelligence-week:'.$job->uniqueId()))->toBeFalse();
+    $records = array_map(fn ($record): array => json_decode($record->message, true), $handler->getRecords());
+    $skipped = collect($records)->firstWhere('event', 'intelligence.training.skipped');
+    expect($skipped)->not->toBeNull()
+        ->and($skipped['outcome'])->toBe('skipped')
+        ->and($skipped['reason'])->toBe('insufficient_both_feature_histories');
 });
 
 it('builds once per weekly job even if the queue delivers it again', function () {

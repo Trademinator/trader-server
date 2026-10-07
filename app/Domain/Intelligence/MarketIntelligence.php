@@ -114,6 +114,9 @@ final class MarketIntelligence
                 }
                 $selection = app(AutomaticSchemaSelection::class)->inspect($exchange, $symbol, $period,
                     $fromMs, $toMs, $asOfMs, $definition->horizon, $deadline);
+                if (($selection['reason'] ?? null) === 'insufficient_both_feature_histories') {
+                    throw new IntelligenceNotReady($selection);
+                }
                 $schema = $selection['effective_schema'];
             }
             $manifest = $this->datasets->build($exchange, $symbol, $period, $definition, $schema,
@@ -314,5 +317,4 @@ final class MarketIntelligence
             yield $row;
         }
     }
-
 }
