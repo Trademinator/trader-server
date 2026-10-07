@@ -2,6 +2,7 @@
 
 namespace App\Domain\Archive;
 
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -9,10 +10,9 @@ final class ArchiveCatalog
 {
     public function upsert(array $manifest, string $manifestPath): string
     {
-        $existing = DB::table('archive_catalog')->where('path', $manifestPath)->first();
-        $id = $existing?->archive_id ?? (string) Str::uuid7();
-        DB::table('archive_catalog')->updateOrInsert(['path' => $manifestPath], [
-            'archive_id' => $id,
+        $now = now();
+        $values = [
+            'archive_id' => (string) Str::uuid7(),
             'logical_type' => $manifest['logical_type'],
             'exchange' => $manifest['market']['exchange'] ?? null,
             'symbol' => $manifest['market']['symbol'] ?? null,
@@ -23,16 +23,62 @@ final class ArchiveCatalog
             'format_version' => $manifest['format_version'],
             'schema_version' => $manifest['schema_version'],
             'compression' => $manifest['compression'],
+            'path' => $manifestPath,
             'sha256' => $manifest['sha256'],
             'compressed_size' => $manifest['compressed_size'],
             'verification_state' => $manifest['verification']['state'] ?? 'pending',
             'verification_error' => $manifest['verification']['error'] ?? null,
-            'verified_at' => ($manifest['verification']['state'] ?? null) === 'verified' ? now() : null,
-            'created_at' => $existing?->created_at ?? now(),
-            'updated_at' => now(),
-        ]);
+            'verified_at' => ($manifest['verification']['state'] ?? null) === 'verified' ? $now : null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
 
-        return $id;
+        $this->retryConcurrentWrite(function () use ($values): void {
+            DB::table('archive_catalog')->upsert(
+                [$values],
+                ['path'],
+                [
+                    'logical_type',
+                    'exchange',
+                    'symbol',
+                    'period',
+                    'range_start_ms',
+                    'range_end_ms',
+                    'row_count',
+                    'format_version',
+                    'schema_version',
+                    'compression',
+                    'sha256',
+                    'compressed_size',
+                    'verification_state',
+                    'verification_error',
+                    'verified_at',
+                    'updated_at',
+                ]
+            );
+        });
+
+        return (string) DB::table('archive_catalog')
+            ->where('path', $manifestPath)
+            ->value('archive_id');
+    }
+
+    private function retryConcurrentWrite(callable $callback, int $attempts = 5): void
+    {
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                $callback();
+
+                return;
+            } catch (QueryException $e) {
+                $driverCode = (int) ($e->errorInfo[1] ?? 0);
+                if ($driverCode !== 1020 || $attempt >= $attempts) {
+                    throw $e;
+                }
+
+                usleep(random_int(10_000, 50_000) * $attempt);
+            }
+        }
     }
 
     public function verifiedTickers(string $exchange, string $symbol, string $period, int $fromMs, int $toMs): iterable

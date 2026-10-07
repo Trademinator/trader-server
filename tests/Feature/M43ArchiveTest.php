@@ -47,6 +47,21 @@ it('creates verified monthly shards and can serve cold ticker history after hot 
     expect($rows)->toHaveCount(2)->and($rows[1]['close'])->toBe('101.00000000');
 });
 
+it('preserves archive identity when an existing catalog row is refreshed', function () {
+    $repo = app(TickerRepository::class);
+    $first = gmmktime(0, 0, 0, 1, 3, 2026) * 1000;
+    $repo->saveTickers('kraken', 'BTC/USD', '1m', [m43Candle($first, '100.00000000')]);
+
+    $result = app(TickerArchive::class)->archiveMonth('kraken', 'BTC/USD', '1m', 2026, 1);
+    $before = DB::table('archive_catalog')->where('path', $result['manifest'])->first();
+
+    app(TickerArchive::class)->verifyManifest($result['manifest']);
+    $after = DB::table('archive_catalog')->where('path', $result['manifest'])->first();
+
+    expect($after->archive_id)->toBe($before->archive_id)
+        ->and($after->created_at)->toBe($before->created_at);
+});
+
 it('restores idempotently and rejects a conflicting hot duplicate', function () {
     $repo = app(TickerRepository::class);
     $first = gmmktime(0, 0, 0, 2, 2, 2026) * 1000;
