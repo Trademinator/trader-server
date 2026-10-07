@@ -2,6 +2,7 @@
 
 use App\Domain\Archive\FeatureCheckpointStore;
 use App\Domain\Features\FeatureBuilder;
+use App\Domain\Features\FeatureBuildLocked;
 use App\Domain\Features\FeatureEngine;
 use App\Domain\Features\FeatureReplayTimeout;
 use App\Domain\Operations\ActionLog;
@@ -13,6 +14,7 @@ use App\Models\MarketSubscription;
 use App\Models\User;
 use App\Repositories\TickerRepository;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
@@ -195,4 +197,37 @@ it('does not endlessly replace a replay that cannot process even one candle', fu
 
     $this->assertDatabaseCount('market_features', 0);
     $this->assertDatabaseCount('jobs', 1);
+});
+
+it('releases feature work instead of failing when the market feature lock is busy', function () {
+    config(['features.queue_chunk_candles' => 40, 'archive.enabled' => false]);
+    app(TickerRepository::class)->saveTickers('kraken', 'BTC/USD', '1m', featureQueueCandles(10));
+    $lock = Cache::lock('trademinator:features:'.hash('sha256', 'kraken|BTC/USD|1m'), 720);
+    expect($lock->get())->toBeTrue();
+
+    try {
+        BuildMarketFeatures::dispatch('kraken', 'BTC/USD', '1m')->onConnection('database');
+        $queued = Queue::connection('database')->pop('features');
+        expect($queued)->not->toBeNull();
+
+        $queued->fire();
+
+        $this->assertDatabaseCount('jobs', 1);
+        $this->assertDatabaseCount('failed_jobs', 0);
+        $this->assertDatabaseCount('market_features', 0);
+    } finally {
+        $lock->release();
+    }
+});
+
+it('uses a typed exception for feature lock contention', function () {
+    $lock = Cache::lock('trademinator:features:'.hash('sha256', 'kraken|BTC/USD|1m'), 720);
+    expect($lock->get())->toBeTrue();
+
+    try {
+        expect(fn () => app(FeatureBuilder::class)->build('kraken', 'BTC/USD', '1m'))
+            ->toThrow(FeatureBuildLocked::class, 'Features are already being built for this market and period.');
+    } finally {
+        $lock->release();
+    }
 });

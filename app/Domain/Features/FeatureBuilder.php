@@ -19,7 +19,7 @@ final class FeatureBuilder
         $cutoffMs = min($cutoffMs ?? PHP_INT_MAX, (int) floor(microtime(true) * 1000));
         $lock = Cache::lock('trademinator:features:'.hash('sha256', "$exchange|$symbol|$period"), 720);
         if (! $lock->get()) {
-            throw new RuntimeException('Features are already being built for this market and period.');
+            throw new FeatureBuildLocked;
         }
         try {
             $tickers = app(TickerRepository::class);

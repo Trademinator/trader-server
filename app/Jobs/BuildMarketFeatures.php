@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Domain\Archive\FeatureCheckpointStore;
 use App\Domain\Features\FeatureBuilder;
+use App\Domain\Features\FeatureBuildLocked;
 use App\Domain\Features\FeatureEngine;
 use App\Domain\Features\FeatureReplayTimeout;
 use App\Domain\MarketData\CandleTimeframe;
@@ -18,7 +19,9 @@ final class BuildMarketFeatures implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
 
-    public int $tries = 3;
+    public int $tries = 20;
+
+    public int $maxExceptions = 3;
 
     public int $timeout = 600;
 
@@ -105,6 +108,10 @@ final class BuildMarketFeatures implements ShouldBeUnique, ShouldQueue
         try {
             $rows = $builder->build($this->exchange, $this->symbol, $this->period,
                 cutoffMs: $chunkCutoffMs, fromMs: $fromMs, checkpointBeforeMs: $checkpointBeforeMs);
+        } catch (FeatureBuildLocked) {
+            $this->release(60);
+
+            return;
         } catch (FeatureReplayTimeout $timeout) {
             $advanced = $timeout->throughMs !== null
                 && ($resumeThroughMs === null || $timeout->throughMs > $resumeThroughMs);
