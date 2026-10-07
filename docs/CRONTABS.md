@@ -42,11 +42,13 @@ Those two entries cover collection and M2 features. M4 training also requires th
 | `trademinator:prune-access-statistics` | Daily at 02:40, application timezone | Apply configured retention to access aggregates and daily visitor hashes. |
 | `trademinator:dispatch-market-features` | Every five minutes | Queue M2 feature builds for subscribed markets with selected candle periods. |
 | `trademinator:collect-market-context` | Hourly | Resolve pending subscription-driven CoinGecko mappings and collect timestamped market context. |
-| `trademinator:dispatch-market-intelligence` | Monday at 04:00, application timezone | Queue one KNN/pattern training job per subscribed market and selected period. |
+| `trademinator:dispatch-market-intelligence` | Monday at 04:00, application timezone | Queue one intelligence build per subscribed market and selected period; each build auto-labels the full model-age window once, feeds Action KNN, derives d/H, then trains Outcome KNN when at least 30 valid d observations exist. |
 | `trademinator:dispatch-lead-lag` | Daily at 03:45, application timezone | Reevaluate lead/lag and downstream KNN/pattern intelligence for overlapping shared markets. |
 | `trademinator:refresh-exchanges` | Daily at 03:20, application timezone | Inspect installed CCXT source, refresh access classifications and add missing exchange rows while preserving existing data. |
 
 The schedule source of truth is `routes/console.php`; this document must be updated in the same change whenever that schedule changes.
+
+The weekly intelligence build is also the canonical scheduled Action auto-label / horizon reevaluation. It reads up to `INTELLIGENCE_MAX_MODEL_AGE_DAYS`, uses all valid distances in that window, never crosses a candle gap, and requires at least 30 valid opposite-pivot distances before publishing H. No second d/H cron is required.
 
 ## Queue and cache requirements
 

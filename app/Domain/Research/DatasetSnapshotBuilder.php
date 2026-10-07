@@ -3,9 +3,8 @@
 namespace App\Domain\Research;
 
 use App\Domain\Features\FeatureEngine;
-use App\Domain\Intelligence\ActionAutoLabeler;
+use App\Domain\Intelligence\ActionLabelAnalysis;
 use App\Domain\Intelligence\KnowledgeWindow;
-use App\Domain\Intelligence\PublishedTakerFee;
 use App\Domain\Intelligence\PatternCatalog;
 use App\Domain\MarketData\CandleProvenance;
 use App\Domain\MarketData\CandleTimeframe;
@@ -24,8 +23,7 @@ final class DatasetSnapshotBuilder
     public function __construct(
         private DatasetStore $store,
         private TickerRepository $tickers,
-        private ActionAutoLabeler $actionLabels,
-        private PublishedTakerFee $takerFees,
+        private ActionLabelAnalysis $actionAnalysis,
     ) {}
 
     /**
@@ -87,22 +85,20 @@ final class DatasetSnapshotBuilder
                 }
 
                 $algorithmicActions = [];
+                $algorithmicActionAvailability = [];
+                $actionDiagnostics = null;
+                $outcomeAvailable = true;
                 if ($definition instanceof SemanticLabels) {
-                    $takerFee = $this->takerFees->for($exchange, $symbol);
-                    if ($takerFee === null) {
-                        throw new RuntimeException('Outcome horizon requires the published exchange taker fee used by Action auto-labeling.');
+                    $analysis = $this->actionAnalysis->analyze($exchange, $symbol, $period, $asOfMs);
+                    $algorithmicActions = $analysis['_action_labels'];
+                    $algorithmicActionAvailability = $analysis['_action_available_at_ms'];
+                    $actionDiagnostics = ActionLabelAnalysis::publicDiagnostics($analysis);
+                    if ($analysis['horizon'] === null) {
+                        $outcomeAvailable = false;
+                    } else {
+                        $definition = $definition->withHorizon($analysis['horizon']);
                     }
-                    $actionContext = [];
-                    $actionHistory = $this->tickers->streamHistory(
-                        $exchange, $symbol, $period, (int) $first->microtimestamp, $asOfMs
-                    );
-                    foreach ($actionHistory as $microtimestamp => $candle) {
-                        $actionContext[] = $this->actionLabels->compact($candle, (int) $microtimestamp);
-                    }
-                    $labelledActions = $this->actionLabels->labels($actionContext, $takerFee);
-                    $definition = $definition->withHorizon($this->actionLabels->horizon($labelledActions));
-                    $algorithmicActions = $this->actionLabels->byTimestamp($labelledActions);
-                    unset($actionContext, $actionHistory, $labelledActions);
+                    unset($analysis);
                 }
 
                 $candles = $this->tickers->streamHistory(
@@ -112,7 +108,7 @@ final class DatasetSnapshotBuilder
                 $window = [];
                 $past = $patternHistory = [];
                 $history = null;
-                if ($definition instanceof SemanticLabels) {
+                if ($definition instanceof SemanticLabels && $outcomeAvailable) {
                     $historyStart = (int) $first->microtimestamp;
                     for ($i = 1; $i < $definition->lookback; $i++) {
                         $historyStart = max(0, $timeframe->previous($historyStart, $period));
@@ -122,7 +118,7 @@ final class DatasetSnapshotBuilder
                 }
                 $counts = array_fill_keys(['missing_features', 'missing_source', 'gaps', 'immature', 'unavailable_evidence'], 0);
                 $reconstruction = ['rows_using_reconstructed_history' => 0, 'rows_with_reconstructed_candle' => 0, 'methods' => []];
-                if ($definition instanceof SemanticLabels) {
+                if ($definition instanceof SemanticLabels && $outcomeAvailable) {
                     $counts['semantic_warmup'] = 0;
                 }
                 $labels = array_fill_keys($definition instanceof SemanticLabels ? SemanticLabels::OUTCOMES : ['buy', 'sell', 'hodl'], 0);
@@ -173,6 +169,38 @@ final class DatasetSnapshotBuilder
                     $vector = FeatureSchema::vector($payload, $keys);
                     if ($vector === null) {
                         $counts['missing_features']++;
+
+                        continue;
+                    }
+                    if ($definition instanceof SemanticLabels && ! $outcomeAvailable) {
+                        $actionLabel = $algorithmicActions[$timestamp] ?? null;
+                        $actionAvailable = $algorithmicActionAvailability[$timestamp] ?? null;
+                        if ($actionLabel === null || ! is_int($actionAvailable) || $actionAvailable > $asOfMs) {
+                            continue;
+                        }
+                        $row = [
+                            'microtimestamp' => $timestamp,
+                            'decision_at_ms' => $decision,
+                            'label_available_at_ms' => $actionAvailable,
+                            'vector' => $vector,
+                            'label' => null,
+                            'action_label' => $actionLabel,
+                            'action_label_available_at_ms' => $actionAvailable,
+                            'gross_return' => null,
+                            'patterns' => [],
+                            'source' => [
+                                'feature_id' => $feature->getKey(),
+                                'history_start_ms' => $payload['history_start_ms'] ?? null,
+                                'context_snapshot_id' => $payload['context_snapshot_id'] ?? null,
+                                'feature_sha256' => hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR)),
+                            ],
+                        ];
+                        $line = json_encode($row, JSON_THROW_ON_ERROR)."\n";
+                        DatasetStore::write($file, $line);
+                        hash_update($hash, $line);
+                        $count++;
+                        $firstDecision ??= $decision;
+                        $lastDecision = $decision;
 
                         continue;
                     }
@@ -228,7 +256,10 @@ final class DatasetSnapshotBuilder
                         'microtimestamp' => $timestamp, 'decision_at_ms' => $decision,
                         'entry_at_ms' => $entry['microtimestamp'], 'label_available_at_ms' => $labelAvailable,
                         'vector' => $vector, 'label' => $label['action'],
-                        'action_label' => $definition instanceof SemanticLabels ? ($algorithmicActions[$timestamp] ?? null) : null,
+                        'action_label' => $definition instanceof SemanticLabels && isset($algorithmicActionAvailability[$timestamp])
+                            ? ($algorithmicActions[$timestamp] ?? null) : null,
+                        'action_label_available_at_ms' => $definition instanceof SemanticLabels
+                            ? ($algorithmicActionAvailability[$timestamp] ?? null) : null,
                         'entry_price' => (string) $entry['open'], 'exit_price' => (string) $exit['close'],
                         'gross_return' => $label['gross_return'],
                         'source' => ['feature_id' => $feature->getKey(), 'history_start_ms' => $payload['history_start_ms'] ?? null,
@@ -255,7 +286,9 @@ final class DatasetSnapshotBuilder
                     $line = json_encode($row, JSON_THROW_ON_ERROR)."\n";
                     DatasetStore::write($file, $line);
                     hash_update($hash, $line);
-                    $labels[$row['label']]++;
+                    if ($row['label'] !== null) {
+                        $labels[$row['label']]++;
+                    }
                     if (($payload['reconstruction_counts'] ?? []) !== []) {
                         $reconstruction['rows_using_reconstructed_history']++;
                         foreach (array_keys($payload['reconstruction_counts']) as $usedMethod) {
@@ -288,6 +321,8 @@ final class DatasetSnapshotBuilder
                     'label_definition' => $definition->metadata(), 'from_ms' => $fromMs, 'to_ms' => $toMs, 'as_of_ms' => $asOfMs,
                     'first_decision_at_ms' => $firstDecision, 'last_decision_at_ms' => $lastDecision,
                     'rows' => $count, 'label_counts' => $labels, 'skipped' => $counts,
+                    'outcome_available' => $outcomeAvailable,
+                    'action_label_analysis' => $actionDiagnostics,
                     'reconstruction' => $reconstruction,
                     'rows_sha256' => hash_final($hash),
                 ];

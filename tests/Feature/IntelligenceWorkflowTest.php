@@ -24,7 +24,8 @@ beforeEach(function () {
     config(['research.path' => $path.'/research', 'intelligence.path' => $path.'/models',
         'intelligence.knn.min_train_size' => 36, 'intelligence.knn.test_size' => 12,
         'intelligence.knn.min_validation_rows' => 5, 'intelligence.knn.min_directional_predictions' => 1,
-        'intelligence.patterns.enabled' => false, 'intelligence.horizon' => 2, 'intelligence.lookback' => 3]);
+        'intelligence.patterns.enabled' => false, 'intelligence.horizon' => 2, 'intelligence.lookback' => 3,
+        'intelligence.min_horizon_distance_observations' => 1]);
 });
 
 afterEach(function () {
@@ -298,4 +299,29 @@ it('rejects a missing training dataset file before publishing a model', function
     expect(fn () => app(IntelligenceTrainer::class)->train($manifest['dataset_id']))
         ->toThrow(RuntimeException::class);
     $this->assertDatabaseCount('intelligence_models', 0);
+});
+
+it('keeps Action KNN training data when the Outcome horizon has fewer than the required d observations', function () {
+    $this->travelTo('2024-01-01 02:00:00 UTC');
+    config(['intelligence.min_horizon_distance_observations' => 999]);
+    IntelligenceFixtures::candles();
+    $cutoff = IntelligenceFixtures::START + 90 * 60000;
+
+    $manifest = app(DatasetSnapshotBuilder::class)->build('kraken', 'BTC/USD', '1m',
+        new SemanticLabels(2, 3), asOfMs: $cutoff);
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+
+    expect($manifest['outcome_available'])->toBeFalse()
+        ->and($manifest['action_label_analysis']['horizon'])->toBeNull()
+        ->and($manifest['action_label_analysis']['distance_observations'])->toBeLessThan(999)
+        ->and(count($rows))->toBeGreaterThan(0)
+        ->and(collect($rows)->filter(fn (array $row): bool => in_array($row['action_label'] ?? null, ['buy', 'hodl', 'sell'], true))->count())->toBeGreaterThan(0)
+        ->and(collect($rows)->filter(fn (array $row): bool => ($row['label'] ?? null) !== null)->count())->toBe(0);
+
+    $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+
+    expect($report['outcome']['algorithmic']['status'])->toBe('abstaining')
+        ->and($report['outcome']['algorithmic']['reason'])->toBe('insufficient_outcome_history')
+        ->and($report['action']['algorithmic']['samples'])->toBeGreaterThan(0)
+        ->and($report['action_label_analysis']['minimum_distance_observations'])->toBe(999);
 });

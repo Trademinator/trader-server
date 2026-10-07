@@ -128,6 +128,8 @@ The subscription access requirement is enforced for the Server dashboard/chart/i
 
 Existing annotation data remains valid after compatibility checks. No new migration, assets, queue or cron entry is required for two-KNN scoring. Run `trademinator:knn-build EXCHANGE SYMBOL PERIOD` (or use `--dataset=UUID`) to rebuild each old model. See [INTELLIGENCE-RECOVERY.md](INTELLIGENCE-RECOVERY.md) for settings, scoring and deployment; [CLI.md](CLI.md#trademinatorhuman-training-export) documents export.
 
+- **Weekly Action-label / horizon stage:** each weekly intelligence build performs one shared auto-label pass over all available history up to `INTELLIGENCE_MAX_MODEL_AGE_DAYS`. The finalized BUY/HOLD/SELL labels train the algorithmic Action KNN, while every valid consecutive opposite BUY/SELL pivot distance feeds the Outcome horizon. Distances never cross candle gaps. H requires at least 30 valid d observations, uses all available valid observations rather than stopping at 30, and is `round(sum(d × frequency) / sum(frequency))`. If fewer than 30 distances exist, Action KNN may still train while Outcome KNN remains unavailable.
+
 ## M5 acceptance gates
 
 

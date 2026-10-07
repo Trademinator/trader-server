@@ -144,3 +144,41 @@ it('rejects invalid table query parameters', function (string $field, mixed $val
     'array search' => ['q', ['kraken']],
     'long search' => ['q', str_repeat('a', 121)],
 ]);
+
+it('shows persisted auto-label d H and independent K diagnostics', function () {
+    $owner = intelligenceTableOwner();
+    intelligenceTableModel([
+        'status' => 'ready',
+        'k' => 9,
+        'action_k' => 17,
+        'outcome' => ['algorithmic' => ['selection' => ['k_min' => 4, 'k_max' => 33]]],
+        'action' => ['algorithmic' => ['selection' => ['k_min' => 4, 'k_max' => 65]]],
+        'action_label_analysis' => [
+            'status' => 'validated',
+            'minimum_distance_observations' => 30,
+            'distance_observations' => 87,
+            'distance_frequencies' => [4 => 10, 5 => 25, 6 => 40, 7 => 12],
+            'distance_min' => 4,
+            'distance_max' => 7,
+            'distance_mean' => 5.62,
+            'distance_median' => 6.0,
+            'horizon' => 6,
+            'candles_examined' => 12345,
+            'contiguous_runs' => 2,
+            'gaps' => 1,
+            'action_counts' => ['buy' => 44, 'hold' => 600, 'sell' => 44],
+            'from_ms' => 1_700_000_000_000,
+            'as_of_ms' => 1_710_000_000_000,
+            'max_history_days' => 366,
+        ],
+    ]);
+
+    $this->actingAs($owner)->get(route('owner.intelligence'))
+        ->assertOk()
+        ->assertSee('Auto-label / d / H / K diagnostics')
+        ->assertSee('87 / 30 minimum observations')
+        ->assertSee('d=6')
+        ->assertSee('Outcome 9')
+        ->assertSee('Action 17')
+        ->assertSee('H</strong> = round(Σ(d × frequency) / Σfrequency)', false);
+});

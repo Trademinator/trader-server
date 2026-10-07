@@ -45,6 +45,7 @@ beforeEach(function () {
     config([
         'research.path' => sys_get_temp_dir().'/trademinator-reconstructed-'.Str::uuid7(),
         'exchange_fees.taker_overrides.bitso.rate' => 0.0,
+        'intelligence.min_horizon_distance_observations' => 1,
     ]);
 });
 

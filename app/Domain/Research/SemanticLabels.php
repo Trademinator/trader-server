@@ -12,7 +12,7 @@ use InvalidArgumentException;
  */
 final readonly class SemanticLabels
 {
-    public const VERSION = 'm5-outcome-slope-v1';
+    public const VERSION = 'm5-outcome-slope-v2';
 
     public const OUTCOMES = ['super_bear', 'bear', 'neutral', 'bull', 'super_bull'];
 

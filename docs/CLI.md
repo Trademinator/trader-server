@@ -84,6 +84,7 @@ Each link contains the exact signature, parameter meanings, execution/side-effec
 | Research datasets and backtests | [`trademinator:backtest`](#trademinatorbacktest) |
 | Models and signals | [`trademinator:knn-build`](#trademinatorknn-build) |
 | Models and signals | [`trademinator:dispatch-market-intelligence`](#trademinatordispatch-market-intelligence) |
+| Models and signals | [`trademinator:auto-label`](#trademinatorauto-label) |
 | Models and signals | [`trademinator:dispatch-lead-lag`](#trademinatordispatch-lead-lag) |
 | Models and signals | [`trademinator:signal`](#trademinatorsignal) |
 | Models and signals | [`trademinator:dispatch-market-signals`](#trademinatordispatch-market-signals) |
@@ -637,6 +638,27 @@ php -d memory_limit=512M artisan trademinator:knn-build bitso 'ATOM/USD' 15m --s
 ```
 
 Implementation: [`BuildMarketIntelligence.php`](../app/Console/Commands/BuildMarketIntelligence.php).
+
+## trademinator:auto-label
+
+Signature: `trademinator:auto-label {exchange? : Optional exchange class, for example bitso} {symbol? : Optional pair; requires exchange, for example ATOM/USD} {--json : Emit machine-readable JSON instead of a table}`
+
+Description: Run Action auto-labeling and Outcome horizon diagnostics for active market feeds
+
+Run the exact Action auto-label / horizon analysis used by weekly intelligence training without publishing a model. With no arguments it analyzes every active subscribed market with a selected period. Supplying only `exchange` limits the run to that exchange; supplying `exchange symbol` limits it to one pair.
+
+The analysis reads all available history inside `INTELLIGENCE_MAX_MODEL_AGE_DAYS`, splits history at candle gaps, and auto-labels each contiguous run independently. Every valid consecutive opposite BUY/SELL pivot distance contributes to `d`. At least 30 valid `d` observations are required for an Outcome horizon; 30 is a minimum, never a cap. When valid, `H = round(sum(d * frequency) / sum(frequency))`. The same finalized Action labels are the algorithmic Action KNN targets.
+
+Examples:
+
+```bash
+php artisan trademinator:auto-label
+php artisan trademinator:auto-label bitso
+php artisan trademinator:auto-label bitso 'ATOM/USD'
+php artisan trademinator:auto-label bitso 'ATOM/USD' --json
+```
+
+This command is diagnostic/manual auto-label execution only. Use `trademinator:knn-build` to publish a fresh model immediately. The normal Monday intelligence build performs the same auto-label pass automatically and uses it for both Action KNN training and Outcome horizon derivation.
 
 ## trademinator:dispatch-market-intelligence
 

@@ -18,6 +18,7 @@ beforeEach(function () {
         'intelligence.context_fallback' => 'none', 'intelligence.horizon' => 2, 'intelligence.lookback' => 3,
         'intelligence.knn.min_train_size' => 36, 'intelligence.knn.test_size' => 12,
         'intelligence.knn.min_validation_rows' => 5, 'intelligence.patterns.enabled' => false,
+        'intelligence.min_horizon_distance_observations' => 1,
         'human_training.enabled' => false, 'lead_lag.enabled' => false]);
 });
 

@@ -275,8 +275,11 @@ final class HumanCandleKnn
                     // before reading the large row artifact, but allow versions.
                     $source = $this->datasets->manifest($dataset);
                     $rawRows = null;
-                    if ([$source['exchange'], $source['symbol'], $source['period'], $source['label_definition']['horizon']]
-                        === [$manifest['exchange'], $manifest['symbol'], $manifest['period'], $manifest['label_definition']['horizon']]) {
+                    // Action Training is independent of Outcome H. The snapshot must still
+                    // match its own source manifest exactly below, but a later model may use a
+                    // different (or unavailable) Outcome horizon.
+                    if ([$source['exchange'], $source['symbol'], $source['period']]
+                        === [$manifest['exchange'], $manifest['symbol'], $manifest['period']]) {
                         [, $rawRows] = $this->datasets->open($dataset);
                         $legacyHistory = app(SnapshotRevisions::class)->historyRevision($source) === 0;
                     }

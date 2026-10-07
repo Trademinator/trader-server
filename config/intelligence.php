@@ -9,6 +9,8 @@ return [
     // Bootstrap/fallback depth only. Each dataset replaces this with H derived from Action pivot frequencies.
     'horizon' => 12,
     'lookback' => 20,
+    // Statistical minimum for H; intentionally not environment-configurable.
+    'min_horizon_distance_observations' => 30,
     // Automatic dataset/model deadline; human training adds its own allowance.
     'max_seconds' => max(60, (int) env('INTELLIGENCE_MAX_SECONDS', 1800)),
     // Both the training history window and the published model's maximum age.

@@ -207,3 +207,11 @@ project's locked Composer dependencies and its PHP extensions.
 ## Degraded KNN availability
 
 If Action KNN is supported while Outcome KNN is unavailable, SELL remains SELL, HOLD remains HOLD, and BUY becomes HOLD. The Server reports `degraded_action_only`. If only Outcome KNN is supported, the Server returns HOLD with `degraded_outcome_only`. The Client never opens a new BUY from degraded intelligence.
+
+## Weekly auto-label and horizon provenance
+
+The Monday intelligence build runs Action auto-labeling once over the complete available model-age window (bounded by `INTELLIGENCE_MAX_MODEL_AGE_DAYS`). That single result has two consumers: finalized BUY/HOLD/SELL labels provide algorithmic Action KNN targets, and consecutive opposite BUY/SELL pivots provide `d` observations for Outcome KNN horizon H. HOLD candles count inside a distance but are never pivot endpoints. Missing candles split the history into independent contiguous runs, so no d crosses a gap.
+
+H is valid only with at least 30 valid distances. Thirty is a minimum, not a sampling cap: every valid d in the complete age window contributes. The formula is `H = round(sum(d * frequency) / sum(frequency))`. If fewer than 30 distances exist, the build can still train Action KNN; Outcome KNN reports the horizon as unavailable.
+
+Model reports persist the Action label counts, pivot count, d count/distribution/min/mean/median/max, continuity/gap counts, history window, H status/value, and independent Action/Outcome K selections. The OWNER intelligence page displays these diagnostics and formulas without recomputing history.

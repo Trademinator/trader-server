@@ -68,6 +68,7 @@ final class HumanTraining
             $manifest = json_decode($record->manifest, true, flags: JSON_THROW_ON_ERROR);
             if (($manifest['feature_version'] ?? null) !== FeatureEngine::VERSION
                 || ($manifest['label_definition']['version'] ?? null) !== SemanticLabels::VERSION
+                || ! ($manifest['outcome_available'] ?? true)
                 || ($manifest['as_of_ms'] ?? PHP_INT_MAX) > $nowMs) {
                 continue;
             }
@@ -108,6 +109,7 @@ final class HumanTraining
             [$manifest, $rows] = $this->datasets->open($dataset);
             if ($manifest['feature_version'] !== FeatureEngine::VERSION
                 || ($manifest['label_definition']['version'] ?? null) !== SemanticLabels::VERSION
+                || ! ($manifest['outcome_available'] ?? true)
                 || $manifest['as_of_ms'] > now()->getTimestampMs()
                 || count($rows) === 0) {
                 throw ValidationException::withMessages(['dataset' => 'Choose a current semantic dataset built from closed candles.']);
