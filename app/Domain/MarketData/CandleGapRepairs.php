@@ -13,6 +13,7 @@ use ccxt\NotSupported;
 use ccxt\PermissionDenied;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -47,7 +48,14 @@ final class CandleGapRepairs
                 continue;
             }
             try {
-                $this->scanFeed($feed);
+                if ($this->scanFeed($feed) === null) {
+                    if (! $force) {
+                        Cache::forget($key);
+                    }
+
+                    continue;
+                }
+
                 $scanned++;
             } catch (Throwable $error) {
                 Cache::forget($key);
@@ -61,15 +69,39 @@ final class CandleGapRepairs
         return $scanned;
     }
 
-    public function scanFeed(MarketFeed $feed): int
+    /**
+     * @return int|null Number of tracked gap pages, or null when another market-data worker owns the feed lock.
+     */
+    public function scanFeed(MarketFeed $feed, bool $marketLockHeld = false): ?int
     {
         $feed->loadMissing('market.exchange');
         if ($feed->selected_period === null) {
             return 0;
         }
 
+        if ($marketLockHeld) {
+            return $this->scanFeedLocked($feed);
+        }
+
+        // Gap discovery reads ticker history and mutates repair bookkeeping. Share
+        // the canonical market-feed lock with collection/backfill/repair workers so
+        // a scan never observes or rewrites a feed while one of them is changing it.
+        $lock = Cache::lock('trademinator:market-feed:'.$feed->market_id, 720);
+        if (! $lock->get()) {
+            return null;
+        }
+
+        try {
+            return $this->scanFeedLocked($feed);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function scanFeedLocked(MarketFeed $feed): int
+    {
         $market = $feed->market;
-        $period = $feed->selected_period;
+        $period = (string) $feed->selected_period;
         $nowMs = now()->getTimestampMs();
         $seen = [];
         $found = 0;
@@ -363,22 +395,52 @@ final class CandleGapRepairs
         $period = (string) $feed->selected_period;
         $key = $fromMs.':'.$toMs;
         $seen[$key] = true;
-        DB::table('candle_gap_repairs')->insertOrIgnore([
-            'gap_id' => (string) Str::uuid7(),
-            'market_id' => $feed->market_id,
-            'period' => $period,
-            'from_ms' => $fromMs,
-            'to_ms' => $toMs,
-            'status' => 'pending',
-            'next_attempt_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-        DB::table('candle_gap_repairs')->where('market_id', $feed->market_id)->where('period', $period)
-            ->where('from_ms', $fromMs)->where('to_ms', $toMs)->where('status', 'resolved')->update([
-                'status' => 'pending', 'reason' => 'gap_reappeared', 'attempts' => 0, 'empty_attempts' => 0,
-                'failures' => 0, 'last_error' => null, 'next_attempt_at' => now(), 'updated_at' => now(),
-            ]);
+
+        $this->retryConcurrentWrite(function () use ($feed, $period, $fromMs, $toMs): void {
+            $existing = DB::table('candle_gap_repairs')
+                ->where('market_id', $feed->market_id)
+                ->where('period', $period)
+                ->where('from_ms', $fromMs)
+                ->where('to_ms', $toMs)
+                ->first(['gap_id', 'status']);
+
+            // Avoid touching the unique key when an active repair row already
+            // exists. InnoDB may otherwise wait on a worker that owns that row.
+            if ($existing !== null && $existing->status !== 'resolved') {
+                return;
+            }
+
+            if ($existing === null) {
+                $inserted = DB::table('candle_gap_repairs')->insertOrIgnore([
+                    'gap_id' => (string) Str::uuid7(),
+                    'market_id' => $feed->market_id,
+                    'period' => $period,
+                    'from_ms' => $fromMs,
+                    'to_ms' => $toMs,
+                    'status' => 'pending',
+                    'next_attempt_at' => now(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+                if ($inserted) {
+                    return;
+                }
+            }
+
+            // A concurrent insert may have won after our read. Re-open only a
+            // resolved, unleased row and never overwrite an active worker lease.
+            DB::table('candle_gap_repairs')
+                ->where('market_id', $feed->market_id)
+                ->where('period', $period)
+                ->where('from_ms', $fromMs)
+                ->where('to_ms', $toMs)
+                ->where('status', 'resolved')
+                ->where(fn ($query) => $query->whereNull('lease_until')->orWhere('lease_until', '<=', now()))
+                ->update([
+                    'status' => 'pending', 'reason' => 'gap_reappeared', 'attempts' => 0, 'empty_attempts' => 0,
+                    'failures' => 0, 'last_error' => null, 'next_attempt_at' => now(), 'updated_at' => now(),
+                ]);
+        });
     }
 
     private function resolveRowsNotSeen(string $marketId, string $period, array $seen): void
@@ -389,10 +451,34 @@ final class CandleGapRepairs
             if (isset($seen[$row->from_ms.':'.$row->to_ms])) {
                 continue;
             }
-            DB::table('candle_gap_repairs')->where('gap_id', $row->gap_id)->update([
-                'status' => 'resolved', 'reason' => 'filled', 'lease_token' => null, 'lease_until' => null,
-                'next_attempt_at' => null, 'updated_at' => now(),
-            ]);
+
+            $this->retryConcurrentWrite(function () use ($row): void {
+                DB::table('candle_gap_repairs')->where('gap_id', $row->gap_id)
+                    ->whereNotIn('status', ['resolved', 'queued'])
+                    ->where(fn ($query) => $query->whereNull('lease_until')->orWhere('lease_until', '<=', now()))
+                    ->update([
+                        'status' => 'resolved', 'reason' => 'filled', 'lease_token' => null, 'lease_until' => null,
+                        'next_attempt_at' => null, 'updated_at' => now(),
+                    ]);
+            });
+        }
+    }
+
+    private function retryConcurrentWrite(callable $callback, int $attempts = 3): void
+    {
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                $callback();
+
+                return;
+            } catch (QueryException $error) {
+                $driverCode = (int) ($error->errorInfo[1] ?? 0);
+                if (! in_array($driverCode, [1020, 1205, 1213], true) || $attempt >= $attempts) {
+                    throw $error;
+                }
+
+                usleep(random_int(10_000, 50_000) * $attempt);
+            }
         }
     }
 }

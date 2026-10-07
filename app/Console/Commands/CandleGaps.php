@@ -45,10 +45,11 @@ final class CandleGaps extends Command
             $marketPeriod = (string) $feed->selected_period;
             $latestCandle = $tickers->latestTimestamp($exchangeClass, $marketSymbol, $marketPeriod);
             $scanError = null;
+            $scanBusy = false;
 
             if ($scan && $latestCandle !== null) {
                 try {
-                    $repairs->scanFeed($feed);
+                    $scanBusy = $repairs->scanFeed($feed) === null;
                 } catch (Throwable $error) {
                     report($error);
                     $scanError = $error->getMessage();
@@ -90,6 +91,22 @@ final class CandleGaps extends Command
                     '—',
                     Str::limit($this->singleLine($scanError), 80),
                     'Fix the scan error and rerun php artisan trademinator:candle-gaps.',
+                ];
+
+                continue;
+            }
+
+            if ($scanBusy) {
+                $problemCount++;
+                $rows[] = [
+                    $exchangeClass,
+                    $marketSymbol,
+                    $marketPeriod,
+                    'SCAN BUSY',
+                    '?',
+                    '—',
+                    'Another market-data worker is currently updating this feed.',
+                    'Rerun php artisan trademinator:candle-gaps after the current worker finishes.',
                 ];
 
                 continue;

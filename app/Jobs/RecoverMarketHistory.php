@@ -68,7 +68,7 @@ final class RecoverMarketHistory implements ShouldQueue, ShouldBeUnique
                 return;
             }
             // Uses streamHistory: verified hot and cold history are checked together.
-            $repairs->scanFeed($feed);
+            $repairs->scanFeed($feed, marketLockHeld: true);
             if ($request->retry_unavailable) {
                 DB::table('candle_gap_repairs')->where('market_id', $feed->market_id)->where('period', $request->period)
                     ->whereIn('status', ['paused', 'unavailable'])
