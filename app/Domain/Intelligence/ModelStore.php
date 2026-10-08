@@ -70,6 +70,18 @@ final class ModelStore
         return rtrim(config('intelligence.path'), '/').'/'.$id.'.knowledge.jsonl';
     }
 
+    /** One sidecar per KNN source; do not allow arbitrary paths from model data. */
+    public function humanKnowledgePath(string $id, string $source): string
+    {
+        if (! in_array($source, ['outcome', 'action'], true)) {
+            throw new InvalidArgumentException('Unknown human knowledge source.');
+        }
+
+        $modelPath = $this->path($id);
+
+        return substr($modelPath, 0, -strlen('.model')).'.'.$source.'.knowledge.jsonl';
+    }
+
     public function save(array $artifact): array
     {
         $persistenceStarted = hrtime(true);
@@ -78,45 +90,53 @@ final class ModelStore
         $id = (string) Str::uuid7();
         $artifact['model_id'] = $id;
         $artifact['created_at'] = now()->toIso8601String();
-        $artifact['format_version'] = 'm4-intelligence-v2';
+        $artifact['format_version'] = 'm4-intelligence-v3';
         $path = $this->path($id);
         $knowledgePath = $this->knowledgePath($id);
         if (! is_dir(dirname($path)) && ! mkdir(dirname($path), 0700, true)) {
             throw new RuntimeException('Cannot create private model directory.');
         }
 
-        $knowledge = $artifact['knowledge'] ?? [];
-        $knowledgeHash = hash_init('sha256');
-        $knowledgeHandle = fopen($knowledgePath.'.tmp', 'wb');
-        if ($knowledgeHandle === false) {
-            throw new RuntimeException('Cannot create private model knowledge file.');
-        }
+        $sidecars = [
+            $knowledgePath,
+            $this->humanKnowledgePath($id, 'outcome'),
+            $this->humanKnowledgePath($id, 'action'),
+        ];
         try {
-            foreach ($knowledge as $row) {
-                $line = json_encode($row, JSON_THROW_ON_ERROR)."\n";
-                if (fwrite($knowledgeHandle, $line) !== strlen($line)) {
-                    throw new RuntimeException('Cannot write private model knowledge file.');
-                }
-                hash_update($knowledgeHash, $line);
+            // Refuse a metadata-only artifact: quietly writing empty knowledge
+            // files here would change trained predictions without retraining.
+            if (! array_key_exists('knowledge', $artifact) && ($artifact['knowledge_rows'] ?? 0) > 0) {
+                throw new RuntimeException('Automatic KNN knowledge must be supplied when saving a model.');
             }
-        } finally {
-            fclose($knowledgeHandle);
-        }
-        $artifact['knowledge_sha256'] = hash_final($knowledgeHash);
-        unset($artifact['knowledge']);
-        $bytes = serialize($artifact);
-        $report = $artifact;
-        unset($report['patterns'], $report['lead_lag']['models'], $report['knowledge_sha256']);
-        unset(
-            $report['human_guidance']['estimator'], $report['human_guidance']['knowledge'],
-            $report['candle_guidance']['estimator'], $report['candle_guidance']['knowledge'],
-            $report['outcome']['human']['estimator'], $report['outcome']['human']['knowledge'],
-            $report['action']['human']['estimator'], $report['action']['human']['knowledge'],
-        );
-        $report['patterns'] = $artifact['patterns']['report'];
-        try {
-            if (! chmod($knowledgePath.'.tmp', 0600) || ! rename($knowledgePath.'.tmp', $knowledgePath)
-                || file_put_contents($path.'.tmp', $bytes, LOCK_EX) !== strlen($bytes)
+            // Never serialize the training rows used during inference. A bounded
+            // nearest-neighbor scan can stream all three verified JSONL sidecars.
+            $artifact['knowledge_sha256'] = $this->publishRows($knowledgePath, $artifact['knowledge'] ?? []);
+            unset($artifact['knowledge']);
+            foreach (['outcome', 'action'] as $source) {
+                $artifact[$source]['human'] ??= [];
+                $bundle = &$artifact[$source]['human'];
+                if (! array_key_exists('knowledge', $bundle) && ($bundle['knowledge_rows'] ?? 0) > 0) {
+                    throw new RuntimeException('Human '.$source.' knowledge must be supplied when saving a model.');
+                }
+                $bundle['knowledge_sha256'] = $this->publishRows(
+                    $this->humanKnowledgePath($id, $source), $bundle['knowledge'] ?? []
+                );
+                unset($bundle['knowledge'], $bundle['estimator']);
+                unset($bundle);
+            }
+            // These old aliases are retained as metadata, not as second copies
+            // of potentially hundreds of thousands of human training rows.
+            $artifact['human_guidance'] = $artifact['outcome']['human'];
+            $artifact['candle_guidance'] = $artifact['action']['human'];
+            $bytes = serialize($artifact);
+            $report = $artifact;
+            unset($report['patterns'], $report['lead_lag']['models'], $report['knowledge_sha256']);
+            unset(
+                $report['human_guidance']['estimator'], $report['candle_guidance']['estimator'],
+                $report['outcome']['human']['estimator'], $report['action']['human']['estimator'],
+            );
+            $report['patterns'] = $artifact['patterns']['report'];
+            if (file_put_contents($path.'.tmp', $bytes, LOCK_EX) !== strlen($bytes)
                 || ! chmod($path.'.tmp', 0600) || ! rename($path.'.tmp', $path)) {
                 throw new RuntimeException('Cannot publish intelligence model.');
             }
@@ -136,9 +156,11 @@ final class ModelStore
                 }
             });
         } catch (Throwable $error) {
-            foreach ([$path.'.tmp', $path, $knowledgePath.'.tmp', $knowledgePath] as $file) {
-                if (is_file($file)) {
-                    unlink($file);
+            foreach ([$path, ...$sidecars] as $file) {
+                foreach ([$file.'.tmp', $file] as $candidate) {
+                    if (is_file($candidate)) {
+                        unlink($candidate);
+                    }
                 }
             }
             throw $error;
@@ -194,8 +216,19 @@ final class ModelStore
     public function load(string $id): array
     {
         $artifact = $this->loadArtifact($id);
-        if (($artifact['format_version'] ?? null) === 'm4-intelligence-v2') {
+        if (in_array($artifact['format_version'] ?? null, ['m4-intelligence-v2', 'm4-intelligence-v3'], true)) {
             $artifact['knowledge'] = iterator_to_array($this->knowledge($artifact), false);
+        }
+        if (($artifact['format_version'] ?? null) === 'm4-intelligence-v3') {
+            foreach (['outcome', 'action'] as $source) {
+                $artifact[$source]['human']['knowledge'] = iterator_to_array(
+                    $this->humanKnowledge($artifact, $source), false
+                );
+            }
+            // Keep full artifact loading compatible with older admin/test callers;
+            // inference and model-info deliberately never materialize these rows.
+            $artifact['human_guidance'] = $artifact['outcome']['human'];
+            $artifact['candle_guidance'] = $artifact['action']['human'];
         }
 
         return $artifact;
@@ -236,14 +269,76 @@ final class ModelStore
 
             return;
         }
-        if (($artifact['format_version'] ?? null) !== 'm4-intelligence-v2') {
+        if (! in_array($artifact['format_version'] ?? null, ['m4-intelligence-v2', 'm4-intelligence-v3'], true)) {
             throw new RuntimeException('Unsupported intelligence artifact.');
         }
 
-        $path = $this->knowledgePath($artifact['model_id']);
+        yield from $this->readRows($this->knowledgePath($artifact['model_id']),
+            (string) ($artifact['knowledge_sha256'] ?? ''), 'Intelligence model knowledge');
+    }
+
+    /** Human rows are inline only in legacy v1/v2 models. */
+    public function humanKnowledge(array $artifact, string $source): iterable
+    {
+        if (! in_array($source, ['outcome', 'action'], true)) {
+            throw new InvalidArgumentException('Unknown human knowledge source.');
+        }
+        if (($artifact['format_version'] ?? null) === 'm4-intelligence-v3') {
+            yield from $this->readRows($this->humanKnowledgePath($artifact['model_id'], $source),
+                (string) ($artifact[$source]['human']['knowledge_sha256'] ?? ''), 'Human '.$source.' knowledge');
+
+            return;
+        }
+        if (! in_array($artifact['format_version'] ?? null, ['m4-intelligence-v1', 'm4-intelligence-v2'], true)) {
+            throw new RuntimeException('Unsupported intelligence artifact.');
+        }
+
+        yield from $artifact[$source]['human']['knowledge'] ?? [];
+    }
+
+    /** Verify all three knowledge digests without growing the PHP heap with rows. */
+    public function verify(string $id): void
+    {
+        $artifact = $this->loadArtifact($id);
+        foreach ($this->knowledge($artifact) as $_) {
+            // Checksums are finalized only after the full stream is consumed.
+        }
+        foreach (['outcome', 'action'] as $source) {
+            foreach ($this->humanKnowledge($artifact, $source) as $_) {
+            }
+        }
+    }
+
+    private function publishRows(string $path, iterable $rows): string
+    {
+        $handle = fopen($path.'.tmp', 'wb');
+        if ($handle === false) {
+            throw new RuntimeException('Cannot create private model knowledge file.');
+        }
+        $hash = hash_init('sha256');
+        try {
+            foreach ($rows as $row) {
+                $line = json_encode($row, JSON_THROW_ON_ERROR)."\n";
+                if (fwrite($handle, $line) !== strlen($line)) {
+                    throw new RuntimeException('Cannot write private model knowledge file.');
+                }
+                hash_update($hash, $line);
+            }
+        } finally {
+            fclose($handle);
+        }
+        if (! chmod($path.'.tmp', 0600) || ! rename($path.'.tmp', $path)) {
+            throw new RuntimeException('Cannot publish private model knowledge file.');
+        }
+
+        return hash_final($hash);
+    }
+
+    private function readRows(string $path, string $expectedHash, string $description): iterable
+    {
         $handle = is_file($path) ? fopen($path, 'rb') : false;
         if ($handle === false) {
-            throw new RuntimeException('Intelligence model knowledge is missing.');
+            throw new RuntimeException($description.' is missing.');
         }
 
         $hash = hash_init('sha256');
@@ -255,8 +350,8 @@ final class ModelStore
         } finally {
             fclose($handle);
         }
-        if (! hash_equals((string) ($artifact['knowledge_sha256'] ?? ''), hash_final($hash))) {
-            throw new RuntimeException('Intelligence model knowledge checksum does not match.');
+        if (! hash_equals($expectedHash, hash_final($hash))) {
+            throw new RuntimeException($description.' checksum does not match.');
         }
     }
 
@@ -271,7 +366,7 @@ final class ModelStore
         // Only our private artifacts, authenticated by the independently stored DB digest, are decoded.
         // Never accept arbitrary uploaded or user-supplied serialized models.
         $artifact = unserialize($bytes);
-        if (! is_array($artifact) || ! in_array($artifact['format_version'] ?? null, ['m4-intelligence-v1', 'm4-intelligence-v2'], true)
+        if (! is_array($artifact) || ! in_array($artifact['format_version'] ?? null, ['m4-intelligence-v1', 'm4-intelligence-v2', 'm4-intelligence-v3'], true)
             || ($artifact['model_id'] ?? null) !== $id) {
             throw new RuntimeException('Unsupported intelligence artifact.');
         }

@@ -117,7 +117,7 @@ final class HumanCandleKnn
             'training_through_ms' => $trainingThrough]];
     }
 
-    public function predict(array $bundle, array $payload, int $asOfMs): array
+    public function predict(array $bundle, array $payload, int $asOfMs, ?iterable $knowledge = null): array
     {
         if (! OptionalGuidance::enabled('candle')) {
             return WeightedKnn::abstain('candle_training_disabled');
@@ -136,7 +136,10 @@ final class HumanCandleKnn
             return WeightedKnn::abstain('missing_technical_features');
         }
         $knn = $this->knn($bundle['settings']);
-        $neighbors = $knn->neighbors($bundle['knowledge'], NormalizedVector::from($vector, $bundle['input_keys']), $bundle['k'], $asOfMs);
+        $neighbors = $knn->neighborsIterable(
+            $knowledge ?? ($bundle['knowledge'] ?? []), NormalizedVector::from($vector, $bundle['input_keys']),
+            $bundle['k'], $asOfMs
+        );
 
         return $knn->vote($neighbors, $bundle['k'], $this->voteWeights($bundle['class_weights']));
     }

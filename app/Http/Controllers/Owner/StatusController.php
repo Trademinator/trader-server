@@ -54,7 +54,7 @@ class StatusController extends Controller
             ['name' => 'Research datasets', 'version' => 'm3-dataset-v1 · '.FeatureEngine::VERSION.' · '.SemanticLabels::VERSION, 'scope' => 'datasets'],
             ['name' => 'Human training export', 'version' => HumanTrainingExport::FORMAT],
             ['name' => 'Portable JSON format', 'version' => PortableJson::FORMAT],
-            ['name' => 'Intelligence artifact format', 'version' => 'm4-intelligence-v2'],
+            ['name' => 'Intelligence artifact format', 'version' => 'm4-intelligence-v3'],
             ['name' => 'Archive format / ticker schema', 'version' => config('archive.format_version').' / '.config('archive.ticker_schema_version')],
             ['name' => 'Feature checkpoints', 'version' => FeatureEngine::VERSION.' / '.config('archive.feature_checkpoint_version'), 'scope' => 'checkpoints'],
             ['name' => 'Portable archive format', 'version' => (string) config('archive.portable_format_version')],
@@ -95,7 +95,12 @@ class StatusController extends Controller
             ->pluck('models.model_id');
         $deleted = DB::table('intelligence_models')->whereIn('model_id', $ids)->delete();
         foreach ($ids as $id) {
-            foreach ([rtrim(config('intelligence.path'), '/').'/'.$id.'.model', rtrim(config('intelligence.path'), '/').'/'.$id.'.knowledge.jsonl'] as $path) {
+            foreach ([
+                rtrim(config('intelligence.path'), '/').'/'.$id.'.model',
+                rtrim(config('intelligence.path'), '/').'/'.$id.'.knowledge.jsonl',
+                rtrim(config('intelligence.path'), '/').'/'.$id.'.outcome.knowledge.jsonl',
+                rtrim(config('intelligence.path'), '/').'/'.$id.'.action.knowledge.jsonl',
+            ] as $path) {
                 File::delete($path);
             }
         }

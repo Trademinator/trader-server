@@ -98,6 +98,11 @@ it('publishes independent Human Action knowledge and applies the dynamic source 
         ->and($artifact['action']['human']['knowledge'][0]['label'])->toBe('sell')
         ->and(count($artifact['knowledge'][0]['vector']))->toBe(1)
         ->and(count($artifact['action']['human']['knowledge'][0]['vector']))->toBe(1);
+    $store = app(ModelStore::class);
+    $metadata = $store->currentForPrediction('kraken', 'BTC/USD', '1m');
+    expect($metadata['action']['human'])->not->toHaveKey('knowledge')
+        ->and($metadata['candle_guidance'])->not->toHaveKey('knowledge')
+        ->and(iterator_count($store->humanKnowledge($metadata, 'action')))->toBe(240);
     IntelligenceFixtures::feature(250, 0.0);
     $this->travelTo('2024-01-01 04:11:00 UTC');
     $signal = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');

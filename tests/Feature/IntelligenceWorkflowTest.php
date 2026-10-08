@@ -89,8 +89,12 @@ it('stores shared Outcome and Action KNN knowledge separately and streams it for
     $metadata = $store->currentForPrediction('kraken', 'BTC/USD', '1m');
 
     expect($metadata)->not->toHaveKey('knowledge')
-        ->and($metadata['format_version'])->toBe('m4-intelligence-v2')
+        ->and($metadata['format_version'])->toBe('m4-intelligence-v3')
         ->and(is_file($store->knowledgePath($report['model_id'])))->toBeTrue()
+        ->and($metadata['outcome']['human'])->not->toHaveKey('knowledge')
+        ->and($metadata['action']['human'])->not->toHaveKey('knowledge')
+        ->and(is_file($store->humanKnowledgePath($report['model_id'], 'outcome')))->toBeTrue()
+        ->and(is_file($store->humanKnowledgePath($report['model_id'], 'action')))->toBeTrue()
         ->and(iterator_count($store->knowledge($metadata)))->toBe($report['knowledge_rows']);
 
     IntelligenceFixtures::feature(243, 0.0);
@@ -110,6 +114,63 @@ it('rejects corrupted streamed KNN knowledge', function () {
 
     expect(fn () => iterator_to_array($store->knowledge($metadata), false))
         ->toThrow(RuntimeException::class, 'checksum');
+});
+
+it('verifies all streamed knowledge files and refuses a modified Human KNN sidecar', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $manifest = IntelligenceFixtures::snapshot();
+    $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+    $store = app(ModelStore::class);
+    $model = $store->currentForPrediction('kraken', 'BTC/USD', '1m');
+
+    $store->verify($report['model_id']);
+    $this->artisan('trademinator:model-info', ['model' => $report['model_id']])->assertSuccessful();
+    file_put_contents($store->humanKnowledgePath($report['model_id'], 'action'), "{\"corrupt\":true}\n");
+
+    expect(fn () => iterator_to_array($store->humanKnowledge($model, 'action'), false))
+        ->toThrow(RuntimeException::class, 'checksum');
+    $this->artisan('trademinator:model-info', ['model' => $report['model_id']])->assertFailed();
+});
+
+it('compacts an existing v2 model into a new, equivalent v3 head without retraining', function () {
+    $this->travelTo('2024-01-01 04:05:00 UTC');
+    $manifest = IntelligenceFixtures::snapshot();
+    $report = app(IntelligenceTrainer::class)->train($manifest['dataset_id']);
+    $store = app(ModelStore::class);
+    $originalId = $report['model_id'];
+    IntelligenceFixtures::feature(243, 0.0);
+    IntelligenceFixtures::feature(244, 0.0);
+    IntelligenceFixtures::feature(245, 1.0);
+
+    // Reconstruct the former v2 layout with embedded human bundles and a
+    // separately stored automatic knowledge file, plus a valid DB digest.
+    $legacy = $store->load($originalId);
+    $legacy['format_version'] = 'm4-intelligence-v2';
+    unset($legacy['knowledge'], $legacy['outcome']['human']['knowledge_sha256'],
+        $legacy['action']['human']['knowledge_sha256']);
+    $legacy['human_guidance'] = $legacy['outcome']['human'];
+    $legacy['candle_guidance'] = $legacy['action']['human'];
+    $bytes = serialize($legacy);
+    file_put_contents($store->path($originalId), $bytes);
+    DB::table('intelligence_models')->where('model_id', $originalId)->update(['sha256' => hash('sha256', $bytes)]);
+    $before = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+
+    $arguments = ['exchange' => 'kraken', 'symbol' => 'BTC/USD', 'period' => '1m'];
+    $this->artisan('trademinator:compact-model', $arguments)->assertSuccessful();
+    $compacted = $store->currentForPrediction('kraken', 'BTC/USD', '1m');
+    $newId = $compacted['model_id'];
+    expect($newId)->not->toBe($originalId)
+        ->and($compacted['format_version'])->toBe('m4-intelligence-v3')
+        ->and($compacted['action']['human'])->not->toHaveKey('knowledge')
+        ->and($compacted['human_guidance'])->not->toHaveKey('knowledge')
+        ->and($compacted['candle_guidance'])->not->toHaveKey('knowledge')
+        ->and(iterator_count($store->knowledge($compacted)))->toBe($report['knowledge_rows']);
+    $store->verify($newId);
+    $after = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+    expect($after['scoring'])->toBe($before['scoring']);
+    $this->artisan('trademinator:compact-model', $arguments)->assertSuccessful();
+    expect($store->currentForPrediction('kraken', 'BTC/USD', '1m')['model_id'])->toBe($newId);
+    $this->assertDatabaseCount('intelligence_models', 2);
 });
 
 it('keeps final holdout targets out of K selection', function () {

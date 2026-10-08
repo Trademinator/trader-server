@@ -225,7 +225,8 @@ final class MarketIntelligence
             $outcomeAlgorithmic = (new OutcomeKnn($settings))->vote($neighbors, $outcomeK);
         }
         $outcomeHuman = $this->humanOutcome->predict(
-            $model['outcome']['human'] ?? [], $current->payload, $current->available_at_ms
+            $model['outcome']['human'] ?? [], $current->payload, $current->available_at_ms,
+            $this->models->humanKnowledge($model, 'outcome')
         );
         $outcome = $sourceFusion->combine(
             $outcomeAlgorithmic, $outcomeHuman, SemanticLabels::OUTCOMES, 'outcome',
@@ -244,7 +245,8 @@ final class MarketIntelligence
             );
         }
         $actionHuman = $this->candleKnn->predict(
-            $model['action']['human'] ?? [], $current->payload, $current->available_at_ms
+            $model['action']['human'] ?? [], $current->payload, $current->available_at_ms,
+            $this->models->humanKnowledge($model, 'action')
         );
         $action = $sourceFusion->combine(
             $actionAlgorithmic, $actionHuman, ['buy', 'hodl', 'sell'], 'action',

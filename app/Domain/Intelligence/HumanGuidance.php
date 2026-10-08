@@ -81,7 +81,7 @@ final class HumanGuidance
         ]];
     }
 
-    public function predict(array $bundle, array $payload, int $asOfMs): array
+    public function predict(array $bundle, array $payload, int $asOfMs, ?iterable $knowledge = null): array
     {
         if (! OptionalGuidance::enabled('trend')) {
             return OutcomeKnn::abstain('outcome_training_disabled');
@@ -103,7 +103,7 @@ final class HumanGuidance
         $settings = $bundle['settings'] ?? config('intelligence.knn');
         $neighbors = new WeightedKnn($settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']);
         $prepared = NormalizedVector::from($vector, $bundle['input_keys']);
-        $nearest = $neighbors->neighbors($bundle['knowledge'], $prepared, $bundle['k'], $asOfMs);
+        $nearest = $neighbors->neighborsIterable($knowledge ?? ($bundle['knowledge'] ?? []), $prepared, $bundle['k'], $asOfMs);
 
         return (new OutcomeKnn($settings))->vote($nearest, $bundle['k']);
     }

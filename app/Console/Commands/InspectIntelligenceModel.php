@@ -15,7 +15,7 @@ final class InspectIntelligenceModel extends Command
     public function handle(ModelStore $models): int
     {
         try {
-            $models->load($this->argument('model'));
+            $models->verify($this->argument('model'));
             $this->line(json_encode($models->report($this->argument('model')), JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
 
             return self::SUCCESS;

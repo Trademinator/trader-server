@@ -1,6 +1,6 @@
 # Trademinator CLI reference
 
-Canonical operator reference for all **40 `trademinator:*` commands**, the local `inspire` command, and the committed metadata utility. Common Laravel operating commands are listed separately; package-provided commands vary with installed dependencies, so `php artisan list` remains the complete runtime inventory.
+Canonical operator reference for all **41 `trademinator:*` commands**, the local `inspire` command, and the committed metadata utility. Common Laravel operating commands are listed separately; package-provided commands vary with installed dependencies, so `php artisan list` remains the complete runtime inventory.
 
 Command signatures, descriptions and behavior were checked against repository source at `c0ce12f87ec570783381fd7854f03905ae2bc5bd`. Update this file whenever a command or its parameters change. `tests/Feature/TrademinatorCliDocumentationTest.php` checks the registered project-command inventory, exact normalized signatures and descriptions.
 
@@ -83,6 +83,7 @@ Each link contains the exact signature, parameter meanings, execution/side-effec
 | Research datasets and backtests | [`trademinator:dataset-info`](#trademinatordataset-info) |
 | Research datasets and backtests | [`trademinator:backtest`](#trademinatorbacktest) |
 | Models and signals | [`trademinator:knn-build`](#trademinatorknn-build) |
+| Models and signals | [`trademinator:compact-model`](#trademinatorcompact-model) |
 | Models and signals | [`trademinator:dispatch-market-intelligence`](#trademinatordispatch-market-intelligence) |
 | Models and signals | [`trademinator:auto-label`](#trademinatorauto-label) |
 | Models and signals | [`trademinator:dispatch-lead-lag`](#trademinatordispatch-lead-lag) |
@@ -776,6 +777,30 @@ php artisan trademinator:model-info MODEL_UUID
 ```
 
 Implementation: [`InspectIntelligenceModel.php`](../app/Console/Commands/InspectIntelligenceModel.php).
+
+## trademinator:compact-model
+
+Signature: `trademinator:compact-model {exchange} {symbol} {period}`
+
+Description: Convert the active intelligence model to streamed, low-memory knowledge without retraining
+
+Convert a previously trained, active v2 model to the v3 format without rerunning training or changing KNN labels, parameters, weights, or validation. Streams automatic knowledge into a new `.knowledge.jsonl` file and writes Human Outcome/Action knowledge to separate verified files. The previous model remains on disk and in the database for rollback. The newly published model gets a new UUID; its training generation key is deliberately not duplicated. Does not place orders, ingest candles or change model expiry. Requires read/write access to the private intelligence artifact directory and database. Not scheduled.
+
+| Parameter | Default / requirement | Explanation |
+| --- | --- | --- |
+| `exchange` | Required | Exchange ID, for example `bitso`. |
+| `symbol` | Required | Exact pair, for example `'ATOM/USD'`. |
+| `period` | Required | Existing active model period, for example `15m`. |
+
+```bash
+# A pre-v3 artifact can still need a larger one-time PHP memory allowance.
+php -d memory_limit=512M artisan trademinator:compact-model bitso 'ATOM/USD' 15m
+php artisan trademinator:signal bitso 'ATOM/USD' 15m
+```
+
+Re-running on an already compact v3 model is a no-op. Models older than v2 must be rebuilt rather than compacted. During conversion, the old model is checksummed and the new model is written with separate SHA-256 digests; conversion fails instead of promoting damaged data. Predictions remain subject to the configured memory limit if other components (such as pattern models) are large. For pre-v3 models, run compaction under a suitable PHP CLI memory limit first.
+
+Implementation: [`CompactIntelligenceModel.php`](../app/Console/Commands/CompactIntelligenceModel.php).
 
 ## trademinator:analyze-validation-gates
 
