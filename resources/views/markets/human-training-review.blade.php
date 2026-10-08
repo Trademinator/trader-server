@@ -13,6 +13,10 @@
         .human-training-assessment-band { position:absolute; z-index:0; top:0; bottom:0; pointer-events:none; background:rgba(245,158,11,.22); border-inline:1px solid rgba(217,119,6,.42); }
         .dark .human-training-assessment-band { background:rgba(251,191,36,.20); border-inline-color:rgba(251,191,36,.48); }
         .human-training-assessment-label { position:absolute; z-index:2; top:8px; transform:translateX(-50%); pointer-events:none; white-space:nowrap; padding:3px 7px; border-radius:6px; background:rgba(146,64,14,.92); color:#fff7ed; font-size:.75rem; font-weight:750; line-height:1.2; box-shadow:0 1px 3px rgba(0,0,0,.25); }
+        .human-training-close-change { position:absolute; z-index:4; transform:translateX(-50%); pointer-events:none; border-radius:6px; background:#172c43; color:white; font-weight:750; font-size:.84rem; padding:4px 8px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .human-training-close-change[data-direction="up"] { background:#087b6b; }
+        .human-training-close-change[data-direction="down"] { background:#a5273b; }
+        .human-training-close-change[hidden] { display:none; }
         .human-training-future-band { position:absolute; z-index:0; top:0; bottom:0; pointer-events:none; background:rgba(148,163,184,.24); border-inline:1px solid rgba(100,116,139,.5); }
         .human-training-future-label { position:absolute; z-index:2; top:38px; transform:translateX(-50%); pointer-events:none; white-space:nowrap; padding:3px 7px; border-radius:6px; background:#64748b; color:white; font-size:.75rem; font-weight:750; }
         .human-training-assessment-band[hidden], .human-training-assessment-label[hidden], .human-training-future-band[hidden], .human-training-future-label[hidden] { display:none; }
@@ -38,13 +42,14 @@
                     <div class="human-training-future-band" data-future-band hidden aria-hidden="true"></div>
                     <div class="human-training-chart-canvas" data-canvas></div>
                     <span class="human-training-future-label" data-future-label hidden aria-hidden="true">H</span>
+                    <span class="human-training-close-change" data-close-change hidden role="note" aria-label="Close-to-close percentage change"></span>
                     <span class="human-training-assessment-label" data-assessment-label hidden aria-hidden="true">Assess from here</span>
                 </div>
                 <button type="button" class="review-control" data-fit>Fit all candles</button>
                 <p class="guide-help" data-status role="status">Loading the frozen chart…</p>
                 <noscript><p>The interactive chart requires JavaScript. Candle values and indicators remain available below.</p></noscript>
             </div>
-            <p class="guide-help">The yellow shading is behind the candlestick, so the decision candle remains fully visible. Dotted human evaluation lines use dark red (Super Bear), light red (Bear), grey (Neutral), light green (Bull), or dark green (Super Bull). Dotted blue represents the recorded five-class computer outcome. Lines join actual candle closes and do not represent orders. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
+            <p class="guide-help">The yellow shading is behind the candlestick, so the decision candle remains fully visible. Dotted human evaluation lines use dark red (Super Bear), light red (Bear), grey (Neutral), light green (Bull), or dark green (Super Bull). Dotted blue represents the recorded five-class computer outcome. The permanent dotted line shows the actual close-to-close percentage change, independently of human or machine labels. Lines do not represent orders. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
             <details><summary>Recent candle values</summary><div class="review-table-wrap"><table><thead><tr><th>Open time (<x-timezone-label />)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
                 @foreach(array_slice($snapshot['series'], -10) as $candle)<tr><th><x-display-time :value="$candle['time']" unit="seconds" precision="minutes" /></th>@foreach(['open', 'high', 'low', 'close', 'volume'] as $field)<td>{{ $candle[$field] }}</td>@endforeach</tr>@endforeach
             </tbody></table></div></details>

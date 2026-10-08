@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { trainingChartData, trainingChartTheme } from '../../resources/js/components/human-training-chart.js';
+import { trainingChartData, trainingChartTheme, observedCloseMove } from '../../resources/js/components/human-training-chart.js';
 
 const candle = time => ({ time, open: '10.5', high: '12', low: '9', close: '11', volume: '100' });
 
@@ -69,4 +69,21 @@ test('H=20 includes genuine candles beyond H and balances chart context', () => 
     assert.equal(data.candles[20].time, data.assessmentTime);
     assert.equal(data.candles[40].time, data.futureTime);
     assert.equal(data.candles.at(-1).time, after.at(-1).time);
+});
+
+test('observed dotted line has signed close-to-close percentages independent of annotations', () => {
+    const rising = observedCloseMove({ time: 60, close: 100 }, { time: 180, close: 105 });
+    const falling = observedCloseMove({ time: 60, close: 100 }, { time: 180, close: 98 });
+    const flat = observedCloseMove({ time: 60, close: 100 }, { time: 180, close: 100 });
+    assert.equal(rising.text, '+5.000%');
+    assert.equal(falling.text, '-2.000%');
+    assert.equal(flat.text, '0.000%');
+    assert.deepEqual(rising.points, [{ time: 60, value: 100 }, { time: 180, value: 105 }]);
+    assert.equal(observedCloseMove({ time: 60, close: 0 }, { time: 180, close: 105 }), null);
+    const data = trainingChartData({ decision_at_ms: 120000, series: [candle(0), candle(60)],
+        horizon_candles: 2, future_series: [candle(120), candle(180)],
+        future_candle: candle(180), label: null, machine_outcome: null });
+    assert.ok(data.observedMove);
+    assert.equal(data.humanLine, null);
+    assert.equal(data.computerLine, null);
 });

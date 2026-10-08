@@ -13,6 +13,18 @@ export function outcomeLine(decision, future, label, source = 'human') {
             { time: future.time, value: future.close }],
     };
 }
+export function observedCloseMove(decision, future) {
+    const start = Number(decision?.close);
+    const end = Number(future?.close);
+    if (!decision || !future || !Number.isFinite(start) || !Number.isFinite(end) || start <= 0) return null;
+    const percent = (end / start - 1) * 100;
+    return {
+        percent,
+        text: (percent > 0 ? '+' : '') + percent.toFixed(3) + '%',
+        color: percent > 0 ? '#087b6b' : percent < 0 ? '#c33e50' : '#64748b',
+        points: [{ time: decision.time, value: start }, { time: future.time, value: end }],
+    };
+}
 export function trainingChartData(snapshot) {
     const series = (snapshot.series ?? []).filter(row => row.time * 1000 < snapshot.decision_at_ms)
         .map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)])));
@@ -44,6 +56,7 @@ export function trainingChartData(snapshot) {
     const extended = validForward ? [...before, ...forward, ...validAfter] : series;
     return { ...chartData({ series: extended }), series: extended, markers: [],
         assessmentTime: decision?.time ?? null, futureTime: validForward ? future.time : null,
+        observedMove: observedCloseMove(decision, validForward ? future : null),
         humanLine: outcomeLine(decision, validForward ? future : null, snapshot.label),
         computerLine: outcomeLine(decision, validForward ? future : null, snapshot.machine_outcome, 'computer') };
 }
@@ -73,11 +86,12 @@ export async function mountHumanTrainingChart(root) {
     const assessmentLabel = root.querySelector('[data-assessment-label]');
     const futureBand = root.querySelector('[data-future-band]');
     const futureLabel = root.querySelector('[data-future-label]');
+    const changeLabel = root.querySelector('[data-close-change]');
     const overlays = [...root.querySelectorAll('[data-outcome-overlay]')];
     let overlay = 'human';
     const legend = root.querySelector('[data-legend]');
     const fit = root.querySelector('[data-fit]');
-    let chart, observer, resizeObserver, unsubscribeTime, humanLineSeries, computerLineSeries;
+    let chart, price, observer, resizeObserver, unsubscribeTime, humanLineSeries, computerLineSeries, observedLineSeries;
     let inspectedCandle;
     const data = trainingChartData(JSON.parse(root.dataset.snapshot));
     const smallestPrice = Math.min(...data.candles.map(candle => candle.low));
@@ -89,6 +103,7 @@ export async function mountHumanTrainingChart(root) {
         if (assessmentLabel) assessmentLabel.hidden = true;
         if (futureBand) futureBand.hidden = true;
         if (futureLabel) futureLabel.hidden = true;
+        if (changeLabel) changeLabel.hidden = true;
     };
     const positionAssessment = () => {
         if (!chart || !frame || !band || !assessmentLabel || data.assessmentTime === null) {
@@ -124,6 +139,24 @@ export async function mountHumanTrainingChart(root) {
                 futureLabel.hidden = false;
             }
         }
+        if (changeLabel) {
+            const movement = data.observedMove;
+            const x2 = movement ? chart.timeScale().timeToCoordinate(movement.points[1].time) : null;
+            const y1 = movement ? price?.priceToCoordinate(movement.points[0].value) : null;
+            const y2 = movement ? price?.priceToCoordinate(movement.points[1].value) : null;
+            if (movement && x2 !== null && y1 !== null && y2 !== null
+                && [x, x2, y1, y2].every(Number.isFinite)) {
+                const midpointX = (x + x2) / 2;
+                const midpointY = (y1 + y2) / 2;
+                changeLabel.textContent = movement.text;
+                changeLabel.style.left = Math.max(40, Math.min(frame.clientWidth - 40, midpointX)) + 'px';
+                changeLabel.style.top = Math.max(10, Math.min(frame.clientHeight - 34, midpointY - 27)) + 'px';
+                changeLabel.dataset.direction = movement.percent > 0 ? 'up' : movement.percent < 0 ? 'down' : 'flat';
+                changeLabel.hidden = false;
+            } else {
+                changeLabel.hidden = true;
+            }
+        }
     };
     const scheduleAssessment = () => requestAnimationFrame(positionAssessment);
     const fitChart = () => {
@@ -133,7 +166,7 @@ export async function mountHumanTrainingChart(root) {
     try {
         const library = await import('lightweight-charts');
         chart = library.createChart(canvas, { autoSize: true, ...theme() });
-        const price = chart.addSeries(library.CandlestickSeries, { upColor: '#159b83', downColor: '#d64a5e', borderVisible: false, wickUpColor: '#159b83', wickDownColor: '#d64a5e',
+        price = chart.addSeries(library.CandlestickSeries, { upColor: '#159b83', downColor: '#d64a5e', borderVisible: false, wickUpColor: '#159b83', wickDownColor: '#d64a5e',
             priceFormat: { type: 'custom', minMove, formatter: value => formatPrice(value, minMove) } });
         const volume = chart.addSeries(library.HistogramSeries, { priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false }, 1);
         price.setData(data.candles);
@@ -142,6 +175,10 @@ export async function mountHumanTrainingChart(root) {
         const lineStyle = library.LineStyle?.Dotted ?? 1;
         const lineOptions = { lineWidth: 2, lineStyle, priceLineVisible: false,
             lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null };
+        observedLineSeries = chart.addSeries(library.LineSeries, {
+            ...lineOptions, lineWidth: 3, color: data.observedMove?.color ?? '#64748b',
+        });
+        observedLineSeries.setData(data.observedMove?.points ?? []);
         humanLineSeries = chart.addSeries(library.LineSeries, { ...lineOptions,
             color: data.humanLine?.color ?? '#aeb4bf' });
         computerLineSeries = chart.addSeries(library.LineSeries, { ...lineOptions, color: '#2563eb' });
@@ -175,7 +212,7 @@ export async function mountHumanTrainingChart(root) {
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         fit.addEventListener('click', fitChart);
         fitChart();
-        status.textContent = data.futureTime === null ? 'The H-period comparison candle is unavailable.' : 'Yellow = decision; grey = H-period comparison. No recorded five-class machine prediction is available unless its blue line appears.';
+        status.textContent = data.futureTime === null ? 'The H-period comparison candle is unavailable.' : 'Yellow = decision; grey = H-period comparison. The dotted price line shows the actual close-to-close movement.';
         window.addEventListener('pagehide', event => {
             if (event.persisted) return;
             unsubscribeTime?.();
