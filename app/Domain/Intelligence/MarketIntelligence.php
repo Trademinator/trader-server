@@ -43,6 +43,7 @@ final class MarketIntelligence
         // Validate input profile before computing a generation or reading features.
         // Enhanced and Full use OHLCV-only KNN vectors; CoinGecko is an advisor.
         FeatureSchema::keys($schema);
+        $requestedSchema = $schema;
         $schemaSelection = [
             'requested_schema' => $schema,
             'effective_schema' => $schema,
@@ -53,7 +54,7 @@ final class MarketIntelligence
             'reason' => 'coingecko_independent_optional_insight',
         ];
         if ($generation !== null) {
-            $generation = hash('sha256', $generation.'|'.FeatureSchema::VERSION);
+            $generation = hash('sha256', $generation.'|'.FeatureSchema::VERSION.'|'.KnnSchemaFallback::VERSION);
         }
         $buildPerformance['started_at'] ??= now()->toIso8601String();
         $buildPerformance['started_monotonic_ns'] = hrtime(true);
@@ -87,6 +88,28 @@ final class MarketIntelligence
                 // H is only a seed here. DatasetSnapshotBuilder replaces it with the
                 // frequency-weighted Action-pivot horizon before labeling rows.
                 $definition = new SemanticLabels(config('intelligence.horizon'), config('intelligence.lookback'));
+                if (in_array($requestedSchema, ['technical', 'full'], true)
+                    && config('intelligence.technical_fallback', true)) {
+                    $inspection = app(KnnSchemaFallback::class)->inspect(
+                        $exchange, $symbol, $period, (int) $fromMs, $toMs, $asOfMs,
+                        $definition->horizon, $deadline
+                    );
+                    $effective = $inspection['effective_schema'];
+                    if ($effective === null) {
+                        throw new IntelligenceNotReady($inspection);
+                    }
+                    $schema = match ($requestedSchema) {
+                        'full' => $effective === 'core' ? 'enhanced' : 'full',
+                        default => $effective,
+                    };
+                    $schemaSelection = [
+                        ...$inspection, 'requested_schema' => $requestedSchema,
+                        'effective_schema' => $schema,
+                        'knn_schema' => $effective,
+                        'schema_version' => FeatureSchema::VERSION,
+                        'context_in_knn' => false,
+                    ];
+                }
                 $manifest = $this->datasets->build($exchange, $symbol, $period, $definition, $schema,
                     fromMs: (int) $fromMs, toMs: $toMs, asOfMs: $asOfMs,
                     featureLockOwner: $featureLockOwner);

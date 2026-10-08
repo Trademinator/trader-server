@@ -8,6 +8,7 @@ use App\Domain\Research\DatasetStore;
 use App\Models\HumanTrainingReview;
 use App\Models\HumanTrainingSnapshot;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Tests\Support\IntelligenceFixtures;
@@ -125,4 +126,41 @@ it('disables Human Outcome influence when Trend Training is disabled', function 
     expect($bundle['status'])->toBe('outcome_training_disabled')
         ->and($bundle['samples'])->toBe(0)
         ->and($bundle['influence'])->toBeFalse();
+});
+
+
+it('trains independently from previously normalized directional snapshots', function () {
+    $trainer = User::factory()->create();
+    config(['operations.owner_uuid' => $trainer->user_id]);
+    $manifest = IntelligenceFixtures::snapshot(12);
+    $store = app(DatasetStore::class);
+    [, $rows] = $store->load($manifest['dataset_id']);
+
+    // The source dataset holds raw {-1,0,1} direction values. Human review
+    // snapshots are already normalized to {0,0.5,1}.
+    $manifest['keys'] = ['candle.direction', 'candle.body'];
+    foreach ($rows as $index => &$row) {
+        $rawDirection = [-1.0, 0.0, 1.0][$index % 3];
+        $row['vector'] = [$rawDirection, $row['vector'][0]];
+    }
+    unset($row);
+    $bytes = implode('', array_map(fn (array $row): string => json_encode($row, JSON_THROW_ON_ERROR)."\n", $rows));
+    $manifest['rows_sha256'] = hash('sha256', $bytes);
+    $directory = $store->directory($manifest['dataset_id']);
+    file_put_contents($directory.'/rows.jsonl', $bytes);
+    file_put_contents($directory.'/manifest.json', json_encode($manifest, JSON_THROW_ON_ERROR));
+    DB::table('research_datasets')->where('dataset_id', $manifest['dataset_id'])
+        ->update(['manifest' => json_encode($manifest, JSON_THROW_ON_ERROR)]);
+
+    foreach ($rows as $row) {
+        humanOutcomeOpinion($manifest, $row, $trainer);
+    }
+
+    $trained = app(HumanGuidance::class)->train($manifest, config('intelligence.knn'), microtime(true) + 30);
+    expect($trained['bundle']['status'])->toBe('validated')
+        ->and($trained['bundle']['knowledge_rows'])->toBe(12)
+        ->and($trained['bundle']['input_keys'])->toBe(['candle.direction', 'candle.body']);
+    foreach ($trained['bundle']['knowledge'] as $knowledge) {
+        expect((float) $knowledge['vector'][0])->toBeIn([0.0, 0.5, 1.0]);
+    }
 });

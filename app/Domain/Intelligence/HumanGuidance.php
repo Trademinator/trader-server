@@ -176,7 +176,7 @@ final class HumanGuidance
                     'decision_at_ms' => (int) $source['decision_at_ms'],
                     'label_available_at_ms' => (int) $source['label_available_at_ms'],
                     'updated_at_ms' => $snapshot->reviews->max(fn ($review) => $review->submitted_at->getTimestampMs()),
-                    'vector' => NormalizedVector::from($payload['vector'], $manifest['keys']),
+                    'vector' => $payload['vector'], // Snapshot vectors are already normalized and verified.
                     'label' => array_key_first($votes),
                     'provenance' => ['snapshot_id' => $snapshot->snapshot_id, 'sha256' => $snapshot->sha256,
                         'review_ids' => $snapshot->reviews->pluck('review_id')->all()],

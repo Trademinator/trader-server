@@ -7,6 +7,7 @@ return [
     'schema' => env('INTELLIGENCE_SCHEMA', 'core'),
     // Previous full-context fallback is retired: CoinGecko never enters Core/Technical KNN.
     'context_fallback' => 'none',
+    'technical_fallback' => (bool) env('INTELLIGENCE_TECHNICAL_FALLBACK', true),
     // Bootstrap/fallback depth only. Each dataset replaces this with H derived from Action pivot frequencies.
     'horizon' => 12,
     'lookback' => 20,

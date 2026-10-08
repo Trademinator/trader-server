@@ -34,3 +34,20 @@ KNN training. Standalone validation requires a purged chronological holdout.
 The optional forest is serialized to its own checksum-verified sidecar.
 Default fusion weight is zero; even with explicit influence enabled it cannot
 turn an original HOLD into a trade and is capped at 15%.
+
+## Automatic KNN feature-history fallback
+
+By default the scheduled baseline is `INTELLIGENCE_SCHEMA=full`.
+`INTELLIGENCE_TECHNICAL_FALLBACK=true` runs a **read-only pre-build
+capacity check** of complete, timely features. It selects the frozen feature
+schema **once, before labels/model fitting or holdout validation**:
+
+- Technical -> Core when the long-horizon returns cannot support tuning and holdout.
+- Full -> Enhanced for the same missing-return-history reason, preserving the
+  optional CoinGecko advisor.
+- Core/Enhanced stay unchanged.
+
+Never retry the weaker schema because the stronger KNN's holdout failed,
+or because source data, feature contracts, locks, memory or time budgets
+have errors. Selection metrics are recorded with the model.
+A scheduled check without enough either way skips without publishing a new head.

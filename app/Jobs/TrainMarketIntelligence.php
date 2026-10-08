@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Domain\Intelligence\IntelligenceNotReady;
 use App\Domain\Intelligence\IntelligenceTrainer;
+use App\Domain\Intelligence\KnnSchemaFallback;
 use App\Domain\Intelligence\MarketIntelligence;
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\Operations\ActionLog;
@@ -38,7 +39,7 @@ final class TrainMarketIntelligence implements ShouldBeUnique, ShouldQueue
     {
         $schema = $this->schema ?? (string) config('intelligence.schema');
 
-        return ModelStore::marketKey($this->exchange, $this->symbol, $this->period).':'.$this->week.':'.$schema.':'.IntelligenceTrainer::VERSION;
+        return ModelStore::marketKey($this->exchange, $this->symbol, $this->period).':'.$this->week.':'.$schema.':'.IntelligenceTrainer::VERSION.':'.KnnSchemaFallback::VERSION;
     }
 
     public function handle(MarketIntelligence $intelligence): void
@@ -63,7 +64,7 @@ final class TrainMarketIntelligence implements ShouldBeUnique, ShouldQueue
                     'reason' => $selection['reason'] ?? 'insufficient_history', 'outcome' => 'skipped',
                     'feature_rows' => $selection['feature_rows'] ?? 0,
                     'eligible_rows' => max(
-                        $selection['potential_history']['full']['potential_mature_rows'] ?? 0,
+                        $selection['potential_history']['core']['potential_mature_rows'] ?? 0,
                         $selection['potential_history']['technical']['potential_mature_rows'] ?? 0,
                     ),
                 ]);
