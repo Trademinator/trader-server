@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Markets;
 
 use App\Domain\Intelligence\CoinGeckoReadiness;
 use App\Domain\Intelligence\IntelligenceReadiness;
-use App\Domain\Intelligence\MarketIntelligence;
+use App\Domain\Intelligence\SignalFreshness;
 use App\Domain\Intelligence\ModelStore;
 use App\Domain\Intelligence\SignalJournal;
 use App\Domain\Intelligence\WeightedKnn;
@@ -18,23 +18,42 @@ use Throwable;
 
 final class IntelligenceController extends Controller
 {
-    public function show(Request $request, string $subscription, MarketIntelligence $intelligence, ModelStore $models, IntelligenceReadiness $readiness, MarketCatalog $catalog, CoinGeckoReadiness $contextReadiness): View
+    public function show(Request $request, string $subscription, ModelStore $models, IntelligenceReadiness $readiness, MarketCatalog $catalog, CoinGeckoReadiness $contextReadiness, SignalFreshness $freshness): View
     {
-        $item = MarketSubscription::query()->with('market.exchange', 'market.feed')
+        $item = MarketSubscription::query()->with('market.exchange', 'market.feed', 'market.latestSignal')
             ->where('user_id', $request->user()->user_id)->where('active', true)->findOrFail($subscription);
         $period = $item->market->feed?->selected_period;
         $coingecko = $contextReadiness->forMarkets([$item->market])->get(ModelStore::marketKey(
             $item->market->exchange->class, $item->market->symbol, $period ?? ''));
         $report = null;
-        try {
-            $signal = $period === null ? [...WeightedKnn::abstain('period_pending'), 'patterns' => []]
-                : $intelligence->predict($item->market->exchange->class, $item->market->symbol, $period);
-            if (($signal['model_id'] ?? null) !== null) {
-                $report = $models->report($signal['model_id']);
+        $signal = [...WeightedKnn::abstain($period === null ? 'period_pending' : 'no_model'), 'patterns' => []];
+        if ($period !== null) {
+            try {
+                $report = $models->currentReport($item->market->exchange->class, $item->market->symbol, $period);
+                $modelReady = ModelStore::isReadyReport($report);
+                $reason = match (true) {
+                    $report === null => 'no_model',
+                    ! $modelReady => ModelStore::knnReadiness($report)['outcome']['reason']
+                        ?? ($report['reason'] ?? 'model_unavailable'),
+                    default => 'awaiting_recording',
+                };
+                $signal = [...WeightedKnn::abstain($reason), 'patterns' => []];
+
+                $recorded = $item->market->latestSignal;
+                $nowMs = now()->getTimestampMs();
+                $expiresAt = $recorded === null ? null : $freshness->expiresAt($recorded->decision_at_ms, $period);
+                if ($recorded !== null && $recorded->period === $period
+                    && $recorded->model_id === ($report['model_id'] ?? null)
+                    && ($recorded->reason !== 'supported'
+                        || ($modelReady && $recorded->decision_at_ms !== null
+                            && $recorded->decision_at_ms <= $nowMs && $expiresAt !== null && $nowMs < $expiresAt))) {
+                    $signal = $recorded->payload;
+                    $signal['patterns'] ??= [];
+                }
+            } catch (Throwable $error) {
+                report($error);
+                $signal = [...WeightedKnn::abstain('model_unavailable'), 'patterns' => []];
             }
-        } catch (Throwable $error) {
-            report($error);
-            $signal = [...WeightedKnn::abstain('model_unavailable'), 'patterns' => []];
         }
         $explanation = SignalJournal::explain($signal['reason']);
 

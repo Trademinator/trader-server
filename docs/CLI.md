@@ -601,7 +601,7 @@ Read-only Outcome KNN research command. It never publishes a model, moves an int
 
 The report reserves the final 20% of the frozen dataset by decision time and reports it as `final_holdout.evaluated=false`. Research comparisons use only earlier rows whose alternative Outcome labels are available before that cutoff.
 
-The horizon sweep evaluates approximately `H/2`, `H`, `1.5H`, and `2H`. On technical/full source datasets it uses the Technical feature group for all horizons; otherwise it reports `source_schema`. At the current H, it separately compares Core, Technical, and Technical + validated pattern features when those inputs are available.
+The horizon sweep evaluates approximately `H/2`, `H`, `1.5H`, and `2H`. On technical/full source datasets it uses the Technical feature group for all horizons; otherwise it reports `source_schema`. At the current H, it compares Core and Technical. Patterns are reported as informational-only and are never appended to KNN vectors.
 
 Each evaluated variant reports:
 

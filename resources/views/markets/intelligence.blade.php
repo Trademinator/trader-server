@@ -13,10 +13,10 @@
             <p>Market signals learned from genuinely closed historical candles.</p>
         </header>
         <section class="guide-panel">
-            <h2>Current signal</h2>
+            <h2>Latest recorded signal</h2>
             <p class="guide-notice">{{ $explanation }}</p>
             <div class="review-metrics">
-                <div class="review-metric">Action<strong>{{ $signal['action'] === 'hodl' ? 'HOLD' : strtoupper($signal['action']) }}</strong></div>
+                <div class="review-metric">Action<strong>{{ $signal['reason'] === 'supported' ? ($signal['action'] === 'hodl' ? 'HOLD' : strtoupper($signal['action'])) : 'WAITING' }}</strong></div>
                 <div class="review-metric">Confidence<strong>{{ \App\Helpers\Decimal::format($signal['confidence'] * 100, 1) }}%</strong></div>
                 <div class="review-metric">Market state<strong>{{ ucwords(str_replace('_', ' ', $signal['regime'] ?? 'neutral')) }}</strong></div>
                 <div class="review-metric">Effective neighbors<strong>{{ \App\Helpers\Decimal::format($signal['effective_neighbors'], 1) }}</strong></div>
@@ -24,6 +24,7 @@
             @if (isset($signal['decision_at_ms']))
                 <p>Closed-candle decision time: <x-display-time :value="$signal['decision_at_ms']" unit="milliseconds" /></p>
             @endif
+            <p class="guide-help">Signals are calculated by background workers. This page shows a recorded observation only for the selected period and current model; expired directional observations are not reused.</p>
             <p class="guide-help">Confidence describes the supported Outcome and Action KNN evidence; it is not a calibrated probability of profit. Market state is the Outcome KNN class over the market-derived horizon. The client still applies trading fees, balances and execution rules.</p>
             @if ($progress['evidence_evaluated'])
                 <x-intelligence-progress label="Effective neighbors required" :value="$signal['effective_neighbors']" :target="$progress['settings']['min_effective_neighbors']" :decimals="1" />

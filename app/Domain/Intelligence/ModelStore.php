@@ -215,6 +215,20 @@ final class ModelStore
         return $id === null ? null : $this->loadArtifact($id);
     }
 
+    /**
+     * Read the published model report without deserializing the model artifact.
+     * Safe for memory-bounded HTTP requests; inference remains in queue workers.
+     */
+    public function currentReport(string $exchange, string $symbol, string $period): ?array
+    {
+        $json = DB::table('intelligence_heads as heads')
+            ->join('intelligence_models as models', 'models.model_id', '=', 'heads.model_id')
+            ->where('heads.market_key', self::marketKey($exchange, $symbol, $period))
+            ->value('models.report');
+
+        return $json === null ? null : json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+    }
+
     public function knowledge(array $artifact): iterable
     {
         if (($artifact['format_version'] ?? null) === 'm4-intelligence-v1') {

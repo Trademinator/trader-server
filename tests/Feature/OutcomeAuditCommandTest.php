@@ -42,7 +42,11 @@ it('audits Outcome research without publishing or evaluating the reserved final 
             'same_direction_accuracy', 'opposite_direction_rate', 'extreme_opposite_rate',
         ])
         ->and($result['research']['feature_groups_at_current_horizon'])->toHaveKeys([
-            'core', 'technical', 'technical_plus_patterns',
+            'core', 'technical', 'patterns',
+        ])
+        ->and($result['research']['feature_groups_at_current_horizon']['patterns'])->toMatchArray([
+            'status' => 'informational_only',
+            'influence' => false,
         ])
         ->and($result['final_holdout']['evaluated'])->toBeFalse()
         ->and($result['final_holdout']['reason'])->toBe('reserved_for_post_research_validation');

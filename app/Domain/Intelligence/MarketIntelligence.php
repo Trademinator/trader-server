@@ -289,10 +289,6 @@ final class MarketIntelligence
         $context['patterns'] = $this->patterns->predict(
             $model['patterns'], $vector, $this->catalog->candidates($history, $model['period']), $decisionAt
         );
-        if ($model['pattern_keys'] !== []) {
-            $vector = [...$vector, ...$this->patterns->features($model['patterns'], $context['patterns'])];
-        }
-
         $weights = [];
         if (($model['lead_lag_keys'] ?? []) !== []) {
             if (($model['lead_lag']['version'] ?? null) !== LeadLagTrainer::VERSION) {

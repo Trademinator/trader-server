@@ -21,7 +21,7 @@ it('restricts intelligence pages to the active subscription owner and escapes ma
 
     $this->get($url)->assertRedirect(route('login'));
     $this->actingAs($other)->get($url)->assertNotFound();
-    $this->actingAs($owner)->get($url)->assertSee('HOLD')->assertSee('0.0%')
+    $this->actingAs($owner)->get($url)->assertSee('Action<strong>WAITING</strong>', false)->assertSee('0.0%')
         ->assertSee('Training has not completed')->assertSee('What is missing?')
         ->assertSee('Outcome KNN: Not ready — No model built yet')
         ->assertSee('Action KNN: Not ready — No model built yet')

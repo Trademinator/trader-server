@@ -12,7 +12,7 @@ use RuntimeException;
 
 final class IntelligenceTrainer
 {
-    public const VERSION = 'm6-outcome-action-knn-v3';
+    public const VERSION = 'm6-outcome-action-knn-v4';
 
     public function __construct(
         private DatasetStore $datasets,
@@ -120,33 +120,14 @@ final class IntelligenceTrainer
             $buildPerformance['stages']['lead_lag_ms'] = $this->elapsedMs($stageStarted);
             $leadLagBundle = $leadLag['bundle'];
             unset($leadLag['bundle']);
-            $candidatePatternKeys = $patternSettings['as_knn_features'] ? $this->patterns->featureKeys($patternBundle) : [];
-            $patternKnownAt = $candidatePatternKeys === [] ? null : max(array_column($patternBundle['models'], 'available_at_ms'));
-
+            // Patterns remain trained and reported, but are intentionally excluded from every KNN feature vector.
+            $candidatePatternKeys = [];
+            $patternKnownAt = null;
             $technicalRows = $rows;
-            $stackedRows = null;
-            if ($patternKnownAt !== null) {
-                $stackedRows = [];
-                foreach ($technicalRows as &$row) {
-                    if ($row['decision_at_ms'] > $patternKnownAt) {
-                        $stacked = $row;
-                        $predictions = $this->patterns->predict(
-                            $patternBundle, $row['vector'], $row['patterns'], $row['decision_at_ms']
-                        );
-                        $stacked['vector'] = [...$stacked['vector'], ...$this->patterns->features($patternBundle, $predictions)];
-                        unset($stacked['patterns']);
-                        $stackedRows[] = $stacked;
-                    }
-                    unset($row['patterns']);
-                }
-                unset($row);
-            } else {
-                foreach ($technicalRows as &$row) {
-                    unset($row['patterns']);
-                }
-                unset($row);
+            foreach ($technicalRows as &$row) {
+                unset($row['patterns']);
             }
-            unset($rows);
+            unset($row, $rows);
 
             $patternTreeSpools = [];
             foreach ($patternBundle['models'] as &$patternModel) {
@@ -162,21 +143,13 @@ final class IntelligenceTrainer
             [$technicalRows, $technicalLeadLagExcluded] = $this->applyLeadLag(
                 $technicalRows, $leadLagBundle, $leadLagSeries
             );
-            $stackedLeadLagExcluded = 0;
-            if ($stackedRows !== null) {
-                [$stackedRows, $stackedLeadLagExcluded] = $this->applyLeadLag(
-                    $stackedRows, $leadLagBundle, $leadLagSeries
-                );
-            }
+            $stackedRows = null;
             unset($leadLagSeries);
 
             $knn = new WeightedKnn(
                 $settings['max_distance'], $settings['min_effective_neighbors'], $settings['min_confidence']
             );
             $knn->validatePreparedRows($technicalRows);
-            if ($stackedRows !== null) {
-                $knn->validatePreparedRows($stackedRows);
-            }
 
             $stageStarted = hrtime(true);
             $actionFallbackRows = $technicalRows;
@@ -187,7 +160,7 @@ final class IntelligenceTrainer
             $rows = $outcome['rows'] !== [] ? $outcome['rows'] : $actionFallbackRows;
             $patternKeys = $outcome['pattern_keys'];
             $patternAblation = $outcome['pattern_ablation'];
-            $leadLagExcluded = $patternKeys === [] ? $technicalLeadLagExcluded : $stackedLeadLagExcluded;
+            $leadLagExcluded = $technicalLeadLagExcluded;
             unset($technicalRows, $stackedRows, $actionFallbackRows);
             $buildPerformance['stages']['knn_tuning_ms'] = $this->elapsedMs($stageStarted);
             // OutcomeKnnTuner currently performs its final holdout inside the same bounded pass.

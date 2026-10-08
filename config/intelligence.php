@@ -40,7 +40,7 @@ return [
     ],
     'patterns' => [
         'enabled' => true,
-        'as_knn_features' => true,
+        'as_knn_features' => false, // Informational only; never appended to KNN vectors.
         'min_samples' => 100,
         'min_block_rows' => 15,
         'trees' => 50,

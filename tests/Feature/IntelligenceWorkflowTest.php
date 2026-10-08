@@ -263,10 +263,11 @@ it('returns zero confidence without any model and rejects mismatched frozen mark
     $this->assertDatabaseCount('intelligence_models', 0);
 });
 
-it('stacks validated pattern probabilities only when they improve the Outcome target', function () {
+it('keeps validated patterns informational and never appends them to KNN vectors', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
-    config(['intelligence.patterns.enabled' => true, 'intelligence.patterns.min_samples' => 30,
-        'intelligence.patterns.min_block_rows' => 5, 'intelligence.patterns.trees' => 5]);
+    config(['intelligence.patterns.enabled' => true, 'intelligence.patterns.as_knn_features' => true,
+        'intelligence.patterns.min_samples' => 30, 'intelligence.patterns.min_block_rows' => 5,
+        'intelligence.patterns.trees' => 5]);
     mt_srand(42);
     $manifest = IntelligenceFixtures::snapshot(patterns: true);
 
@@ -274,12 +275,9 @@ it('stacks validated pattern probabilities only when they improve the Outcome ta
     $artifact = app(ModelStore::class)->current('kraken', 'BTC/USD', '1m');
 
     expect($artifact['patterns']['models'])->toHaveKey('bullish_engulfing');
-    expect($artifact['outcome']['pattern_ablation']['candidate_pattern_keys'])
-        ->toBe(['pattern.bullish_engulfing.probability', 'pattern.bullish_engulfing.present']);
-    expect($artifact['outcome']['pattern_ablation']['selection_basis'])
-        ->toBe('same_k_same_walk_forward_rows_final_holdout_untouched');
-    expect($artifact['outcome']['pattern_ablation']['selected'])->toBe('technical_only');
     expect($artifact['pattern_keys'])->toBe([]);
+    expect($artifact['outcome']['pattern_ablation']['candidate_pattern_keys'])->toBe([]);
+    expect($artifact['outcome']['pattern_ablation']['selected'])->toBe('technical_only');
     foreach ($artifact['knowledge'] as $row) {
         expect($row['vector'])->toHaveCount(1);
     }

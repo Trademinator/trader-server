@@ -128,20 +128,11 @@ final class OutcomeAudit
             unset($variant);
         }
 
-        $featureReports['technical_plus_patterns'] = $this->patternVariant(
-            $rows,
-            $manifest,
-            $candles,
-            $candleIndex,
-            $holdoutStart,
-            $cutoff,
-            $currentH,
-            $lookback,
-            $tuner,
-            $settings,
-            $k,
-            $deadline,
-        );
+        $featureReports['patterns'] = [
+            'status' => 'informational_only',
+            'influence' => false,
+            'reason' => 'patterns_are_not_knn_features',
+        ];
 
         return [
             'version' => self::VERSION,
@@ -309,87 +300,6 @@ final class OutcomeAudit
         }
 
         return true;
-    }
-
-    private function patternVariant(
-        DatasetRows $rows,
-        array $manifest,
-        array $candles,
-        array $candleIndex,
-        int $limit,
-        int $cutoff,
-        int $horizon,
-        int $lookback,
-        OutcomeKnnTuner $tuner,
-        array $settings,
-        int $k,
-        float $deadline,
-    ): array {
-        $technical = FeatureSchema::keys('technical');
-        if (array_diff($technical, $manifest['keys']) !== []) {
-            return ['status' => 'unavailable', 'reason' => 'dataset_missing_technical_features'];
-        }
-
-        $base = $this->rowsFor(
-            $rows,
-            $manifest,
-            $candles,
-            $candleIndex,
-            $limit,
-            $cutoff,
-            $technical,
-            $horizon,
-            $lookback,
-            true,
-        );
-        $patternSettings = config('intelligence.patterns');
-        if (! $patternSettings['enabled'] || ! $patternSettings['as_knn_features']) {
-            return ['status' => 'unavailable', 'reason' => 'pattern_features_disabled'];
-        }
-
-        $patternRows = array_slice($base, 0, (int) floor(count($base) * 0.4));
-        if ($patternRows === []) {
-            return ['status' => 'unavailable', 'reason' => 'insufficient_pattern_rows'];
-        }
-        $bundle = $this->patterns->train($patternRows, $patternSettings, $deadline);
-        $patternKeys = $this->patterns->featureKeys($bundle);
-        if ($patternKeys === []) {
-            return [
-                'status' => 'unavailable',
-                'reason' => 'no_validated_pattern_models',
-                'pattern_report' => $bundle['report'],
-            ];
-        }
-
-        $knownAt = max(array_column($bundle['models'], 'available_at_ms'));
-        $stacked = [];
-        foreach ($base as $row) {
-            $this->checkDeadline($deadline);
-            if ($row['decision_at_ms'] <= $knownAt) {
-                continue;
-            }
-            $predictions = $this->patterns->predict($bundle, $row['vector'], $row['patterns'], $row['decision_at_ms']);
-            $row['vector'] = [...$row['vector'], ...$this->patterns->features($bundle, $predictions)];
-            unset($row['patterns']);
-            $stacked[] = $row;
-        }
-
-        $report = $this->evaluateVariant(
-            $stacked,
-            $tuner,
-            $settings,
-            $k,
-            $deadline,
-            [
-                'horizon' => $horizon,
-                'feature_group' => 'technical_plus_patterns',
-                'pattern_keys' => $patternKeys,
-                'pattern_available_at_ms' => $knownAt,
-            ],
-        );
-        $report['pattern_report'] = $bundle['report'];
-
-        return $report;
     }
 
     private function evaluateVariant(
