@@ -38,23 +38,29 @@
             <section class="guide-panel"><h2>Outcome + Action scoring</h2>
                 <x-knn-readiness :report="$report" :coingecko="$coingecko" />
                 <p><strong>Outcome KNN</strong> predicts SUPER BEAR, BEAR, NEUTRAL, BULL or SUPER BULL over the market-derived horizon. <strong>Action KNN</strong> predicts BUY, HOLD or SELL. Human Training adjusts each KNN independently and never replaces its algorithmic training.</p>
-                @if(isset($signal['outcome_knn'], $signal['action_knn']))
-                    <div class="review-table-wrap"><table>
-                        <thead><tr><th scope="col">KNN</th><th scope="col">Prediction</th><th scope="col">Confidence</th><th scope="col">Algorithmic weight</th><th scope="col">Human weight</th></tr></thead>
-                        <tbody>
-                            @foreach(['outcome_knn' => 'Outcome KNN', 'action_knn' => 'Action KNN'] as $key => $label)
-                                @php $component = $signal[$key]; @endphp
-                                <tr>
-                                    <th scope="row">{{ $label }}</th>
+                <div class="review-table-wrap"><table>
+                    <thead><tr><th scope="col">KNN</th><th scope="col">Prediction</th><th scope="col">Confidence</th><th scope="col">Algorithmic weight</th><th scope="col">Human weight</th></tr></thead>
+                    <tbody>
+                        @foreach(['outcome_knn' => 'Outcome KNN', 'action_knn' => 'Action KNN'] as $key => $label)
+                            @php $component = $signal[$key] ?? null; @endphp
+                            <tr>
+                                <th scope="row">{{ $label }}</th>
+                                @if (is_array($component))
                                     <td>{{ strtoupper(str_replace('_', ' ', $component[$key === 'outcome_knn' ? 'outcome' : 'action'])) }}</td>
                                     <td>{{ \App\Helpers\Decimal::format($component['confidence'] * 100, 1) }}%</td>
                                     <td>{{ \App\Helpers\Decimal::format(($component['sources']['effective_weights']['algorithmic'] ?? 0) * 100, 1) }}%</td>
                                     <td>{{ \App\Helpers\Decimal::format(($component['sources']['effective_weights']['human'] ?? 0) * 100, 1) }}%</td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                    </table></div>
+                                @else
+                                    <td>Not recorded</td><td>—</td><td>—</td><td>—</td>
+                                @endif
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table></div>
+                @if(isset($signal['outcome_knn'], $signal['action_knn']))
                     <p>Decision matrix result: <strong>{{ strtoupper($signal['action'] === 'hodl' ? 'hold' : $signal['action']) }}</strong>.</p>
+                @else
+                    <p class="guide-help">No current recorded Outcome/Action scoring is available. These are unavailable values, not zero-weight evidence.</p>
                 @endif
                 @if(isset($report['outcome']['schema_selection']))
                     <p>Outcome input schema: <strong>{{ $report['outcome']['schema_selection']['effective_schema'] }}</strong>

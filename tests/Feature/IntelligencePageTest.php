@@ -74,6 +74,7 @@ it('renders actual history counts and failed validation requirements for an abst
             ->assertSee('Outcome + Action scoring')->assertSee('Human influence follows')
             ->assertSee('Outcome KNN: Not ready')->assertSee('Action KNN: Not ready')
             ->assertSee('Outcome KNN')->assertSee('Action KNN')->assertSee('Human weight')
+            ->assertSee('Not recorded')->assertSee('No current recorded Outcome/Action scoring is available.')
             ->assertSee('227 out of 380')->assertSee('Outcome K selection requirements')
             ->assertSee(route('human-training.index', [
                 'exchange' => $exchange->class, 'symbol' => $market->symbol, 'period' => '1m',
