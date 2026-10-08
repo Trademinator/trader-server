@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Markets;
 use App\Domain\Intelligence\CandleTraining;
 use App\Domain\Intelligence\HumanTraining;
 use App\Domain\Intelligence\HumanTrainingExport;
+use App\Repositories\TickerRepository;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\MarketData\SubscribedPairOptions;
 use App\Http\Controllers\Controller;
@@ -64,8 +65,80 @@ class HumanTrainingController extends Controller
     {
         $item = HumanTrainingReview::query()->with('snapshot')->where('trainer_id', $request->user()->user_id)->findOrFail($review);
 
-        return response()->view('markets.human-training-review', ['review' => $item, 'snapshot' => $training->display($item),
-            'labels' => HumanTraining::LABELS])->header('Cache-Control', 'no-store, private');
+        $snapshot = $training->display($item);
+        $futureCandle = null;
+        $futureSeries = [];
+        $afterSeries = [];
+        $horizon = (int) ($snapshot['horizon_candles'] ?? 0);
+        if ($horizon > 0 && $horizon <= 1000) {
+            $timeframe = app(CandleTimeframe::class);
+            $target = (int) $snapshot['microtimestamp'];
+            for ($i = 0; $i < $horizon; $i++) {
+                $target = $timeframe->next($target, $snapshot['period']);
+            }
+            if ($timeframe->next($target, $snapshot['period']) <= now()->getTimestampMs()) {
+                $expected = (int) $snapshot['microtimestamp'];
+                $valid = true;
+                foreach (app(TickerRepository::class)->streamHistory(
+                    $snapshot['exchange'], $snapshot['symbol'], $snapshot['period'],
+                    $timeframe->next($expected, $snapshot['period']), $target
+                ) as $candle) {
+                    $expected = $timeframe->next($expected, $snapshot['period']);
+                    if ((int) $candle['microtimestamp'] !== $expected) {
+                        $valid = false;
+                        break;
+                    }
+                    foreach (['open', 'high', 'low', 'close', 'volume'] as $field) {
+                        if (!is_numeric($candle[$field] ?? null)) {
+                            $valid = false;
+                            break 2;
+                        }
+                    }
+                    $futureSeries[] = ['time' => intdiv($expected, 1000),
+                        ...array_map('strval', array_intersect_key($candle, array_flip(['open', 'high', 'low', 'close', 'volume'])))];
+                }
+                if ($valid && count($futureSeries) === $horizon && $expected === $target) {
+                    $futureCandle = $futureSeries[array_key_last($futureSeries)];
+                    // Aim for H candles following the grey bar. Only complete, real
+                    // OHLCV bars may be appended; never invent missing candles.
+                    $extraTarget = $target;
+                    for ($i = 0; $i < $horizon; $i++) {
+                        $extraTarget = $timeframe->next($extraTarget, $snapshot['period']);
+                    }
+                    $extraEnd = $target;
+                    while ($extraEnd < $extraTarget
+                        && $timeframe->next($timeframe->next($extraEnd, $snapshot['period']), $snapshot['period']) <= now()->getTimestampMs()) {
+                        $extraEnd = $timeframe->next($extraEnd, $snapshot['period']);
+                    }
+                    if ($extraEnd > $target) {
+                        $expectedExtra = $target;
+                        foreach (app(TickerRepository::class)->streamHistory(
+                            $snapshot['exchange'], $snapshot['symbol'], $snapshot['period'],
+                            $timeframe->next($target, $snapshot['period']), $extraEnd
+                        ) as $candle) {
+                            $expectedExtra = $timeframe->next($expectedExtra, $snapshot['period']);
+                            if ((int) $candle['microtimestamp'] !== $expectedExtra) break;
+                            $fields = [];
+                            foreach (['open', 'high', 'low', 'close', 'volume'] as $field) {
+                                if (!is_numeric($candle[$field] ?? null)) break 2;
+                                $fields[$field] = (string) $candle[$field];
+                            }
+                            $afterSeries[] = ['time' => intdiv($expectedExtra, 1000), ...$fields];
+                        }
+                    }
+                } else {
+                    $futureSeries = [];
+                }
+            }
+        }
+        // A recorded action is not an Outcome KNN class. Never infer a five-class
+        // prediction from BUY/HOLD/SELL or reveal the later outcome as a prediction.
+        $machineOutcome = null;
+
+        return response()->view('markets.human-training-review', [
+            'review' => $item, 'snapshot' => $snapshot, 'futureCandle' => $futureCandle,
+            'machineOutcome' => $machineOutcome, 'futureSeries' => $futureSeries, 'afterSeries' => $afterSeries, 'labels' => HumanTraining::LABELS,
+        ])->header('Cache-Control', 'no-store, private');
     }
 
     public function update(Request $request, string $review, HumanTraining $training): RedirectResponse
