@@ -216,7 +216,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             const count = Number(data.stats.counts?.[action] ?? 0);
             const countNode = root.querySelector(`[data-stat-count="${action}"]`);
             const progress = root.querySelector(`[data-stat-progress="${action}"]`);
-            if (countNode) countNode.textContent = String(count);
+            if (countNode) countNode.textContent = count.toLocaleString('en-CA');
             if (progress) {
                 const milestone = candleTrainingMilestone(count);
                 progress.max = LABEL_MILESTONE_TARGET;
@@ -227,14 +227,14 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             }
         }
         const totalNode = root.querySelector('[data-stat-total]');
-        if (totalNode) totalNode.textContent = String(total);
+        if (totalNode) totalNode.textContent = total.toLocaleString('en-CA');
     };
     const isDirty = () => deleteAllPending || stagedChanges.size > 0;
     const renderPending = () => {
         const dirty = isDirty();
         if (submitLabels) submitLabels.hidden = !dirty;
         if (pendingStatus) pendingStatus.textContent = dirty
-            ? `${stagedChanges.size} staged candle change${stagedChanges.size === 1 ? '' : 's'}${deleteAllPending ? ' · all previously saved labels will be deleted' : ''}. Staged changes are not saved until Submit.`
+            ? `${stagedChanges.size} staged human candle change${stagedChanges.size === 1 ? '' : 's'}${deleteAllPending ? ' · all your previously saved human labels will be deleted' : ''}. Staged changes are not saved until Submit.`
             : 'No pending changes. Manual labels, deletions and auto-label suggestions stay only in this browser until Submit.';
     };
     const stageLabel = (time, decision, action) => {
@@ -529,7 +529,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     const stageDeleteAll = () => {
         if (submittingLabels || autoLabelling || deleteAllPending) return;
         if (typeof window.confirm === 'function'
-            && !window.confirm('Stage deletion of all your Action Training labels for this market and period? The database will not change until Submit.')) return;
+            && !window.confirm('Stage deletion of all your Human Action Training labels for this market and period? The database will not change until Submit.')) return;
         deleteAllPending = true;
         autoLabelOffset = 0;
         labels.clear();

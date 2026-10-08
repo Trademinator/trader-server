@@ -125,6 +125,9 @@ async function mountedChart(t, fetchResponse, snapshot = {}) {
     });
     for (const action of ['buy', 'hold', 'sell']) {
         for (const key of ['count', 'percent', 'progress']) nodes.set(`[data-stat-${key}="${action}"]`, new Element());
+        const automatic = new Element();
+        automatic.textContent = '100';
+        nodes.set(`[data-automatic-stat-count="${action}"]`, automatic);
     }
     const root = new Element();
     root.querySelector = selector => nodes.get(selector) ?? null;
@@ -252,6 +255,8 @@ test('menu labels remain browser-only until Submit and cannot move to another ca
     assert.equal(requests.length, 1);
     assert.equal(nodes.get('[data-submit-labels]').hidden, true);
     assert.equal(nodes.get('[data-stat-count="hold"]').textContent, '1');
+    assert.equal(nodes.get('[data-automatic-stat-count="hold"]').textContent, '100',
+        'human submissions must never modify automatic milestone counts');
     assert.match(nodes.get('[data-status]').textContent, /submitted/i);
 });
 

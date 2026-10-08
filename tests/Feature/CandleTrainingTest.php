@@ -97,6 +97,40 @@ it('creates editable candle labels, reports balance, and removes them back to un
     expect($training->review($user, $manifest['dataset_id'], $decision)['label'])->toBeNull();
 });
 
+it('displays automatic and human training separately, with honest missing-analysis fallback', function () {
+    $this->travelTo('2024-01-01 04:10:00 UTC');
+    $user = User::factory()->create();
+    config(['operations.owner_uuid' => $user->user_id]);
+    $manifest = candleTrainingDataset();
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+    $decision = $rows[0]['decision_at_ms'];
+    $training = app(CandleTraining::class);
+
+    expect($training->review($user, $manifest['dataset_id'], $decision)['automatic_label_stats'])
+        ->toBe(['available' => false, 'counts' => ['buy' => 0, 'hold' => 0, 'sell' => 0], 'total' => 0]);
+
+    $manifest['action_label_analysis'] = ['action_counts' => ['buy' => 112, 'hold' => 1210, 'sell' => 115]];
+    $path = app(DatasetStore::class)->directory($manifest['dataset_id']);
+    file_put_contents($path.'/manifest.json', json_encode($manifest, JSON_THROW_ON_ERROR));
+    DB::table('research_datasets')->where('dataset_id', $manifest['dataset_id'])
+        ->update(['manifest' => json_encode($manifest, JSON_THROW_ON_ERROR)]);
+
+    $training->save($user, $manifest['dataset_id'], $decision, 'hold');
+    $state = $training->review($user, $manifest['dataset_id'], $decision);
+    expect($state['automatic_label_stats'])->toBe([
+        'available' => true, 'counts' => ['buy' => 112, 'hold' => 1210, 'sell' => 115], 'total' => 1437,
+    ])->and($state['label_stats']['counts'])->toBe(['buy' => 0, 'hold' => 1, 'sell' => 0]);
+
+    $this->actingAs($user)->get(route('human-training.candles.show', [
+        'dataset' => $manifest['dataset_id'], 'decision_at_ms' => $decision,
+    ]))->assertOk()
+        ->assertSee('Automatic Training')->assertSee('Human Training')
+        ->assertSee('Delete my human labels')
+        ->assertSee('data-automatic-stat-count="hold">1,210</span>', false)
+        ->assertSee('data-stat-count="hold">1</span>', false)
+        ->assertDontSee('Legacy Training');
+});
+
 it('supports chart-menu JSON save and delete without a page reload', function () {
     $this->travelTo('2024-01-01 04:10:00 UTC');
     $user = User::factory()->create();

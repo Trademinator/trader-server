@@ -98,6 +98,7 @@ final class CandleTraining
             'latest_decision_at_ms' => $rows->at(count($rows) - 1)['decision_at_ms'],
             'has_more' => $payload['series'][0]['time'] * 1000 > $first['microtimestamp'],
             'label_stats' => $this->labelStats($trainer, $manifest),
+            'automatic_label_stats' => $this->automaticLabelStats($manifest),
             'taker_fee' => $this->takerFee($manifest),
             'previous_decision_at_ms' => is_int($rowIndex) && $rowIndex > 0 ? $rows->at(max(0, $rowIndex - self::PAGE_SIZE))['decision_at_ms'] : null,
             'next_decision_at_ms' => is_int($rowIndex) && $rowIndex + 1 < count($rows) ? $rows->at(min(count($rows) - 1, $rowIndex + self::PAGE_SIZE))['decision_at_ms'] : null];
@@ -469,6 +470,21 @@ final class CandleTraining
         }
 
         throw ValidationException::withMessages(['dataset' => 'No intact candle was found in this bounded search. Retry, choose another dataset or collect more history.']);
+    }
+
+    /** Saved algorithmic counts cover the dataset's analysed market window, not KNN eligibility. */
+    private function automaticLabelStats(array $manifest): array
+    {
+        $raw = $manifest['action_label_analysis']['action_counts'] ?? null;
+        $available = is_array($raw) && array_diff(self::ACTIONS, array_keys($raw)) === [];
+        $counts = array_fill_keys(self::ACTIONS, 0);
+        if ($available) {
+            foreach (self::ACTIONS as $action) {
+                $counts[$action] = max(0, (int) $raw[$action]);
+            }
+        }
+
+        return ['available' => $available, 'counts' => $counts, 'total' => array_sum($counts)];
     }
 
     /** Counts this trainer's distinct recorded candle opinions, not model eligibility. */

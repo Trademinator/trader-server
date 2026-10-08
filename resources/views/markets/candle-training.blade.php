@@ -22,14 +22,26 @@
         .dark [data-measure-direction="down"] { color:#ffb4c0; }
         .dark [data-measure-direction="flat"] { color:#cbd5e1; }
         .candle-menu button:disabled { opacity:.45; cursor:not-allowed; }
-        .candle-training-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:14px 0; }
-        .candle-training-stat { border:1px solid #cbd5e1; border-radius:8px; padding:10px; min-width:0; }
-        .candle-training-stat strong { display:flex; justify-content:space-between; gap:8px; }
+        .candle-training-sources { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin:14px 0; }
+        .candle-training-source { min-width:0; padding:16px; border:1px solid #cbd5e1; border-top:3px solid #2563eb; border-radius:12px; background:#fff; }
+        .candle-training-source--human { border-top-color:#087b6b; }
+        .candle-training-source-header { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+        .candle-training-source-title { display:flex; align-items:center; gap:9px; min-width:0; }
+        .candle-training-source-title h3 { margin:0; font-size:1.1rem; line-height:1.3; }
+        .candle-training-source-icon { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border-radius:9px; background:#dbeafe; color:#1d4ed8; flex:none; }
+        .candle-training-source--human .candle-training-source-icon { background:#d1fae5; color:#065f46; }
+        .candle-training-source-total { font-size:1.6rem; line-height:1.1; font-weight:750; font-variant-numeric:tabular-nums; }
+        .candle-training-source .guide-help { margin:8px 0 0; }
+        .candle-training-source-note { min-height:2.8em; }
+        .candle-training-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:14px 0 8px; }
+        .candle-training-stat { border:1px solid #cbd5e1; border-radius:8px; padding:10px 8px; min-width:0; }
+        .candle-training-stat strong { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; font-variant-numeric:tabular-nums; font-size:.9rem; }
         .candle-training-stat progress { width:100%; height:10px; margin-top:8px; accent-color:var(--candle-milestone-color); }
         [data-milestone="red"] { --candle-milestone-color:#dc2626; }
         [data-milestone="orange"] { --candle-milestone-color:#f97316; }
         [data-milestone="green"] { --candle-milestone-color:#16a34a; }
         [data-milestone="blue"] { --candle-milestone-color:#2563eb; }
+        [data-milestone="unavailable"] { --candle-milestone-color:#94a3b8; }
         .candle-training-stat progress::-webkit-progress-bar { background:#e2e8f0; border-radius:999px; }
         .candle-training-stat progress::-webkit-progress-value { background:var(--candle-milestone-color); border-radius:999px; }
         .candle-training-stat progress::-moz-progress-bar { background:var(--candle-milestone-color); border-radius:999px; }
@@ -52,13 +64,24 @@
         .dark .pair-guide .candle-training-fee-note { color:#163e70; }
         .dark .pair-guide .candle-training-fee-note strong { color:#0f2f57; }
         .dark .pair-guide .candle-training-fee-note .candle-training-fee-detail { color:#243b53; }
+        @media (max-width: 900px) {
+            .candle-training-sources { grid-template-columns:1fr; }
+            .candle-training-source-note { min-height:0; }
+        }
         @media (max-width: 620px) {
-            .candle-training-stats, .candle-training-measure { grid-template-columns:1fr; }
+            .candle-training-measure { grid-template-columns:1fr; }
             .candle-training-measure .measure-wide { grid-column:auto; }
+        }
+        @media (max-width: 390px) {
+            .candle-training-stats { grid-template-columns:1fr; }
         }
         .dark .candle-training-buy { background:#0d332d; color:#9be7d8; }
         .dark .candle-training-hold { background:#1f2937; color:#d7e0ea; }
         .dark .candle-training-sell { background:#3d1820; color:#ffb4c0; }
+        .dark .candle-training-source { background:#111827; border-color:#475569; border-top-color:#60a5fa; }
+        .dark .candle-training-source--human { border-top-color:#5eead4; }
+        .dark .candle-training-source-icon { background:#172554; color:#bfdbfe; }
+        .dark .candle-training-source--human .candle-training-source-icon { background:#064e3b; color:#a7f3d0; }
         .dark .candle-training-stat, .dark .candle-training-measure > div { border-color:#475569; }
         .dark .candle-training-stat progress::-webkit-progress-bar { background:#334155; }
         .dark .candle-menu { background:#111827; border-color:#64748b; color:#e5edf5; box-shadow:0 10px 30px rgba(0,0,0,.45); }
@@ -99,22 +122,59 @@
             <p class="guide-notice"><strong>Left-click</strong> candles to measure A→B. The third click discards A and shifts B→A. <strong>Right-click</strong> a candle for BUY/HOLD/SELL/Delete; on touch, long-press it.</p>
             @if($state['payload']['gaps'])<p class="guide-notice guide-error">{{ $state['payload']['gaps'] }} gaps in history. Missing candles are not filled.</p>@endif
 
-            <h2>Your recorded label milestones for this market and period</h2>
-            <div class="candle-training-stats" aria-label="Action Training label milestone counts">
-                @foreach(['buy' => 'BUY', 'hold' => 'HOLD', 'sell' => 'SELL'] as $action => $title)
-                    @php
-                        $count = $state['label_stats']['counts'][$action];
-                        $milestone = $count < 100 ? 'red' : ($count < 300 ? 'orange' : ($count < 750 ? 'green' : 'blue'));
-                    @endphp
-                    <div class="candle-training-stat">
-                        <strong><span>{{ $title }}</span><span data-stat-count="{{ $action }}">{{ $count }}</span></strong>
-                        <progress data-stat-progress="{{ $action }}" data-milestone="{{ $milestone }}"
-                            value="{{ min($count, 750) }}" max="750"
-                            aria-label="{{ $title }} label milestone progress: {{ $count }} labels"></progress>
+            <h2>Action Training by source</h2>
+            <div class="candle-training-sources" aria-label="Automatic and human Action Training label counts">
+                <section class="candle-training-source candle-training-source--automatic" aria-labelledby="automatic-training-heading">
+                    <div class="candle-training-source-header">
+                        <div class="candle-training-source-title">
+                            <span class="candle-training-source-icon"><x-phosphor-cpu width="20" height="20" aria-hidden="true" /></span>
+                            <h3 id="automatic-training-heading">Automatic Training</h3>
+                        </div>
+                        <strong class="candle-training-source-total" data-automatic-stat-total>{{ $state['automatic_label_stats']['available'] ? number_format($state['automatic_label_stats']['total']) : '—' }}</strong>
                     </div>
-                @endforeach
+                    <p class="guide-help candle-training-source-note">Algorithm-generated BUY/HOLD/SELL labels for this market's frozen analysis window.</p>
+                    <div class="candle-training-stats" aria-label="Automatic Training BUY HOLD SELL counts">
+                        @foreach(['buy' => 'BUY', 'hold' => 'HOLD', 'sell' => 'SELL'] as $action => $title)
+                            @php
+                                $count = $state['automatic_label_stats']['available'] ? $state['automatic_label_stats']['counts'][$action] : null;
+                                $milestone = $count === null ? 'unavailable' : ($count < 100 ? 'red' : ($count < 300 ? 'orange' : ($count < 750 ? 'green' : 'blue')));
+                            @endphp
+                            <div class="candle-training-stat">
+                                <strong><span>{{ $title }}</span><span data-automatic-stat-count="{{ $action }}">{{ $count === null ? '—' : number_format($count) }}</span></strong>
+                                <progress data-milestone="{{ $milestone }}" value="{{ min($count ?? 0, 750) }}" max="750"
+                                    aria-label="Automatic {{ $title }} labels: {{ $count === null ? 'unavailable' : $count }}"></progress>
+                            </div>
+                        @endforeach
+                    </div>
+                    <p class="guide-help">{{ $state['automatic_label_stats']['available'] ? 'Saved at dataset creation. Run auto-labelling and select the new dataset to refresh.' : 'No saved auto-label analysis for this dataset. Trigger auto-labelling to generate a new dataset.' }}</p>
+                </section>
+                <section class="candle-training-source candle-training-source--human" aria-labelledby="human-training-heading">
+                    <div class="candle-training-source-header">
+                        <div class="candle-training-source-title">
+                            <span class="candle-training-source-icon"><x-phosphor-user-circle width="20" height="20" aria-hidden="true" /></span>
+                            <h3 id="human-training-heading">Human Training</h3>
+                        </div>
+                        <strong class="candle-training-source-total" data-stat-total>{{ number_format($state['label_stats']['total']) }}</strong>
+                    </div>
+                    <p class="guide-help candle-training-source-note">Your manually submitted candle labels. Automatic labels do not count toward these milestones.</p>
+                    <div class="candle-training-stats" aria-label="Human Training BUY HOLD SELL milestones">
+                        @foreach(['buy' => 'BUY', 'hold' => 'HOLD', 'sell' => 'SELL'] as $action => $title)
+                            @php
+                                $count = $state['label_stats']['counts'][$action];
+                                $milestone = $count < 100 ? 'red' : ($count < 300 ? 'orange' : ($count < 750 ? 'green' : 'blue'));
+                            @endphp
+                            <div class="candle-training-stat">
+                                <strong><span>{{ $title }}</span><span data-stat-count="{{ $action }}">{{ number_format($count) }}</span></strong>
+                                <progress data-stat-progress="{{ $action }}" data-milestone="{{ $milestone }}"
+                                    value="{{ min($count, 750) }}" max="750"
+                                    aria-label="Human {{ $title }} milestone: {{ $count }} submitted labels"></progress>
+                            </div>
+                        @endforeach
+                    </div>
+                    <p class="guide-help">Counts each submitted candle once across revisions and updates after Submit.</p>
+                </section>
             </div>
-            <p class="guide-help">Saved labels: <strong data-stat-total>{{ $state['label_stats']['total'] }}</strong>. Milestones count each submitted candle once across revisions and update after a successful Submit. Pending changes are shown below. The model report shows compatible training counts. There is no target BUY/HOLD/SELL percentage.</p>
+            <p class="guide-help">Both sections show label volume, not KNN-eligible training rows or validation results. Automatic counts span the frozen market analysis window; human counts are your saved opinions. There is no target BUY/HOLD/SELL percentage.</p>
             <details class="candle-training-milestone-help">
                 <summary>What do the milestone colours mean?</summary>
                 <ul class="candle-training-milestone-list">
@@ -171,7 +231,7 @@
                     <button type="button" class="review-control" data-fit>Fit visible candles</button>
                     <button type="button" class="review-control" data-auto-label>Trigger auto-labelling</button>
                     <button type="button" class="review-control" data-submit-labels hidden>Submit</button>
-                    <button type="button" class="review-control candle-menu-delete" data-delete-all-training>Delete all training</button>
+                    <button type="button" class="review-control candle-menu-delete" data-delete-all-training>Delete my human labels</button>
                 </div>
                 <p class="guide-help">Queues a fresh intelligence build with system auto-labelling instead of waiting for Monday. Results belong to a new immutable dataset; select that dataset when the build finishes. No labels are attributed to Human Training or its milestones.</p>
                 <p class="guide-help" data-pending-status>No pending changes. Manual labels, deletions and auto-label suggestions stay only in this browser until Submit.</p>
