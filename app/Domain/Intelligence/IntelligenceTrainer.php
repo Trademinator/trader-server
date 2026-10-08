@@ -5,6 +5,7 @@ namespace App\Domain\Intelligence;
 use App\Domain\Features\FeatureEngine;
 use App\Domain\Operations\ActionLog;
 use App\Domain\Research\DatasetStore;
+use App\Domain\Research\FeatureSchema;
 use App\Domain\Research\SemanticLabels;
 use Illuminate\Support\Facades\Cache;
 use InvalidArgumentException;
@@ -12,7 +13,7 @@ use RuntimeException;
 
 final class IntelligenceTrainer
 {
-    public const VERSION = 'm6-outcome-action-knn-v4';
+    public const VERSION = 'm6-outcome-action-knn-v5';
 
     public function __construct(
         private DatasetStore $datasets,
@@ -22,6 +23,7 @@ final class IntelligenceTrainer
         private AutomaticPatternAblation $patternAblation,
         private HumanCandleKnn $candleKnn,
         private HumanGuidance $humanOutcome,
+        private CoinGeckoInsight $coinGeckoInsight,
     ) {}
 
     public function train(string $dataset, ?float $deadline = null, ?string $generation = null,
@@ -38,6 +40,13 @@ final class IntelligenceTrainer
         if ($manifest['feature_version'] !== FeatureEngine::VERSION
             || $manifest['label_definition']['version'] !== SemanticLabels::VERSION) {
             throw new InvalidArgumentException('Intelligence requires current Outcome labels; build fresh knowledge.');
+        }
+        // The previous Full manifest contained 27 KNN columns. It is never
+        // legal to train a newly named Full model from that frozen vector.
+        if (! in_array($manifest['schema'] ?? null, ['core', 'technical', 'enhanced', 'full', 'custom'], true)
+            || ! FeatureSchema::modelCompatible(['outcome' => ['schema' => $manifest['schema']],
+                'keys' => $manifest['keys'] ?? []])) {
+            throw new InvalidArgumentException('Obsolete intelligence feature schema; rebuild the dataset before training.');
         }
         if ($manifest['as_of_ms'] > now()->getTimestampMs()) {
             throw new InvalidArgumentException('Knowledge cutoff cannot be in the future.');
@@ -79,6 +88,8 @@ final class IntelligenceTrainer
                 'action_label' => $row['action_label'] ?? null,
                 'action_label_available_at_ms' => $row['action_label_available_at_ms'] ?? null,
                 'patterns' => $row['patterns'],
+                'context_features' => $row['context_features'] ?? [],
+                'context_snapshot_id' => $row['source']['context_snapshot_id'] ?? null,
             ];
         }
         if ($rows === []) {
@@ -192,6 +203,24 @@ final class IntelligenceTrainer
                 $progress
             );
             $humanAction['bundle']['mode'] = 'human_action_knn';
+
+            // Optional CoinGecko evidence is trained independently. Do not let
+            // missing/stale context or forest errors suppress Core publication.
+            $insightStarted = hrtime(true);
+            $insightDeadline = min($publicationDeadline - 5.0, microtime(true) + 30.0);
+            try {
+                $coingeckoInsight = $this->coinGeckoInsight->train($rows, $manifest['schema'], $insightDeadline);
+            } catch (\Throwable $error) {
+                app(ActionLog::class)->write('coingecko.insight.failed', [
+                    'reason' => $error::class, 'outcome' => 'skipped',
+                ]);
+                $coingeckoInsight = ['bundle' => [
+                    'version' => CoinGeckoInsight::VERSION, 'optional' => true,
+                    'status' => 'optional_training_error', 'influence' => false,
+                    'input_keys' => [], 'snapshots' => 0,
+                ]];
+            }
+            $buildPerformance['stages']['coingecko_insight_ms'] = $this->elapsedMs($insightStarted);
             $buildPerformance['stages']['candle_guidance_ms'] = $this->elapsedMs($stageStarted);
 
             $outcomeAlgorithmicReady = $outcome['selection']['k'] !== null
@@ -241,10 +270,15 @@ final class IntelligenceTrainer
                 'symbol' => $manifest['symbol'],
                 'period' => $manifest['period'],
                 'feature_version' => FeatureEngine::VERSION,
+                'knn_schema_version' => FeatureSchema::VERSION,
                 'normalization' => NormalizedVector::VERSION,
                 'keys' => $manifest['keys'],
                 'pattern_keys' => $patternKeys,
                 'patterns' => $patternBundle,
+                'coingecko_insight' => [
+                    ...$coingeckoInsight['bundle'],
+                    'estimator' => $coingeckoInsight['estimator'] ?? null,
+                ],
                 'lead_lag' => $leadLagBundle,
                 'lead_lag_keys' => $leadLagBundle['keys'],
                 'outcome' => [

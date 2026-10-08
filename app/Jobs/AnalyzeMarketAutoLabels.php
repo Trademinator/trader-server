@@ -27,8 +27,7 @@ final class AnalyzeMarketAutoLabels implements ShouldQueue
         try {
             $result = $intelligence->build(
                 $this->exchange, $this->symbol, $this->period,
-                schema: (string) config('intelligence.schema'),
-                contextFallback: (string) config('intelligence.context_fallback', 'none')
+                schema: (string) config('intelligence.schema')
             );
             Cache::put($this->cacheKey.':status', 'completed', now()->addDay());
             Cache::put($this->cacheKey.':summary', [

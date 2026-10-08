@@ -12,7 +12,7 @@ final class BuildMarketIntelligence extends Command
 {
     protected $signature = 'trademinator:knn-build {exchange} {symbol} {period}
         {--dataset=} {--schema=core} {--from=} {--to=} {--as-of=}
-        {--context-fallback= : none or technical; defaults to INTELLIGENCE_CONTEXT_FALLBACK}';
+        {--context-fallback= : Deprecated compatibility flag; CoinGecko is always optional}';
 
     protected $description = 'Build closed-candle semantic knowledge and validate KNN and pattern intelligence';
 

@@ -2,6 +2,7 @@
 
 namespace App\Domain\Research;
 
+use App\Domain\Features\ContextFeatures;
 use App\Domain\Features\FeatureEngine;
 use App\Domain\Intelligence\ActionLabelAnalysis;
 use App\Domain\Intelligence\KnowledgeWindow;
@@ -279,6 +280,11 @@ final class DatasetSnapshotBuilder
                         $row['semantic'] = $label['semantic'];
                         $row['candle'] = $window[0];
                         $row['patterns'] = (new PatternCatalog)->observations($patternHistory, $window, $period);
+                        // Freeze optional context independently of the selected KNN schema.
+                        // A Core dataset still has a 15-column KNN vector.
+                        $row['context_features'] = array_intersect_key(
+                            $payload['features'] ?? [], array_flip(ContextFeatures::KEYS)
+                        );
                     } else {
                         $row['buy_net_return'] = $label['buy_net_return'];
                         $row['sell_base_net_return'] = $label['sell_base_net_return'];
@@ -313,6 +319,7 @@ final class DatasetSnapshotBuilder
                     throw new RuntimeException('Could not flush dataset rows.');
                 }
                 $manifest = [
+                    'knn_schema_version' => FeatureSchema::VERSION,
                     'dataset_id' => $id, 'format_version' => 'm3-dataset-v1', 'created_at' => now()->toIso8601String(),
                     'exchange' => $exchange, 'symbol' => $symbol, 'period' => $period,
                     'feature_version' => FeatureEngine::VERSION, 'schema' => $schema, 'keys' => $keys,

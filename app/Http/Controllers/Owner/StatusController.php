@@ -6,7 +6,7 @@ use App\Domain\Archive\PortableJson;
 use App\Domain\Client\RiskFactorCalculator;
 use App\Domain\Features\FeatureEngine;
 use App\Domain\Intelligence\AutomaticPatternAblation;
-use App\Domain\Intelligence\AutomaticSchemaSelection;
+use App\Domain\Research\FeatureSchema;
 use App\Domain\Intelligence\CandleGuidance;
 use App\Domain\Intelligence\HumanCandleKnn;
 use App\Domain\Intelligence\HumanCandleProjection;
@@ -36,7 +36,7 @@ class StatusController extends Controller
         $definitions = [
             ['name' => 'Market features', 'version' => FeatureEngine::VERSION, 'scope' => 'features'],
             ['name' => 'Automatic pattern ablation', 'version' => AutomaticPatternAblation::VERSION],
-            ['name' => 'Automatic schema selection', 'version' => AutomaticSchemaSelection::VERSION],
+            ['name' => 'Optional-context feature schemas', 'version' => FeatureSchema::VERSION],
             ['name' => 'Candle guidance', 'version' => CandleGuidance::VERSION],
             ['name' => 'Human candle KNN', 'version' => HumanCandleKnn::VERSION],
             ['name' => 'Human candle projection', 'version' => HumanCandleProjection::VERSION],

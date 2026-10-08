@@ -272,32 +272,8 @@ it('dispatches one intelligence job for a shared market and rejects synchronous 
     $this->artisan('trademinator:dispatch-market-intelligence')->assertFailed();
 });
 
-it('treats insufficient full and technical history as a successful weekly skip', function () {
-    $this->travelTo('2024-01-01 04:00:00 UTC');
-    config(['intelligence.schema' => 'full', 'intelligence.context_fallback' => 'technical']);
-    for ($i = 0; $i < 20; $i++) {
-        $at = IntelligenceFixtures::START + $i * 60000;
-        $features = array_fill_keys(FeatureSchema::keys('full'), 0.5);
-        $features['trend.direction'] = $features['candle.direction'] = 0;
-        MarketFeature::query()->forceCreate(['feature_id' => (string) Str::uuid7(), 'exchange' => 'kraken',
-            'symbol' => 'BTC/USD', 'period' => '1m', 'microtimestamp' => $at, 'available_at_ms' => $at + 60000,
-            'version' => FeatureEngine::VERSION, 'payload' => ['version' => FeatureEngine::VERSION,
-                'microtimestamp' => $at, 'available_at_ms' => $at + 60000, 'close' => 100.0, 'features' => $features]]);
-    }
-    $handler = new TestHandler;
-    app()->instance(ActionLog::class, new ActionLog(new Logger('test-actions', [$handler]), app(ActionContext::class)));
-    $job = new TrainMarketIntelligence('kraken', 'BTC/USD', '1m', '2024-01-01');
-
-    $job->handle(app(MarketIntelligence::class));
-
-    $this->assertDatabaseCount('research_datasets', 0);
-    $this->assertDatabaseCount('intelligence_models', 0);
-    expect(Cache::has('trademinator:intelligence-week:'.$job->uniqueId()))->toBeFalse();
-    $records = array_map(fn ($record): array => json_decode($record->message, true), $handler->getRecords());
-    $skipped = collect($records)->firstWhere('event', 'intelligence.training.skipped');
-    expect($skipped)->not->toBeNull()
-        ->and($skipped['outcome'])->toBe('skipped')
-        ->and($skipped['reason'])->toBe('insufficient_both_feature_histories');
+it('keeps Full KNN independent of missing CoinGecko context', function () {
+    expect(FeatureSchema::keys('full'))->toBe(FeatureSchema::keys('technical'));
 });
 
 it('builds once per weekly job even if the queue delivers it again', function () {

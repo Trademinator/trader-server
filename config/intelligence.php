@@ -5,7 +5,8 @@ return [
     'path' => storage_path('app/private/intelligence'),
     'queue' => env('INTELLIGENCE_QUEUE', 'intelligence'),
     'schema' => env('INTELLIGENCE_SCHEMA', 'core'),
-    'context_fallback' => env('INTELLIGENCE_CONTEXT_FALLBACK', 'none'),
+    // Previous full-context fallback is retired: CoinGecko never enters Core/Technical KNN.
+    'context_fallback' => 'none',
     // Bootstrap/fallback depth only. Each dataset replaces this with H derived from Action pivot frequencies.
     'horizon' => 12,
     'lookback' => 20,
@@ -37,6 +38,19 @@ return [
         'min_baseline_improvement' => min(1.0, max(0.0, (float) env('INTELLIGENCE_OUTCOME_MIN_BASELINE_IMPROVEMENT', 0.02))),
         'min_supported_predictions' => max(5, (int) env('INTELLIGENCE_OUTCOME_MIN_SUPPORTED_PREDICTIONS', 25)),
         'min_coverage' => min(1.0, max(0.0, (float) env('INTELLIGENCE_OUTCOME_MIN_COVERAGE', 0.01))),
+    ],
+    // Separate optional Random Forest advisor. Never appended to KNN vectors.
+    'coingecko_insight' => [
+        'enabled' => env('INTELLIGENCE_COINGECKO_INSIGHT_ENABLED', false),
+        // Shadow-mode by default until paired Core + advisor validation.
+        'influence_enabled' => env('INTELLIGENCE_COINGECKO_INFLUENCE_ENABLED', false),
+        'max_weight' => (float) env('INTELLIGENCE_COINGECKO_MAX_WEIGHT', 0.15),
+        'min_snapshots' => (int) env('INTELLIGENCE_COINGECKO_MIN_SNAPSHOTS', 192),
+        'max_snapshots' => (int) env('INTELLIGENCE_COINGECKO_MAX_SNAPSHOTS', 2400),
+        'min_holdout' => (int) env('INTELLIGENCE_COINGECKO_MIN_HOLDOUT', 32),
+        'min_f1_improvement' => (float) env('INTELLIGENCE_COINGECKO_MIN_F1_IMPROVEMENT', 0.02),
+        'trees' => (int) env('INTELLIGENCE_COINGECKO_TREES', 24),
+        'depth' => (int) env('INTELLIGENCE_COINGECKO_DEPTH', 6),
     ],
     'patterns' => [
         'enabled' => true,

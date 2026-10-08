@@ -29,19 +29,19 @@
     @endif
     @if ($progress['full_schema'])
         @php($fullSchema = $progress['full_schema'])
-        <h3>Full schema context</h3>
-        <x-intelligence-progress label="Full context (CoinGecko)" :value="$fullSchema['context_available']" :target="$fullSchema['context_total']" native />
+        <h3>Optional CoinGecko context</h3>
+        <x-intelligence-progress label="CoinGecko context (optional)" :value="$fullSchema['context_available']" :target="$fullSchema['context_total']" native />
         @if ($fullSchema['full_ready'])
-            <p class="guide-notice"><strong>Full schema ready.</strong> All technical and CoinGecko context features are available on the latest closed candle.</p>
+            <p class="guide-notice"><strong>Technical/Full KNN ready.</strong> CoinGecko is optional and its independent advisor has separate readiness.</p>
         @else
             @if ($fullSchema['missing'] !== [])
-                <p><strong>Full schema unavailable.</strong> CoinGecko context is incomplete for {{ $item->market->exchange->name }} · {{ $item->market->symbol }}.</p>
+                <p><strong>Optional CoinGecko context incomplete.</strong> CoinGecko context is incomplete for {{ $item->market->exchange->name }} · {{ $item->market->symbol }}.</p>
             @elseif ($fullSchema['technical_missing'] !== [])
-                <p><strong>Full schema unavailable.</strong> CoinGecko context is complete, but the latest candle is still missing technical history required by the full schema.</p>
+                <p><strong>Technical/Full KNN unavailable.</strong> CoinGecko context is complete, but the latest candle is still missing technical history required by the full schema.</p>
             @elseif ($fullSchema['invalid'])
-                <p><strong>Full schema unavailable.</strong> The latest feature vector contains an invalid numeric value and must be rebuilt.</p>
+                <p><strong>Latest features unavailable.</strong> The latest feature vector contains an invalid numeric value and must be rebuilt.</p>
             @else
-                <p><strong>Full schema unavailable.</strong> Rebuild the latest M2 features and inspect the context status below.</p>
+                <p><strong>Latest features unavailable.</strong> Rebuild the latest M2 features and inspect the context status below.</p>
             @endif
             <p>CoinGecko mapping: <strong>{{ match ($fullSchema['mapping']['status']) {
                 'resolved' => 'Resolved',
@@ -88,7 +88,7 @@
         <details>
             <summary>How to build or troubleshoot this model</summary>
             <p>After collection and M2 features are available, run a direct build for this market:</p>
-            @if (in_array($progress['schema'], ['core', 'technical', 'full'], true))
+            @if (in_array($progress['schema'], ['core', 'technical', 'enhanced', 'full'], true))
                 <pre class="intelligence-command"><code>php artisan trademinator:knn-build {{ escapeshellarg($item->market->exchange->class) }} {{ escapeshellarg($item->market->symbol) }} {{ escapeshellarg($period) }} --schema={{ escapeshellarg($progress['schema']) }}</code></pre>
                 <p>This preserves the currently selected <code>{{ $progress['schema'] }}</code> schema.</p>
             @else

@@ -649,27 +649,31 @@ php -d memory_limit=512M artisan trademinator:knn-build bitso 'ATOM/USD' 15m --s
 php artisan trademinator:knn-build bitso 'ATOM/USD' 15m --dataset=DATASET_UUID
 ```
 
-`--context-fallback=technical` explicitly permits a new `--schema=full` build to choose
-`technical` when full feature history cannot supply potential tuning and holdout
-capacity but technical history can. The inspection uses input availability and
-timestamps, never target values or model scores. It is an upper-bound preflight:
-source gaps, semantic warmup and later pattern/lead-lag exclusions still apply.
-Only one dataset/model is fitted; validation failure never triggers another schema.
-No missing values are replaced with zero. All validation gates remain unchanged.
+CoinGecko is **independent optional Outcome intelligence**, not part of the KNN vector.
+Schema/profile definitions:
 
-The default is `INTELLIGENCE_CONTEXT_FALLBACK=none`. Set it to `technical` to allow
-this policy on scheduled full builds as well; an explicit `--context-fallback=none`
-overrides that setting. Explicit frozen `--dataset` builds never reselect a schema
-and cannot be combined with `--context-fallback`. Reports and inference expose
-`automatic.schema` and `automatic.schema_selection` (inference under the automatic
-scoring component). A technical model does not consume CoinGecko inputs. This is a
-single-schema fallback, not a simultaneous third KNN model.
+| Profile | KNN features | Optional CoinGecko Random Forest |
+| --- | --- | --- |
+| `core` | 15 technical | No |
+| `technical` | 18 technical | No |
+| `enhanced` | 15 technical | Yes, when separately enabled and validated |
+| `full` | 18 technical | Yes, when separately enabled and validated |
+
+The prior Full 27-column KNN was retired. Historical observations and annotations are
+preserved, but old 27-feature Full datasets/models require rebuilding.
+The `--context-fallback` flag is deprecated and no longer changes selected KNN columns.
+Existing `--schema=full --context-fallback=technical` scripts will build the new
+18-dimensional Full model, which works without CoinGecko.
+
+CoinGecko insight training is controlled independently with
+`INTELLIGENCE_COINGECKO_INSIGHT_ENABLED`. Trading influence remains off with
+`INTELLIGENCE_COINGECKO_INFLUENCE_ENABLED=false` unless explicitly enabled after
+paired holdout validation.
 
 ```bash
-php -d memory_limit=512M artisan trademinator:knn-build bitso 'ATOM/USD' 15m --schema=full --context-fallback=technical
+php -d memory_limit=512M artisan trademinator:knn-build bitso 'ATOM/USD' 15m --schema=enhanced
+php -d memory_limit=512M artisan trademinator:knn-build bitso 'ATOM/USD' 15m --schema=full
 ```
-
-Implementation: [`BuildMarketIntelligence.php`](../app/Console/Commands/BuildMarketIntelligence.php).
 
 ## trademinator:auto-label
 

@@ -26,7 +26,7 @@ final class HistoryRecovery
         }
         $report = $this->modelReport($market, $period);
         $schema = $report['training_data']['schema'] ?? config('intelligence.schema');
-        if (! in_array($schema, ['core', 'technical', 'full'], true)) {
+        if (! in_array($schema, ['core', 'technical', 'enhanced', 'full'], true)) {
             throw ValidationException::withMessages(['recovery' => 'This model has a custom schema. Repair its candles using candle-gaps/backfill-ohlcv and rebuild using the original custom dataset workflow.']);
         }
 

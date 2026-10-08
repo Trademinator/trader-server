@@ -104,7 +104,7 @@ it('builds a complete full-schema vector for an uncapped asset while preserving 
     expect($payload)->context_ready->toBeTrue()->ready->toBeTrue()->missing->toBe([])
         ->context_snapshot_id->toBe($snapshotId)->version->toBe('m2-v6');
     expect($payload['features'])->not->toHaveKey('context.circulating_fraction');
-    expect(FeatureSchema::vector($payload, FeatureSchema::keys('full')))->toHaveCount(27);
+    expect(FeatureSchema::vector($payload, FeatureSchema::keys('full')))->toHaveCount(18);
 });
 
 it('persists intermediate feature checkpoints for bounded incremental replay', function () {

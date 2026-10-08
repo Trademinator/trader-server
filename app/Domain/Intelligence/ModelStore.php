@@ -3,9 +3,11 @@
 namespace App\Domain\Intelligence;
 
 use App\Domain\Operations\ActionLog;
+use App\Domain\Research\FeatureSchema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
+use Rubix\ML\Classifiers\RandomForest;
 use RuntimeException;
 use Throwable;
 
@@ -18,7 +20,8 @@ final class ModelStore
 
     public static function isReadyReport(?array $report): bool
     {
-        return $report !== null && ($report['status'] ?? null) === 'ready'
+        return $report !== null && FeatureSchema::modelCompatible($report)
+            && ($report['status'] ?? null) === 'ready'
             && ($report['validation_version'] ?? null) === IntelligenceTrainer::VERSION
             && ($report['trained_as_of_ms'] ?? 0) >= KnowledgeWindow::fromMs(now()->getTimestampMs());
     }
@@ -29,6 +32,7 @@ final class ModelStore
         $unavailable = match (true) {
             $report === null => 'no_model',
             ($report['validation_version'] ?? null) !== IntelligenceTrainer::VERSION => 'model_version_mismatch',
+            ! FeatureSchema::modelCompatible($report) => 'model_schema_outdated',
             ($report['trained_as_of_ms'] ?? 0) < KnowledgeWindow::fromMs(now()->getTimestampMs()) => 'stale_model',
             default => null,
         };
@@ -82,8 +86,36 @@ final class ModelStore
         return substr($modelPath, 0, -strlen('.model')).'.'.$source.'.knowledge.jsonl';
     }
 
+    public function coinGeckoPath(string $id): string
+    {
+        return substr($this->path($id), 0, -strlen('.model')).'.coingecko-rf';
+    }
+
+    public function coinGeckoEstimator(array $artifact): ?RandomForest
+    {
+        $bundle = $artifact['coingecko_insight'] ?? [];
+        if (($bundle['status'] ?? null) !== 'validated') {
+            return null;
+        }
+        $digest = $bundle['estimator_sha256'] ?? null;
+        $path = $this->coinGeckoPath((string) $artifact['model_id']);
+        $bytes = is_file($path) ? file_get_contents($path) : false;
+        if (! is_string($digest) || $bytes === false || ! hash_equals($digest, hash('sha256', $bytes))) {
+            throw new RuntimeException('CoinGecko forest sidecar is missing or corrupt.');
+        }
+        $forest = unserialize($bytes);
+        if (! $forest instanceof RandomForest) {
+            throw new RuntimeException('Invalid CoinGecko forest artifact.');
+        }
+
+        return $forest;
+    }
+
     public function save(array $artifact): array
     {
+        if (! FeatureSchema::modelCompatible($artifact)) {
+            throw new InvalidArgumentException('Cannot publish model with obsolete feature schema.');
+        }
         $persistenceStarted = hrtime(true);
         $buildStarted = $artifact['build_performance']['started_monotonic_ns'] ?? null;
         unset($artifact['build_performance']['started_monotonic_ns']);
@@ -101,6 +133,7 @@ final class ModelStore
             $knowledgePath,
             $this->humanKnowledgePath($id, 'outcome'),
             $this->humanKnowledgePath($id, 'action'),
+            $this->coinGeckoPath($id),
         ];
         try {
             // Refuse a metadata-only artifact: quietly writing empty knowledge
@@ -124,6 +157,18 @@ final class ModelStore
                 unset($bundle['knowledge'], $bundle['estimator']);
                 unset($bundle);
             }
+            // Persist the compact optional forest separately, keeping model metadata
+            // and the report free of estimator objects during HTTP reads.
+            if (($artifact['coingecko_insight']['estimator'] ?? null) instanceof RandomForest) {
+                $forestFile = $this->coinGeckoPath($id);
+                $forestBytes = serialize($artifact['coingecko_insight']['estimator']);
+                if (file_put_contents($forestFile.'.tmp', $forestBytes, LOCK_EX) !== strlen($forestBytes)
+                    || ! chmod($forestFile.'.tmp', 0600) || ! rename($forestFile.'.tmp', $forestFile)) {
+                    throw new RuntimeException('Cannot publish CoinGecko forest.');
+                }
+                $artifact['coingecko_insight']['estimator_sha256'] = hash('sha256', $forestBytes);
+            }
+            unset($artifact['coingecko_insight']['estimator']);
             // These old aliases are retained as metadata, not as second copies
             // of potentially hundreds of thousands of human training rows.
             $artifact['human_guidance'] = $artifact['outcome']['human'];
@@ -307,6 +352,7 @@ final class ModelStore
             foreach ($this->humanKnowledge($artifact, $source) as $_) {
             }
         }
+        $this->coinGeckoEstimator($artifact);
     }
 
     private function publishRows(string $path, iterable $rows): string

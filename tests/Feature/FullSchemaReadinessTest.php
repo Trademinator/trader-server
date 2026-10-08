@@ -17,7 +17,7 @@ function fullSchemaReadinessFeatures(array $missing = []): void
 {
     $timeframe = new CandleTimeframe;
     $timestamp = IntelligenceFixtures::START;
-    $values = array_fill_keys(FeatureSchema::keys('full'), 0.5);
+    $values = array_fill_keys(array_merge(FeatureSchema::keys('full'), ContextFeatures::KEYS), 0.5);
     $values['trend.direction'] = $values['candle.direction'] = 0;
     foreach ($missing as $key) {
         $values[$key] = null;
@@ -93,7 +93,7 @@ it('shows partial CoinGecko context while keeping technical intelligence availab
         ->and($full['missing'])->toBe(['context.category_momentum'])
         ->and($full['technical_ready'])->toBeTrue()
         ->and($full['technical_missing'])->toBe([])
-        ->and($full['full_ready'])->toBeFalse()
+        ->and($full['full_ready'])->toBeTrue()
         ->and($full['mapping']['status'])->toBe('resolved')
         ->and($full['mapping']['coin_id'])->toBe('bitcoin');
 });
@@ -107,12 +107,12 @@ it('reports an unmapped CoinGecko asset without disabling the technical schema',
     expect($full['context_available'])->toBe(0)
         ->and($full['missing'])->toBe(ContextFeatures::KEYS)
         ->and($full['technical_ready'])->toBeTrue()
-        ->and($full['full_ready'])->toBeFalse()
+        ->and($full['full_ready'])->toBeTrue()
         ->and($full['mapping']['status'])->toBe('unmapped')
         ->and($full['mapping']['error'])->toBe('CoinGecko returned no exact symbol match.');
 });
 
-it('marks the strict full schema ready only when all technical and context features are present', function () {
+it('marks Full KNN ready independently of optional CoinGecko context', function () {
     fullSchemaReadinessFeatures();
     fullSchemaReadinessMapping();
 

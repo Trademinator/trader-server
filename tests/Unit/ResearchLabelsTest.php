@@ -65,7 +65,7 @@ it('keeps an explicit feature order and drops missing values without zero imputa
         ->and(FeatureSchema::vector(['features' => ['trend.direction' => 1]], $keys))->toBeNull()
         ->and(count(FeatureSchema::keys('core')))->toBe(15)
         ->and(count(FeatureSchema::keys('technical')))->toBe(18)
-        ->and(count(FeatureSchema::keys('full')))->toBe(27)
+        ->and(count(FeatureSchema::keys('full')))->toBe(18)
         ->and(fn () => FeatureSchema::keys('custom', ['label']))->toThrow(InvalidArgumentException::class)
         ->and(fn () => FeatureSchema::keys('custom', ['context.circulating_fraction']))->toThrow(InvalidArgumentException::class)
         ->and(fn () => FeatureSchema::keys('custom', ['trend.direction', 'trend.direction']))->toThrow(InvalidArgumentException::class)

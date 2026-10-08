@@ -27,6 +27,8 @@ final class MarketIntelligence
         private LeadLagIntelligence $leadLag,
         private HumanCandleKnn $candleKnn,
         private HumanGuidance $humanOutcome,
+        private CoinGeckoInsight $coinGeckoInsight,
+        private CoinGeckoOutcomeFusion $coinGeckoFusion,
         private TickerRepository $tickers,
         private SignalFreshness $freshness,
     ) {}
@@ -35,18 +37,24 @@ final class MarketIntelligence
         string $schema = 'core', ?int $fromMs = null, ?int $toMs = null, ?int $asOfMs = null,
         ?string $generation = null, array $buildPerformance = [], ?string $featureLockOwner = null, ?string $contextFallback = null): array
     {
-        $fallback = $contextFallback ?? config('intelligence.context_fallback', 'none');
-        if (! in_array($fallback, ['none', 'technical'], true)) {
-            throw new InvalidArgumentException('Context fallback must be none or technical.');
+        if ($contextFallback !== null && ! in_array($contextFallback, ['none', 'technical'], true)) {
+            throw new InvalidArgumentException('Deprecated context fallback must be none or technical.');
         }
-        if ($contextFallback !== null && ($dataset !== null || ($fallback === 'technical' && $schema !== 'full'))) {
-            throw new InvalidArgumentException('Technical context fallback requires a new full-schema build.');
+        // Validate input profile before computing a generation or reading features.
+        // Enhanced and Full use OHLCV-only KNN vectors; CoinGecko is an advisor.
+        FeatureSchema::keys($schema);
+        $schemaSelection = [
+            'requested_schema' => $schema,
+            'effective_schema' => $schema,
+            'knn_schema' => FeatureSchema::baseSchema($schema),
+            'schema_version' => FeatureSchema::VERSION,
+            'context_in_knn' => false,
+            'fallback_policy' => 'none',
+            'reason' => 'coingecko_independent_optional_insight',
+        ];
+        if ($generation !== null) {
+            $generation = hash('sha256', $generation.'|'.FeatureSchema::VERSION);
         }
-        // A previous strict-full generation must not suppress an opted-in build.
-        if ($generation !== null && $dataset === null && $schema === 'full' && $fallback === 'technical') {
-            $generation = hash('sha256', $generation.'|'.AutomaticSchemaSelection::VERSION);
-        }
-        $schemaSelection = [];
         $buildPerformance['started_at'] ??= now()->toIso8601String();
         $buildPerformance['started_monotonic_ns'] = hrtime(true);
         $buildPerformance['stages'] ??= [];
@@ -79,8 +87,9 @@ final class MarketIntelligence
                 // H is only a seed here. DatasetSnapshotBuilder replaces it with the
                 // frequency-weighted Action-pivot horizon before labeling rows.
                 $definition = new SemanticLabels(config('intelligence.horizon'), config('intelligence.lookback'));
-                [$manifest, $schemaSelection] = $this->snapshotWithSchemaPolicy($exchange, $symbol, $period,
-                    $definition, $schema, (int) $fromMs, $toMs, $asOfMs, $featureLockOwner, $fallback, $deadline);
+                $manifest = $this->datasets->build($exchange, $symbol, $period, $definition, $schema,
+                    fromMs: (int) $fromMs, toMs: $toMs, asOfMs: $asOfMs,
+                    featureLockOwner: $featureLockOwner);
                 $dataset = $manifest['dataset_id'];
             }
 
@@ -90,41 +99,6 @@ final class MarketIntelligence
             return $this->trainer->train($dataset, $deadline, $generation, $buildPerformance, $schemaSelection);
         } finally {
             $lock->release();
-        }
-    }
-
-    /** Freeze one schema before any model fitting; never retry after validation failure. */
-    private function snapshotWithSchemaPolicy(string $exchange, string $symbol, string $period, SemanticLabels $definition,
-        string $schema, int $fromMs, int $toMs, int $asOfMs, ?string $featureLockOwner, string $fallback, float $deadline): array
-    {
-        $selection = ['requested_schema' => $schema, 'effective_schema' => $schema,
-            'fallback_policy' => $schema === 'full' ? $fallback : 'none', 'reason' => 'explicit_schema'];
-        $ownedLock = null;
-        try {
-            if ($schema === 'full' && $fallback === 'technical') {
-                $lockName = 'trademinator:features:'.hash('sha256', "$exchange|$symbol|$period");
-                if ($featureLockOwner === null) {
-                    $ownedLock = Cache::lock($lockName, 720);
-                    if (! $ownedLock->get()) {
-                        throw new RuntimeException('Features or a dataset are already being built for this market and period.');
-                    }
-                    $featureLockOwner = $ownedLock->owner();
-                } elseif (! Cache::restoreLock($lockName, $featureLockOwner)->isOwnedByCurrentProcess()) {
-                    throw new RuntimeException('Feature lock ownership was lost before schema inspection.');
-                }
-                $selection = app(AutomaticSchemaSelection::class)->inspect($exchange, $symbol, $period,
-                    $fromMs, $toMs, $asOfMs, $definition->horizon, $deadline);
-                if (($selection['reason'] ?? null) === 'insufficient_both_feature_histories') {
-                    throw new IntelligenceNotReady($selection);
-                }
-                $schema = $selection['effective_schema'];
-            }
-            $manifest = $this->datasets->build($exchange, $symbol, $period, $definition, $schema,
-                fromMs: $fromMs, toMs: $toMs, asOfMs: $asOfMs, featureLockOwner: $featureLockOwner);
-
-            return [$manifest, $selection];
-        } finally {
-            $ownedLock?->release();
         }
     }
 
@@ -154,6 +128,9 @@ final class MarketIntelligence
             || $model['feature_version'] !== FeatureEngine::VERSION || $model['normalization'] !== NormalizedVector::VERSION
             || $model['patterns']['version'] !== PatternCatalog::VERSION) {
             return [...WeightedKnn::abstain('model_version_mismatch'), ...$context];
+        }
+        if (! FeatureSchema::modelCompatible($model)) {
+            return [...WeightedKnn::abstain('model_schema_outdated'), ...$context];
         }
         if ($model['trained_as_of_ms'] < KnowledgeWindow::fromMs($asOfMs)) {
             return [...WeightedKnn::abstain('stale_model'), ...$context];
@@ -233,6 +210,23 @@ final class MarketIntelligence
             (int) ($model['outcome']['human']['samples'] ?? 0)
         );
 
+        // Optional forest uses only separately frozen context; never append
+        // context dimensions to the Core/Technical KNN query.
+        $coreOutcome = $outcome;
+        try {
+            $insight = $this->coinGeckoInsight->predict(
+                $model['coingecko_insight'] ?? [], $current->payload,
+                $this->models->coinGeckoEstimator($model)
+            );
+        } catch (RuntimeException $error) {
+            $insight = ['reason' => 'optional_artifact_unavailable', 'confidence' => 0.0,
+                'outcome' => 'neutral', 'votes' => array_fill_keys(SemanticLabels::OUTCOMES, 0.0)];
+        }
+        $fusion = $this->coinGeckoFusion->combine(
+            $outcome, $insight, $model['coingecko_insight'] ?? [], (float) $settings['min_confidence']
+        );
+        $outcome = $fusion['outcome'];
+
         $actionAlgorithmic = WeightedKnn::abstain(
             $preparedError ?? ($model['action']['algorithmic']['reason'] ?? 'action_model_unavailable')
         );
@@ -253,7 +247,15 @@ final class MarketIntelligence
             (int) ($model['action']['human']['samples'] ?? 0)
         );
 
+        $baseDecision = SignalDecisionMatrix::resolve($action, $coreOutcome);
         $decision = SignalDecisionMatrix::resolve($action, $outcome);
+        if ($baseDecision['action'] === 'hodl' && $decision['action'] !== 'hodl') {
+            // Never turn an existing HOLD into a trade via optional insight.
+            $decision = $baseDecision;
+            $fusion['fusion']['reason'] = 'non_escalation_guard';
+        }
+        $context['coingecko_insight'] = $insight;
+        $context['intelligence_profile'] = $fusion['fusion']['applied'] ? 'enhanced' : ($model['outcome']['schema'] ?? 'core');
         $context['regime'] = $outcome['reason'] === 'supported' ? $outcome['outcome'] : 'neutral';
         $context['outcome_knn'] = $outcome;
         $context['action_knn'] = $action;
@@ -270,6 +272,9 @@ final class MarketIntelligence
                 'version' => 'outcome-action-matrix-v2',
                 'decision_mode' => $decision['mode'],
                 'outcome' => $outcome,
+                'outcome_core' => $coreOutcome,
+                'coingecko_insight' => $insight,
+                'coingecko_fusion' => $fusion['fusion'],
                 'action' => $action,
                 'resolved_action' => $decision['action'] === 'hodl' ? 'hold' : $decision['action'],
             ],

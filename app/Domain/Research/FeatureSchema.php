@@ -9,6 +9,35 @@ use InvalidArgumentException;
 final class FeatureSchema
 {
     public const BOUNDARY_TOLERANCE = 1e-12;
+    public const VERSION = 'knn-schema-v2-optional-coingecko';
+
+    public static function baseSchema(string $schema): string
+    {
+        return match ($schema) {
+            'core', 'enhanced' => 'core',
+            'technical', 'full' => 'technical',
+            'custom' => 'custom',
+            default => throw new InvalidArgumentException('Unknown feature schema: '.$schema),
+        };
+    }
+
+    public static function modelCompatible(array $report): bool
+    {
+        $schema = $report['outcome']['schema'] ?? $report['training_data']['schema'] ?? null;
+        if (! is_string($schema) || ! is_array($report['keys'] ?? null)) {
+            return false;
+        }
+        try {
+            if ($schema === 'custom') {
+                $keys = array_values($report['keys']);
+                return $keys !== [] && count($keys) === count(array_unique($keys))
+                    && array_diff($keys, array_merge(FeatureEngine::KEYS, ContextFeatures::KEYS)) === [];
+            }
+            return array_values($report['keys']) === self::keys($schema);
+        } catch (InvalidArgumentException) {
+            return false;
+        }
+    }
 
     public static function keys(string $schema, array $custom = []): array
     {
@@ -17,11 +46,10 @@ final class FeatureSchema
             throw new InvalidArgumentException('--features requires --schema=custom.');
         }
         $keys = match ($schema) {
-            'core' => array_values(array_diff(FeatureEngine::KEYS, ['return.24h', 'return.7d', 'return.30d'])),
-            'technical' => FeatureEngine::KEYS,
-            'full' => $all,
+            'core', 'enhanced' => array_values(array_diff(FeatureEngine::KEYS, ['return.24h', 'return.7d', 'return.30d'])),
+            'technical', 'full' => FeatureEngine::KEYS,
             'custom' => $custom,
-            default => throw new InvalidArgumentException('Schema must be core, technical, full, or custom.'),
+            default => throw new InvalidArgumentException('Schema must be core, technical, enhanced, full, or custom.'),
         };
         if ($keys === [] || count($keys) !== count(array_unique($keys)) || array_diff($keys, $all) !== []) {
             throw new InvalidArgumentException('Feature keys must be nonempty, unique, known M2 feature names.');

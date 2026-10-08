@@ -211,7 +211,7 @@ final class IntelligenceReadiness
         if ($latest !== null) {
             try {
                 $technicalReady = FeatureSchema::vector($payload, $technicalKeys) !== null;
-                $fullReady = FeatureSchema::vector($payload, FeatureSchema::keys('full')) !== null;
+                $fullReady = $technicalReady;
             } catch (InvalidArgumentException) {
                 $invalid = true;
             }
