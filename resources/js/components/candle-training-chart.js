@@ -14,14 +14,14 @@ export function candleTrainingMilestone(count) {
     return 'blue';
 }
 
-function actionMarker(time, action) {
+function actionMarker(time, action, source = "human") {
     return {
-        id: `human-${time}`,
+        id: source + "-" + time,
         time: Number(time),
         position: action === 'buy' ? 'belowBar' : 'aboveBar',
-        color: action === 'buy' ? '#087b6b' : action === 'sell' ? '#c33e50' : '#64748b',
+        color: source === 'automatic' ? '#2563eb' : action === 'buy' ? '#087b6b' : action === 'sell' ? '#c33e50' : '#64748b',
         shape: action === 'buy' ? 'arrowUp' : action === 'sell' ? 'arrowDown' : 'circle',
-        text: action.toUpperCase(),
+        text: source === "automatic" ? "AUTO " + action.toUpperCase() : action.toUpperCase(),
         size: 1,
     };
 }
@@ -104,13 +104,14 @@ export function candleTrainingChartData(snapshot) {
     const series = (snapshot.series ?? []).filter(row => row.time * 1000 < snapshot.decision_at_ms)
         .map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)])));
     const labels = (snapshot.labels ?? []).filter(label => ACTIONS.includes(label.action));
+    const autoLabels = (snapshot.auto_labels ?? []).filter(label => ACTIONS.includes(label.action));
     const markers = labels.map(label => actionMarker(label.time, label.action))
         .filter(marker => series.some(candle => candle.time === marker.time));
 
-    return { ...chartData({ series }), series, labels, markers, decisions: snapshot.decisions ?? {},
+    return { ...chartData({ series }), series, labels, autoLabels, markers, decisions: snapshot.decisions ?? {},
         selectedAction: snapshot.selected_action ?? null, stats: snapshot.stats ?? null,
         allowedActions: snapshot.allowed_actions ?? {}, hasMore: snapshot.has_more === true,
-        hasNewer: snapshot.has_newer === true, latestDecisionAtMs: Number(snapshot.latest_decision_at_ms ?? snapshot.decision_at_ms),
+        hasNewer: snapshot.has_newer === true, earliestDecisionAtMs: Number(snapshot.earliest_decision_at_ms ?? snapshot.decision_at_ms), latestDecisionAtMs: Number(snapshot.latest_decision_at_ms ?? snapshot.decision_at_ms),
         takerFee: snapshot.taker_fee ?? null, decisionAtMs: Number(snapshot.decision_at_ms) };
 }
 
@@ -120,6 +121,8 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     const legend = root.querySelector('[data-legend]');
     const fit = root.querySelector('[data-fit]');
     const autoLabel = root.querySelector('[data-auto-label]');
+    const overlays = [...root.querySelectorAll('[data-overlay-mode]')];
+    let overlayMode = 'human';
     const deleteAllTraining = root.querySelector('[data-delete-all-training]');
     const submitLabels = root.querySelector('[data-submit-labels]');
     const pendingStatus = root.querySelector('[data-pending-status]');
@@ -129,15 +132,16 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     const tooltip = root.querySelector('[data-measure-tooltip]');
     const datasetSelect = root.querySelector('[data-candle-dataset]');
     let switchDataset;
-    let chart, price, volume, measureLine, observer, markerPlugin, historyTimer, historyRequest, unsubscribeTime;
+    let chart, price, volume, measureLine, observer, markerPlugin, historyTimer, historyRequest, jumpRequest, unsubscribeTime;
     let inspectedCandle;
-    let loadingHistory = false, historyFailed = false, disposed = false, submittingLabels = false, autoLabelling = false;
+    let loadingHistory = false, loadingJump = false, historyFailed = false, disposed = false, submittingLabels = false, autoLabelling = false;
     let autoLabelOffset = 0;
     let userInteracted = false;
     let lastVisibleRange = null, retryDirection = 'older';
     const data = candleTrainingChartData(JSON.parse(root.dataset.snapshot));
     const labels = new Map(data.labels.map(label => [Number(label.time), label.action]));
     const baselineLabels = new Map(labels);
+    const automaticLabels = new Map(data.autoLabels.map(label => [Number(label.time), label.action]));
     const stagedChanges = new Map();
     let deleteAllPending = false;
     const candles = new Map(data.series.map(candle => [Number(candle.time), candle]));
@@ -162,7 +166,9 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         lastVisibleRange = chart?.timeScale().getVisibleLogicalRange() ?? null;
     };
     const sortedMarkers = () => {
-        const markers = [...labels.entries()].map(([time, action]) => actionMarker(time, action));
+        const markers = [];
+        if (overlayMode !== 'automatic') markers.push(...[...labels.entries()].map(([time, action]) => actionMarker(time, action)));
+        if (overlayMode !== 'human') markers.push(...[...automaticLabels.entries()].map(([time, action]) => actionMarker(time, action, 'automatic')));
         if (selection[0] !== undefined) markers.push(selectionMarker(selection[0], 'A', 'aboveBar'));
         if (selection[1] !== undefined) markers.push(selectionMarker(selection[1], 'B', 'belowBar'));
         return markers.filter(marker => candles.has(Number(marker.time)))
@@ -266,29 +272,28 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         tooltip.style.left = `${Math.max(0, Math.min(param.point.x + 12, canvas.clientWidth - tooltip.offsetWidth))}px`;
         tooltip.style.top = `${Math.max(0, param.point.y + canvas.offsetTop - tooltip.offsetHeight - 8)}px`;
     };
-    const updateReplayNavigation = page => {
-        const replayTime = root.querySelector('[data-replay-time]');
-        if (replayTime) replayTime.textContent = formatTime(data.series.at(-1).time);
-        for (const direction of ['previous', 'next']) {
-            const link = root.querySelector(`[data-step-${direction}]`);
+    const updateReplayNavigation = () => {
+        const time = root.querySelector('[data-replay-time]');
+        if (time && data.series.length) time.textContent = formatTime(data.series.at(-1).time);
+        for (const direction of ['previous','next']) {
+            const link = root.querySelector('[data-step-' + direction + ']');
             if (!link) continue;
-            const decision = page[`${direction}_decision_at_ms`];
-            if (decision) {
-                const url = new URL(root.dataset.replayUrl, window.location.href);
-                url.searchParams.set('decision_at_ms', String(decision));
-                link.href = url.toString();
-                link.removeAttribute('aria-disabled');
-                link.removeAttribute('tabindex');
-            } else {
-                link.removeAttribute('href');
-                link.setAttribute('aria-disabled', 'true');
-                link.setAttribute('tabindex', '-1');
-            }
+            const target = direction === 'previous' ? data.earliestDecisionAtMs : data.latestDecisionAtMs;
+            const url = new URL(root.dataset.replayUrl, window.location.href);
+            url.searchParams.set('decision_at_ms', String(target));
+            link.href = url.toString();
+            const disabled = direction === 'previous' ? data.decisionAtMs <= target : data.decisionAtMs >= target;
+            if (disabled) { link.setAttribute('aria-disabled','true'); link.setAttribute('tabindex','-1'); }
+            else { link.removeAttribute('aria-disabled'); link.removeAttribute('tabindex'); }
         }
+    };
+    const onOverlayChange = event => {
+        overlayMode = event.target.value;
+        renderMarkers();
     };
     const loadHistory = async (direction = 'older') => {
         const newer = direction === 'newer';
-        if (loadingHistory || disposed || !(newer ? data.hasNewer : data.hasMore) || !chart) return;
+        if (loadingHistory || loadingJump || disposed || !(newer ? data.hasNewer : data.hasMore) || !chart) return;
         clearTimeout(historyTimer);
         loadingHistory = true;
         historyFailed = false;
@@ -320,6 +325,9 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             for (const candle of data.series) candles.set(candle.time, candle);
             Object.assign(data.decisions, page.decisions);
             Object.assign(data.allowedActions, page.allowed_actions);
+            for (const label of page.auto_labels ?? []) {
+                if (ACTIONS.includes(label.action)) automaticLabels.set(Number(label.time), label.action);
+            }
             for (const label of page.labels) {
                 const time = Number(label.time);
                 const decision = Number(page.decisions?.[String(time)] ?? 0);
@@ -330,7 +338,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             if (newer) {
                 data.decisionAtMs = page.decision_at_ms;
                 data.hasNewer = page.has_more === true && merged.added > 0 && data.decisionAtMs < data.latestDecisionAtMs;
-                updateReplayNavigation(page);
+                updateReplayNavigation();
             } else {
                 data.hasMore = page.has_more === true && merged.added > 0;
             }
@@ -357,13 +365,70 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             loadingHistory = false;
         }
     };
+    const jumpToBoundary = async direction => {
+        if (disposed || loadingJump || loadingHistory || autoLabelling || submittingLabels) return;
+        const target = direction === 'first' ? data.earliestDecisionAtMs : data.latestDecisionAtMs;
+        if (!Number.isSafeInteger(target) || data.decisionAtMs === target) return;
+        loadingJump = true;
+        clearTimeout(historyTimer);
+        jumpRequest = new AbortController();
+        const request = jumpRequest;
+        const url = new URL(root.dataset.replayUrl, window.location.href);
+        url.searchParams.set('decision_at_ms', String(target));
+        status.textContent = 'Loading ' + direction + ' available chart window…';
+        try {
+            const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store',
+                headers: { Accept: 'application/json' }, signal: request.signal });
+            if (!response.ok || response.redirected) throw new Error(await candleTrainingHistoryError(response));
+            const payload = await response.json();
+            if (disposed || jumpRequest !== request) return;
+            if (payload.decision_at_ms !== target || !Array.isArray(payload.series)
+                || !Array.isArray(payload.labels) || !Array.isArray(payload.auto_labels)
+                || !payload.decisions || !payload.allowed_actions) throw new Error('Invalid chart window.');
+            const next = candleTrainingChartData({ ...payload, stats: data.stats, taker_fee: data.takerFee });
+            if (!next.series.length) throw new Error('Selected boundary has no candles.');
+            const saved = new Map(next.labels.map(label => [Number(label.time), label.action]));
+            const auto = new Map(next.autoLabels.map(label => [Number(label.time), label.action]));
+            candles.clear();
+            automaticLabels.clear();
+            for (const candle of next.series) {
+                const time = Number(candle.time);
+                candles.set(time, candle);
+                if (auto.has(time)) automaticLabels.set(time, auto.get(time));
+                const baseline = saved.get(time);
+                if (baseline) baselineLabels.set(time, baseline);
+                else baselineLabels.delete(time);
+                const decision = Number(next.decisions[String(time)]);
+                if (stagedChanges.has(decision)) {
+                    const action = stagedChanges.get(decision).action;
+                    if (action) labels.set(time, action);
+                    else labels.delete(time);
+                } else if (baseline && !deleteAllPending) labels.set(time, baseline);
+                else labels.delete(time);
+            }
+            Object.assign(data, next);
+            selection = [];
+            inspectedCandle = null;
+            price.setData(data.candles);
+            volume.setData(data.volume);
+            renderMarkers();
+            renderMeasurement();
+            updateReplayNavigation();
+            fitChart();
+            window.history?.replaceState?.(window.history.state, '', url.toString());
+            status.textContent = 'Showing ' + direction + ' available chart window. Human edits preserved.';
+        } catch (error) { if (!disposed) status.textContent = error.message; }
+        finally { if (jumpRequest === request) { jumpRequest = null; loadingJump = false; } }
+    };
+    const jumpFirst = event => { event.preventDefault(); void jumpToBoundary('first'); };
+    const jumpLast = event => { event.preventDefault(); void jumpToBoundary('last'); };
     const retryHistory = () => loadHistory(retryDirection);
     const onVisibleRangeChange = range => {
         if (tooltip) tooltip.hidden = true;
         clearTimeout(historyTimer);
         const previousRange = lastVisibleRange;
         lastVisibleRange = range;
-        if (!userInteracted || !range || !previousRange || loadingHistory || historyFailed || disposed) return;
+        if (!userInteracted || !range || !previousRange || loadingHistory || loadingJump || historyFailed || disposed) return;
         const direction = historyPanDirection(range, previousRange, data.series.length, data.hasMore, data.hasNewer);
         if (direction) historyTimer = setTimeout(() => loadHistory(direction), 180);
     };
@@ -446,59 +511,20 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         closeMenu();
     };
     const requestAutoLabels = async () => {
-        if (submittingLabels || autoLabelling || disposed || !autoLabel) return;
+        if (autoLabelling || submittingLabels || disposed) return;
         autoLabelling = true;
         autoLabel.disabled = true;
-        if (submitLabels) submitLabels.disabled = true;
-        if (deleteAllTraining) deleteAllTraining.disabled = true;
-        status.textContent = 'Building auto-label suggestions for this frozen dataset…';
-        let staged = 0;
         try {
-            do {
-                let response, payload;
-                for (let retries = 0; ; retries++) {
-                    if (disposed) return;
-                    response = await fetch(root.dataset.autoUrl, {
-                        method: 'POST', credentials: 'same-origin',
-                        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': root.dataset.csrf },
-                        body: JSON.stringify({ include_existing: deleteAllPending, offset: autoLabelOffset }),
-                    });
-                    payload = await response.json().catch(() => ({}));
-                    if (disposed) return;
-                    if (response.status !== 429 || retries >= 3) break;
-                    const seconds = Math.max(1, Math.min(60, Number(response.headers?.get('Retry-After')) || 5));
-                    status.textContent = `Auto-label is waiting ${seconds}s before continuing…`;
-                    await new Promise(resolve => window.setTimeout(resolve, seconds * 1000));
-                }
-                if (!response.ok) throw new Error(payload.message ?? Object.values(payload.errors ?? {}).flat()[0] ?? `Request failed (${response.status}).`);
-                const nextOffset = payload.next_offset ?? null;
-                if (nextOffset !== null && (!Number.isSafeInteger(nextOffset) || nextOffset <= autoLabelOffset)) {
-                    throw new Error('Auto-label returned an invalid continuation position.');
-                }
-                for (const label of payload.labels ?? []) {
-                    const time = Number(label.time), decision = Number(label.decision_at_ms);
-                    if (!ACTIONS.includes(label.action) || !Number.isSafeInteger(decision) || stagedChanges.has(decision)) continue;
-                    data.decisions[String(time)] = decision;
-                    labels.set(time, label.action);
-                    stagedChanges.set(decision, { decision_at_ms: decision, action: label.action });
-                    staged++;
-                }
-                autoLabelOffset = nextOffset;
-                renderMarkers();
-                renderPending();
-                status.textContent = `${payload.processed} of ${payload.total} candles checked; ${staged} new suggestions staged…`;
-            } while (autoLabelOffset !== null);
-            autoLabelOffset = 0;
-            status.textContent = `${staged} auto-label suggestion${staged === 1 ? '' : 's'} staged for review. Nothing is stored until Submit.`;
-        } catch (error) {
-            const reason = error instanceof Error ? error.message : 'Auto-label suggestions could not be generated.';
-            status.textContent = `${reason} Completed suggestions remain staged. Press Auto-label to resume.`;
-        } finally {
-            autoLabelling = false;
-            autoLabel.disabled = false;
-            if (submitLabels) submitLabels.disabled = false;
-            if (deleteAllTraining) deleteAllTraining.disabled = false;
-        }
+            const response = await fetch(root.dataset.autoUrl, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': root.dataset.csrf },
+                body: '{}',
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result.message || 'Failed to queue auto-labelling.');
+            status.textContent = result.message ?? 'System auto-labelling queued.';
+        } catch (error) { status.textContent = error.message; }
+        finally { autoLabelling = false; autoLabel.disabled = false; }
     };
     const stageDeleteAll = () => {
         if (submittingLabels || autoLabelling || deleteAllPending) return;
@@ -657,6 +683,10 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         observer = new MutationObserver(() => chart.applyOptions(theme()));
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         fit.addEventListener('click', fitChart);
+        overlays.forEach(item => item.addEventListener('change', onOverlayChange));
+        root.querySelector('[data-step-previous]')?.addEventListener('click', jumpFirst);
+        root.querySelector('[data-step-next]')?.addEventListener('click', jumpLast);
+        updateReplayNavigation();
         historyRetry.addEventListener('click', retryHistory);
         chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange);
         canvas.addEventListener('contextmenu', onContextMenu, true);
@@ -682,12 +712,16 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             disposed = true;
             clearTimeout(historyTimer);
             historyRequest?.abort();
+            jumpRequest?.abort();
             unsubscribeTime?.();
             observer.disconnect();
             chart.unsubscribeClick(clickHandler);
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange);
             chart.remove();
             fit.removeEventListener('click', fitChart);
+            overlays.forEach(item => item.removeEventListener('change', onOverlayChange));
+            root.querySelector('[data-step-previous]')?.removeEventListener('click', jumpFirst);
+            root.querySelector('[data-step-next]')?.removeEventListener('click', jumpLast);
             historyRetry.removeEventListener('click', retryHistory);
             datasetSelect?.removeEventListener('change', switchDataset);
             autoLabel?.removeEventListener('click', requestAutoLabels);

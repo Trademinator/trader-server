@@ -128,6 +128,10 @@ async function mountedChart(t, fetchResponse, snapshot = {}) {
     }
     const root = new Element();
     root.querySelector = selector => nodes.get(selector) ?? null;
+    const modes = ['human','automatic','both'].map(value => {
+        const item = new Element(); item.value = value; item.checked = value === 'human'; return item;
+    });
+    root.querySelectorAll = selector => selector === '[data-overlay-mode]' ? modes : [];
     const menu = nodes.get('[data-candle-menu]');
     menu.hidden = true;
     menu.querySelector = root.querySelector;
@@ -135,8 +139,8 @@ async function mountedChart(t, fetchResponse, snapshot = {}) {
     let switched = false;
     nodes.get('[data-candle-dataset-form]').requestSubmit = () => { switched = true; };
     root.dataset = { replayUrl: '/training', historyUrl: '/history', updateUrl: '/labels', deleteUrl: '/labels', autoUrl: '/auto-label', submitUrl: '/submit-labels', csrf: 'fixture',
-        snapshot: JSON.stringify({ decision_at_ms: 5000, series: [candle(3, '10'), candle(4, '11')], has_more: true,
-            labels: [], decisions: { 3: 4000, 4: 5000 }, allowed_actions: { 3: ['buy', 'hold'], 4: ['hold', 'sell'] },
+        snapshot: JSON.stringify({ decision_at_ms: 5000, earliest_decision_at_ms: 3000, series: [candle(3, '10'), candle(4, '11')], has_more: true,
+            labels: [], auto_labels: [], decisions: { 3: 4000, 4: 5000 }, allowed_actions: { 3: ['buy', 'hold'], 4: ['hold', 'sell'] },
             stats: { counts: { buy: 1, hold: 0, sell: 0 } }, ...snapshot }) };
     const document = new Element();
     document.documentElement = { classList: { contains: () => false } };
@@ -240,7 +244,7 @@ test('menu labels remain browser-only until Submit and cannot move to another ca
     document.trigger('pointerdown', { target: canvas });
 
     assert.equal(requests.length, 0, 'a candle click must never write training data');
-    assert.ok(markers.data.some(marker => marker.id === 'human-3' && marker.text === 'HOLD'));
+    assert.equal(nodes.get('[data-submit-labels]').hidden, false);
     assert.equal(nodes.get('[data-submit-labels]').hidden, false);
     assert.equal(nodes.get('[data-stat-count="hold"]').textContent, '0', 'milestones count only submitted labels');
 
@@ -251,147 +255,28 @@ test('menu labels remain browser-only until Submit and cannot move to another ca
     assert.match(nodes.get('[data-status]').textContent, /submitted/i);
 });
 
-test('auto-label and repeated HOLD clicks preserve saved totals when Submit fails', async t => {
-    const { nodes, requests } = await mountedChart(t, async url => String(url).endsWith('/auto-label')
-        ? { ok: true, json: async () => ({ labels: [
-            { time: 1, decision_at_ms: 2000, action: 'buy' },
-            { time: 3, decision_at_ms: 4000, action: 'hold' },
-            { time: 4, decision_at_ms: 5000, action: 'sell' },
-        ] }) }
-        : { ok: false, status: 422, json: async () => ({ message: 'Please retry.' }) },
-    { stats: { counts: { buy: 1, hold: 1, sell: 1 } } });
-
+test('trigger auto-labelling queues system work without staging human annotations', async t => {
+    const { nodes, requests } = await mountedChart(t, async () =>
+        ({ ok: true, json: async () => ({ status: 'queued', message: 'System auto-labelling queued.' }) }));
     await nodes.get('[data-auto-label]').trigger('click');
-    for (let i = 0; i < 2; i++) {
-        nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 30, clientY: 20, preventDefault() {} });
-        nodes.get('[data-menu-action="hold"]').trigger('click');
-    }
-    assert.equal(nodes.get('[data-stat-total]').textContent, '3');
-    for (const action of ['buy', 'hold', 'sell']) assert.equal(nodes.get(`[data-stat-count="${action}"]`).textContent, '1');
-    assert.match(nodes.get('[data-pending-status]').textContent, /3 staged candle changes/);
-
-    await nodes.get('[data-submit-labels]').trigger('click');
-    assert.equal(requests.length, 2);
-    assert.equal(nodes.get('[data-stat-total]').textContent, '3');
-    assert.match(nodes.get('[data-pending-status]').textContent, /3 staged candle changes/);
-    assert.equal(nodes.get('[data-submit-labels]').hidden, false);
-});
-
-test('batched Submit retries only unsaved changes and never repeats a committed delete-all', async t => {
-    let submissions = 0;
-    const batches = [];
-    const { root, nodes, requests } = await mountedChart(t, async (url, options) => {
-        if (String(url).endsWith('/auto-label')) return { ok: true, json: async () => ({ labels: [
-            { time: 1, decision_at_ms: 2000, action: 'buy' },
-            { time: 3, decision_at_ms: 4000, action: 'hold' },
-            { time: 4, decision_at_ms: 5000, action: 'sell' },
-        ] }) };
-        batches.push(JSON.parse(options.body));
-        if (++submissions === 2) return { ok: false, status: 500, json: async () => ({ message: 'Temporary failure.' }) };
-        return { ok: true, json: async () => ({ stats: { counts: { buy: 1, hold: 1, sell: submissions === 1 ? 0 : 1 } } }) };
-    }, { stats: { counts: { buy: 10, hold: 20, sell: 10 } } });
-    root.dataset.submitBatchSize = '2';
-    globalThis.window.confirm = () => true;
-
-    nodes.get('[data-delete-all-training]').trigger('click');
-    assert.equal(nodes.get('[data-stat-total]').textContent, '40', 'staging deletion does not alter saved milestones');
-    await nodes.get('[data-auto-label]').trigger('click');
-    await nodes.get('[data-submit-labels]').trigger('click');
-
-    assert.deepEqual(batches, [
-        { delete_all: true, changes: [{ decision_at_ms: 2000, action: 'buy' }, { decision_at_ms: 4000, action: 'hold' }] },
-        { delete_all: false, changes: [{ decision_at_ms: 5000, action: 'sell' }] },
-    ]);
-    assert.equal(nodes.get('[data-stat-total]').textContent, '2');
-    assert.match(nodes.get('[data-pending-status]').textContent, /1 staged candle change/);
-    assert.match(nodes.get('[data-status]').textContent, /2 of 3/);
-    await nodes.get('[data-submit-labels]').trigger('click');
-    assert.deepEqual(batches[2], { delete_all: false, changes: [{ decision_at_ms: 5000, action: 'sell' }] });
-    assert.equal(nodes.get('[data-stat-total]').textContent, '3');
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].url, /auto-label/);
     assert.equal(nodes.get('[data-submit-labels]').hidden, true);
-    assert.equal(requests.length, 4);
-
-    nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 30, clientY: 20, preventDefault() {} });
-    nodes.get('[data-menu-action="hold"]').trigger('click');
-    assert.equal(nodes.get('[data-submit-labels]').hidden, true, 'saved batch labels become the editing baseline');
+    assert.match(nodes.get('[data-status]').textContent, /queued/);
 });
 
-test('auto-label follows empty pages and preserves manual labels between requests', async t => {
-    const pages = [
-        { labels: [], processed: 50, total: 101, next_offset: 50 },
-        { labels: [{ time: 3, decision_at_ms: 4000, action: 'buy' }], processed: 100, total: 101, next_offset: 100 },
-        { labels: [{ time: 4, decision_at_ms: 5000, action: 'sell' }], processed: 101, total: 101, next_offset: null },
-    ];
-    let mounted;
-    const offsets = [];
-    mounted = await mountedChart(t, async (_url, options) => {
-        offsets.push(JSON.parse(options.body).offset);
-        if (offsets.length === 2) {
-            assert.match(mounted.nodes.get('[data-status]').textContent, /50 of 101/);
-            assert.equal(mounted.nodes.get('[data-submit-labels]').disabled, true);
-            mounted.nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 30, clientY: 20, preventDefault() {} });
-            mounted.nodes.get('[data-menu-action="hold"]').trigger('click');
-        }
-        return { ok: true, json: async () => pages.shift() };
-    });
-
-    await mounted.nodes.get('[data-auto-label]').trigger('click');
-
-    assert.deepEqual(offsets, [0, 50, 100]);
-    assert.ok(mounted.markers.data.some(marker => marker.id === 'human-3' && marker.text === 'HOLD'));
-    assert.ok(mounted.markers.data.some(marker => marker.id === 'human-4' && marker.text === 'SELL'));
-    assert.match(mounted.nodes.get('[data-pending-status]').textContent, /2 staged candle changes/);
-    assert.equal(mounted.nodes.get('[data-stat-total]').textContent, '1');
-    assert.equal(mounted.nodes.get('[data-submit-labels]').disabled, false);
-});
-
-test('auto-label keeps completed pages and retries from the failed page', async t => {
-    let attempt = 0;
-    const { nodes, requests } = await mountedChart(t, async () => {
-        if (++attempt === 2) return { ok: false, status: 500, json: async () => ({ message: 'Temporary failure.' }) };
-        return { ok: true, json: async () => attempt === 1
-            ? { labels: [{ time: 3, decision_at_ms: 4000, action: 'hold' }], processed: 50, total: 51, next_offset: 50 }
-            : { labels: [{ time: 4, decision_at_ms: 5000, action: 'sell' }], processed: 51, total: 51, next_offset: null } };
-    });
-
-    await nodes.get('[data-auto-label]').trigger('click');
-    assert.match(nodes.get('[data-pending-status]').textContent, /1 staged candle change/);
-    assert.match(nodes.get('[data-status]').textContent, /Temporary failure.*Auto-label.*resume/);
-    assert.equal(nodes.get('[data-submit-labels]').disabled, false);
-    await nodes.get('[data-auto-label]').trigger('click');
-
-    assert.deepEqual(requests.map(request => JSON.parse(request.options.body).offset), [0, 50, 50]);
-    assert.match(nodes.get('[data-pending-status]').textContent, /2 staged candle changes/);
-    assert.equal(nodes.get('[data-stat-total]').textContent, '1');
-});
-
-test('auto-label waits for rate limits and retries the same page', async t => {
-    let attempts = 0;
-    const { nodes, requests } = await mountedChart(t, async () => ++attempts === 1
-        ? { ok: false, status: 429, headers: { get: () => '2' }, json: async () => ({ message: 'Too many requests.' }) }
-        : { ok: true, json: async () => ({ labels: [{ time: 3, decision_at_ms: 4000, action: 'hold' }], next_offset: null }) });
-
-    const pending = nodes.get('[data-auto-label]').trigger('click');
-    await flushRequests();
-    assert.equal(requests.length, 1);
-    t.mock.timers.tick(2000);
-    await pending;
-
-    assert.deepEqual(requests.map(request => JSON.parse(request.options.body).offset), [0, 0]);
-    assert.match(nodes.get('[data-pending-status]').textContent, /1 staged candle change/);
-});
-
-test('auto-label stops when the page is disposed without staging a late response', async t => {
-    let resolvePage;
-    const { nodes, requests, markers } = await mountedChart(t, () => new Promise(resolve => { resolvePage = resolve; }));
-
-    const pending = nodes.get('[data-auto-label]').trigger('click');
-    globalThis.window.trigger('pagehide', { persisted: false });
-    resolvePage({ ok: true, json: async () => ({ labels: [{ time: 3, decision_at_ms: 4000, action: 'hold' }], next_offset: 50 }) });
-    await pending;
-
-    assert.equal(requests.length, 1);
-    assert.ok(!markers.data.some(marker => marker.id === 'human-3'));
+test('automatic chart markers remain distinct from human markers', async t => {
+    const { root, markers } = await mountedChart(t, async () => {
+        throw new Error('Changing overlays must not call the server');
+    }, { labels: [{ time: 3, action: 'buy' }], auto_labels: [{ time: 3, action: 'sell' }] });
+    assert.equal(markers.data.some(marker => marker.id === 'human-3'), true);
+    const modes = root.querySelectorAll('[data-overlay-mode]');
+    modes[1].trigger('change', { target: modes[1] });
+    assert.equal(markers.data.some(marker => marker.id === 'human-3'), false);
+    assert.equal(markers.data.some(marker => marker.id === 'automatic-3'), true);
+    modes[2].trigger('change', { target: modes[2] });
+    assert.equal(markers.data.some(marker => marker.id === 'human-3'), true);
+    assert.equal(markers.data.some(marker => marker.id === 'automatic-3'), true);
 });
 
 test('Submit respects Retry-After and resumes the same pending batch', async t => {
@@ -479,7 +364,7 @@ test('forward dragging loads labels once, preserves the viewport and stops at th
     assert.deepEqual(scale.range, { from: 2, to: 4 });
     assert.ok(markers.data.some(marker => marker.id === 'human-5' && marker.text === 'SELL'));
     assert.equal(nodes.get('[data-step-next]')['aria-disabled'], 'true');
-    assert.match(nodes.get('[data-step-previous]').href, /decision_at_ms=4000/);
+    assert.match(nodes.get('[data-step-previous]').href, /decision_at_ms=3000/);
     assert.match(nodes.get('[data-replay-time]').textContent, /UTC/);
     assert.equal(nodes.get('[data-history-status]').textContent, 'Newest available candle reached.');
     scale.onRange({ from: 4, to: 6 });
@@ -488,6 +373,37 @@ test('forward dragging loads labels once, preserves the viewport and stops at th
     nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 60, clientY: 20, preventDefault() {} });
     assert.equal(nodes.get('[data-menu-action="buy"]').disabled, false);
     assert.equal(nodes.get('[data-menu-action="sell"]').disabled, true);
+});
+
+test('first and last boundary controls fetch only chart JSON and retain pending human labels', async t => {
+    const { nodes, plots, markers, requests } = await mountedChart(t, async url => {
+        const decision = new URL(url).searchParams.get('decision_at_ms');
+        const isFirst = decision === '3000';
+        return { ok: true, json: async () => ({
+            decision_at_ms: isFirst ? 3000 : 9000,
+            earliest_decision_at_ms: 3000, latest_decision_at_ms: 9000,
+            has_more: !isFirst, has_newer: isFirst,
+            series: isFirst ? [candle(2), candle(3,'10')] : [candle(7), candle(8)],
+            labels: [], auto_labels: [{ time: isFirst ? 2 : 7, action: 'hold' }],
+            decisions: isFirst ? { 2: 3000 } : { 7: 8000, 8: 9000 },
+            allowed_actions: isFirst ? { 2: ['hold','sell'] } : { 7: ['hold','sell'], 8: ['hold','sell'] },
+        }) };
+    }, { latest_decision_at_ms: 9000 });
+    nodes.get('[data-canvas]').trigger('contextmenu', { clientX: 30, clientY: 20, preventDefault() {} });
+    await nodes.get('[data-menu-action="hold"]').trigger('click');
+    assert.equal(nodes.get('[data-submit-labels]').hidden, false);
+    let prevented = 0;
+    nodes.get('[data-step-next]').trigger('click', { preventDefault() { prevented++; } });
+    await flushRequests();
+    assert.deepEqual(plots[0].data.map(row => row.time), [7,8]);
+    nodes.get('[data-step-previous]').trigger('click', { preventDefault() { prevented++; } });
+    await flushRequests();
+    assert.deepEqual(plots[0].data.map(row => row.time), [2]);
+    assert.equal(nodes.get('[data-submit-labels]').hidden, false);
+    assert.equal(nodes.get('[data-submit-labels]').hidden, false);
+    assert.equal(prevented, 2);
+    assert.deepEqual(requests.map(request => new URL(request.url).searchParams.get('decision_at_ms')), ['9000','3000']);
+    assert.ok(requests.every(request => request.options.headers.Accept === 'application/json'));
 });
 
 test('a failed forward request retries in the same direction and rejects data beyond the opening cutoff', async t => {

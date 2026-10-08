@@ -9,6 +9,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
+use App\Jobs\AnalyzeMarketAutoLabels;
 use Illuminate\Validation\Rule;
 
 class CandleTrainingController extends Controller
@@ -23,12 +26,26 @@ class CandleTrainingController extends Controller
         ]);
     }
 
-    public function show(Request $request, string $dataset, CandleTraining $training, HumanTraining $snapshots): Response
+    public function show(Request $request, string $dataset, CandleTraining $training, HumanTraining $snapshots): Response|JsonResponse
     {
         $data = $request->validate(['decision_at_ms' => ['nullable', 'integer', 'min:1']]);
         $state = $training->review($request->user(), $dataset,
             isset($data['decision_at_ms']) ? (int) $data['decision_at_ms'] : null);
 
+        if ($request->wantsJson()) {
+            return response()->json([
+                'series' => $state['payload']['series'],
+                'labels' => $state['visible_labels'],
+                'auto_labels' => $state['auto_labels'],
+                'decisions' => $state['decisions'],
+                'allowed_actions' => $state['allowed_actions'],
+                'decision_at_ms' => $state['payload']['decision_at_ms'],
+                'earliest_decision_at_ms' => $state['earliest_window_decision_at_ms'],
+                'latest_decision_at_ms' => $state['latest_decision_at_ms'],
+                'has_more' => $state['has_more'],
+                'has_newer' => $state['next_decision_at_ms'] !== null,
+            ])->header('Cache-Control', 'no-store, private');
+        }
         return response()->view('markets.candle-training', ['state' => $state,
             'datasets' => $snapshots->datasets()])->header('Cache-Control', 'no-store, private');
     }
@@ -50,17 +67,29 @@ class CandleTrainingController extends Controller
 
     public function autoLabel(Request $request, string $dataset, CandleTraining $training): JsonResponse
     {
-        $data = $request->validate([
-            'include_existing' => ['sometimes', 'boolean'],
-            'offset' => ['sometimes', 'integer', 'min:0'],
-        ]);
-
-        return response()->json($training->autoLabels(
-            $request->user(),
-            $dataset,
-            (bool) ($data['include_existing'] ?? false),
-            (int) ($data['offset'] ?? 0),
-        ))->header('Cache-Control', 'no-store, private');
+        $state = $training->review($request->user(), $dataset);
+        if (! config('intelligence.enabled') || in_array(config('queue.default'), ['sync', 'null'], true)) {
+            return response()->json(['message' => 'Intelligence queue is not enabled.'], 422);
+        }
+        $manifest = $state['manifest'];
+        $key = 'trademinator:action-auto-label:'.hash('sha256', implode('|', [
+            $manifest['exchange'], $manifest['symbol'], $manifest['period']
+        ]));
+        if (! Cache::add($key.':lock', true, now()->addHour())) {
+            return response()->json(['message' => 'Auto-labelling is already queued or running.'], 409);
+        }
+        $job = new AnalyzeMarketAutoLabels(
+            $manifest['exchange'], $manifest['symbol'], $manifest['period'], $key
+        );
+        $job->onQueue(config('intelligence.queue'));
+        try {
+            dispatch($job);
+        } catch (\Throwable $error) {
+            Cache::forget($key.':lock');
+            throw $error;
+        }
+        return response()->json(['status' => 'queued',
+            'message' => 'System auto-labelling queued. Human labels will not be changed.'], 202);
     }
 
     public function submitLabels(Request $request, string $dataset, CandleTraining $training): JsonResponse

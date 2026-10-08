@@ -86,7 +86,7 @@
                  data-submit-url="{{ route('human-training.candles.submit', $state['manifest']['dataset_id']) }}"
                  data-submit-batch-size="{{ min(\App\Domain\Intelligence\CandleTraining::SUBMIT_BATCH_SIZE, \App\Domain\Intelligence\CandleTraining::submissionLimit()) }}"
                  data-csrf="{{ csrf_token() }}"
-                 data-snapshot="{{ json_encode(['series' => $state['payload']['series'], 'decision_at_ms' => $state['payload']['decision_at_ms'], 'labels' => $state['visible_labels'], 'decisions' => $state['decisions'], 'allowed_actions' => $state['allowed_actions'], 'has_more' => $state['has_more'], 'has_newer' => $state['next_decision_at_ms'] !== null, 'latest_decision_at_ms' => $state['latest_decision_at_ms'], 'stats' => $state['label_stats'], 'taker_fee' => $state['taker_fee']], JSON_THROW_ON_ERROR) }}">
+                 data-snapshot="{{ json_encode(['series' => $state['payload']['series'], 'decision_at_ms' => $state['payload']['decision_at_ms'], 'labels' => $state['visible_labels'], 'decisions' => $state['decisions'], 'allowed_actions' => $state['allowed_actions'], 'has_more' => $state['has_more'], 'has_newer' => $state['next_decision_at_ms'] !== null, 'latest_decision_at_ms' => $state['latest_decision_at_ms'], 'earliest_decision_at_ms' => $state['earliest_window_decision_at_ms'], 'auto_labels' => $state['auto_labels'], 'stats' => $state['label_stats'], 'taker_fee' => $state['taker_fee']], JSON_THROW_ON_ERROR) }}">
             <form method="POST" action="{{ route('human-training.candles.start') }}" data-candle-dataset-form>
                 @csrf
                 <label for="candle-dataset">Market and frozen dataset</label>
@@ -95,7 +95,7 @@
                     :sort="['exchange', 'pair', 'period']" :show-unavailable-datasets="true" required data-candle-dataset />
                 <noscript><button class="review-control" type="submit">Switch market</button></noscript>
             </form>
-            <p class="guide-help">Latest loaded candle: <span data-replay-time><x-display-time :value="$state['payload']['microtimestamp']" unit="milliseconds" /></span>. Use the side arrows to move up to 50 candles, or pan toward either edge to load more history. Forward loading stops at the newest candle in this dataset.</p>
+            <p class="guide-help">Latest loaded candle: <span data-replay-time><x-display-time :value="$state['payload']['microtimestamp']" unit="milliseconds" /></span>. Use &lt;&lt; / &gt;&gt; to jump to the earliest / latest available chart window without reloading the page. Pan toward either edge to load more history.</p>
             <p class="guide-notice"><strong>Left-click</strong> candles to measure A→B. The third click discards A and shifts B→A. <strong>Right-click</strong> a candle for BUY/HOLD/SELL/Delete; on touch, long-press it.</p>
             @if($state['payload']['gaps'])<p class="guide-notice guide-error">{{ $state['payload']['gaps'] }} gaps in history. Missing candles are not filled.</p>@endif
 
@@ -146,10 +146,16 @@
                     @endif
                 </div>
                 <p class="review-legend" data-legend>Move over a candle to inspect OHLC and volume. Existing BUY/HOLD/SELL labels remain marked on the chart.</p>
+                <div class="flex flex-wrap gap-3 mb-3" role="group" aria-label="Label overlays">
+                    <label><input type="radio" name="candle-label-overlay" value="human" checked data-overlay-mode> Human only</label>
+                    <label><input type="radio" name="candle-label-overlay" value="automatic" data-overlay-mode> Automatic only</label>
+                    <label><input type="radio" name="candle-label-overlay" value="both" data-overlay-mode> Both</label>
+                </div>
+                <p class="guide-help">Human labels use green / gray / red. Automatic labels use blue markers marked AUTO and are not attributed to Human Training.</p>
                 <div class="candle-chart-navigation" aria-label="Replay navigation">
                     <a class="review-control candle-step" data-step-previous
-                        @if($state['previous_decision_at_ms']) href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['previous_decision_at_ms']]) }}" @else aria-disabled="true" tabindex="-1" @endif
-                        aria-label="Back up to 50 candles" title="Back up to 50 candles">&lt;</a>
+                        href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['earliest_window_decision_at_ms']]) }}"
+                        aria-label="Jump to earliest available date" title="Jump to earliest available date">&lt;&lt;</a>
                     <x-market-candlestick class="candle-chart-stage"
                         canvas-class="review-chart"
                         aria-label="Historical candlesticks with human training markers and A/B measurement selections"
@@ -157,16 +163,17 @@
                         <div class="candle-measure-tooltip" data-measure-tooltip hidden role="tooltip"></div>
                     </x-market-candlestick>
                     <a class="review-control candle-step" data-step-next
-                        @if($state['next_decision_at_ms']) href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['next_decision_at_ms']]) }}" @else aria-disabled="true" tabindex="-1" @endif
-                        aria-label="Forward up to 50 candles" title="Forward up to 50 candles">&gt;</a>
+                        href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['latest_decision_at_ms']]) }}"
+                        aria-label="Jump to latest available date" title="Jump to latest available date">&gt;&gt;</a>
                 </div>
                 <p class="guide-help">Earliest available data: <a href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['earliest_window_decision_at_ms']]) }}"><x-display-time :value="$state['earliest_time']" unit="seconds" /></a> · in this frozen dataset</p>
                 <div class="flex flex-wrap items-center gap-3">
                     <button type="button" class="review-control" data-fit>Fit visible candles</button>
-                    <button type="button" class="review-control" data-auto-label>Auto-label</button>
+                    <button type="button" class="review-control" data-auto-label>Trigger auto-labelling</button>
                     <button type="button" class="review-control" data-submit-labels hidden>Submit</button>
                     <button type="button" class="review-control candle-menu-delete" data-delete-all-training>Delete all training</button>
                 </div>
+                <p class="guide-help">Queues a fresh intelligence build with system auto-labelling instead of waiting for Monday. Results belong to a new immutable dataset; select that dataset when the build finishes. No labels are attributed to Human Training or its milestones.</p>
                 <p class="guide-help" data-pending-status>No pending changes. Manual labels, deletions and auto-label suggestions stay only in this browser until Submit.</p>
                 <p class="guide-help" data-history-status role="status"></p>
                 <button type="button" class="review-control" data-history-retry hidden>Retry loading candles</button>
@@ -183,28 +190,12 @@
                 </div>
                 <noscript><p>The interactive chart requires JavaScript. Use JavaScript to display the chart and label candles.</p></noscript>
             </div>
-            <p class="guide-help">Green ▲ = BUY, gray ● = HOLD, red ▼ = SELL. Purple/orange squares are temporary A/B measurement markers. Manual selections and Auto-label suggestions are the same Action Training labels: neither reaches the database until you press Submit. Human labels are training annotations, not exchange orders or historical fills. The fee comparison uses the published CCXT taker fee when available and excludes spread, slippage, conversions and account-specific discounts. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
+            <p class="guide-help">Green ▲ = BUY, gray ● = HOLD, red ▼ = SELL. Purple/orange squares are temporary A/B measurement markers. Manual selections stay in your browser until Submit. Automatic labels are read-only and never submitted as human labels. Human labels are training annotations, not exchange orders or historical fills. The fee comparison uses the published CCXT taker fee when available and excludes spread, slippage, conversions and account-specific discounts. TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
         </section>
 
         <section class="guide-panel">
             <p class="guide-help"><strong>Unlabelled does not mean HOLD.</strong> Unlabelled means you supplied no human opinion for this candle, so it is excluded from Action Training. HOLD is an explicit action label and becomes supervised training data. Deleting a label removes it from future builds; an already-published model is immutable until intelligence is rebuilt.</p>
         </section>
 
-        <div class="guide-grid">
-            <section class="guide-panel"><h2>Indicators and context</h2><p class="guide-help">Features for the initial candle at <x-display-time :value="$state['payload']['microtimestamp']" unit="milliseconds" />. Each chart label stores the features from the candle you label.</p>
-                <dl>@foreach($state['payload']['features'] as $key => $value)<dt>{{ $key }}</dt><dd>{{ is_numeric($value) ? \App\Helpers\Decimal::format($value, 5) : 'Unavailable' }}</dd>@endforeach</dl>
-            </section>
-            <section class="guide-panel"><h2>Partial patterns</h2>
-                @forelse($state['payload']['patterns'] as $pattern)<p><strong>{{ ucwords(str_replace('_', ' ', $pattern['type'])) }}</strong><br>Stage {{ $pattern['stage'] }}/{{ $pattern['length'] }} · {{ \App\Helpers\Decimal::format(100 * $pattern['progress']) }}% complete · similarity {{ \App\Helpers\Decimal::format(100 * $pattern['similarity']) }}%</p>
-                @empty<p>No supported partial pattern in this snapshot.</p>@endforelse
-                <p class="guide-help">Patterns for the initial candle at <x-display-time :value="$state['payload']['microtimestamp']" unit="milliseconds" />. Pattern outcomes stay hidden.</p>
-            </section>
-        </div>
-
-        <section class="guide-panel">
-            <details><summary>Initial window: recent candle values</summary><div class="review-table-wrap"><table><thead><tr><th>Open time (<x-timezone-label />)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody>
-                @foreach(array_slice($state['payload']['series'], -10) as $candle)<tr><th><x-display-time :value="$candle['time']" unit="seconds" precision="minutes" /></th>@foreach(['open', 'high', 'low', 'close', 'volume'] as $field)<td>{{ $candle[$field] }}</td>@endforeach</tr>@endforeach
-            </tbody></table></div></details>
-        </section>
     </section>
 </x-layouts.app>

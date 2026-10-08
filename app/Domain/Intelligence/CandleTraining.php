@@ -90,7 +90,7 @@ final class CandleTraining
             ->where('trainer_id', $trainer->user_id)->first();
 
         return ['manifest' => $manifest, 'snapshot' => $snapshot, 'payload' => $payload,
-            'label' => $label, 'review_required' => $label === null && ($payload['revision']['requires_review'] ?? false), 'visible_labels' => $chart['labels'], 'decisions' => $chart['decisions'],
+            'label' => $label, 'review_required' => $label === null && ($payload['revision']['requires_review'] ?? false), 'visible_labels' => $chart['labels'], 'auto_labels' => $chart['auto_labels'], 'decisions' => $chart['decisions'],
             'allowed_actions' => $chart['allowed_actions'],
             'earliest_time' => intdiv($first['microtimestamp'], 1000),
             'earliest_window_decision_at_ms' => $rows->at(min(count($rows) - 1,
@@ -114,7 +114,7 @@ final class CandleTraining
         }
         $candidate = $rows->before($beforeMs, $decisionAtMs);
         if ($candidate === null) {
-            return ['series' => [], 'labels' => [], 'decisions' => [], 'allowed_actions' => [], 'has_more' => false];
+            return ['series' => [], 'labels' => [], 'auto_labels' => [], 'decisions' => [], 'allowed_actions' => [], 'has_more' => false];
         }
         $snapshot = $this->snapshots->snapshotForRow($manifest, $candidate);
         if ($snapshot === null) {
@@ -139,7 +139,7 @@ final class CandleTraining
             throw ValidationException::withMessages(['after_ms' => 'Continue from the last loaded replay candle.']);
         }
         if ($replayIndex === count($rows) - 1) {
-            return ['series' => [], 'labels' => [], 'decisions' => [], 'allowed_actions' => [],
+            return ['series' => [], 'labels' => [], 'auto_labels' => [], 'decisions' => [], 'allowed_actions' => [],
                 'decision_at_ms' => $decisionAtMs, 'has_more' => false];
         }
         $pageSize = min(self::PAGE_SIZE, max(1, (int) config('human_training.chart_candles')));
@@ -422,7 +422,15 @@ final class CandleTraining
                 return ['time' => intdiv($itemPayload['microtimestamp'], 1000), 'action' => $label->action];
             })->filter()->unique('time')->values()->all();
 
-        return ['labels' => $visibleLabels, 'decisions' => $decisions, 'allowed_actions' => $allowedActions];
+        $autoLabels = [];
+        foreach ($available as $row) {
+            $action = $row['action_label'] ?? null;
+            if ($action === 'hodl') $action = 'hold';
+            if (in_array($action, self::ACTIONS, true)) {
+                $autoLabels[] = ['time' => intdiv((int) $row['microtimestamp'], 1000), 'action' => $action];
+            }
+        }
+        return ['labels' => $visibleLabels, 'auto_labels' => $autoLabels, 'decisions' => $decisions, 'allowed_actions' => $allowedActions];
     }
 
     /** @return list<string> */
