@@ -220,7 +220,7 @@ final class HumanTraining
             return [];
         }
         $result = [];
-        foreach (array_chunk($rows, 50) as $batch) {
+        foreach ($this->snapshotHistoryBatches($manifest, $rows) as $batch) {
             $requested = array_column($batch, null, 'decision_at_ms');
             $result += app(SnapshotRevisions::class)->resolve($manifest, $this->batchSnapshotPayloads($manifest, $requested));
         }
@@ -284,7 +284,7 @@ final class HumanTraining
         $rows = array_filter($rawRows, fn (array $row): bool => isset($strictTimes[$row['decision_at_ms']]));
         // Compatibility is read-only. Model observations are excluded from
         // SnapshotInput identity, so their per-candle replay queries are unnecessary.
-        foreach (array_chunk(TrainingRowAudit::inspect(array_values($rows))['rows'], 50) as $batch) {
+        foreach ($this->snapshotHistoryBatches($manifest, TrainingRowAudit::inspect(array_values($rows))['rows']) as $batch) {
             $requested = array_column($batch, null, 'decision_at_ms');
             foreach ($this->batchSnapshotPayloads($manifest, $requested, includeModelObservations: false) as $decision => $payload) {
                 if ($payload === null) {
@@ -313,6 +313,40 @@ final class HumanTraining
             && ($payload['horizon_candles'] ?? null) === $manifest['label_definition']['horizon']
             && ($payload['vector'] ?? null) == $vector
             && ($payload['feature_sha256'] ?? null) === ($row['source']['feature_sha256'] ?? null);
+    }
+
+    /**
+     * Keep sparse submissions bounded to their actual chart-context windows.
+     * Fifty labels may be months apart: one earliest-to-latest history scan
+     * needlessly reads every candle in between and times out HTTP requests.
+     * Overlapping windows still share one history read.
+     *
+     * @return \Generator<int, list<array<string, mixed>>>
+     */
+    private function snapshotHistoryBatches(array $manifest, array $rows): \Generator
+    {
+        usort($rows, fn (array $a, array $b): int =>
+            ((int) $a['microtimestamp']) <=> ((int) $b['microtimestamp']));
+
+        $batch = [];
+        $lastTimestamp = null;
+        foreach ($rows as $row) {
+            $windowFrom = (int) $row['microtimestamp'];
+            for ($i = 1; $i < (int) config('human_training.chart_candles'); $i++) {
+                $windowFrom = max(0, $this->timeframe->previous($windowFrom, $manifest['period']));
+            }
+
+            if ($batch !== [] && (count($batch) >= 50 || $windowFrom > $lastTimestamp)) {
+                yield $batch;
+                $batch = [];
+            }
+            $batch[] = $row;
+            $lastTimestamp = (int) $row['microtimestamp'];
+        }
+
+        if ($batch !== []) {
+            yield $batch;
+        }
     }
 
     /**

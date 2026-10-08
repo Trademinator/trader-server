@@ -9,6 +9,7 @@ use App\Models\MarketFeed;
 use App\Models\MarketSubscription;
 use App\Models\Ticker;
 use App\Models\User;
+use App\Repositories\TickerRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
@@ -162,6 +163,40 @@ it('submits several staged labels when a cached configuration lacks the annotati
     ])->assertOk()->assertJsonPath('saved', 3)->assertJsonPath('stats.counts.hold', 3);
 
     $this->assertDatabaseCount('human_candle_labels', 3);
+});
+
+it('reads only local chart windows when submitted candle labels are far apart', function () {
+    $this->travelTo('2024-01-02 00:00:00 UTC');
+    $trainer = User::factory()->create();
+    config(['operations.owner_uuid' => $trainer->user_id]);
+    $manifest = candleTrainingDataset(count: 220);
+    [, $rows] = app(DatasetStore::class)->load($manifest['dataset_id']);
+
+    $repository = new class extends TickerRepository
+    {
+        public array $requestedRanges = [];
+
+        public function streamHistory(string $exchange, string $symbol, string $period,
+            ?int $fromMs = null, ?int $toMs = null): \Generator
+        {
+            $this->requestedRanges[] = [$fromMs, $toMs];
+            yield from parent::streamHistory($exchange, $symbol, $period, $fromMs, $toMs);
+        }
+    };
+    app()->instance(TickerRepository::class, $repository);
+
+    $this->actingAs($trainer)->postJson(route('human-training.candles.submit', $manifest['dataset_id']), [
+        'changes' => [
+            ['decision_at_ms' => $rows[0]['decision_at_ms'], 'action' => 'hold'],
+            ['decision_at_ms' => $rows[219]['decision_at_ms'], 'action' => 'hold'],
+        ],
+    ])->assertOk()->assertJsonPath('saved', 2);
+
+    expect($repository->requestedRanges)->toHaveCount(2);
+    foreach ($repository->requestedRanges as [$from, $to]) {
+        expect($to - $from)->toBeLessThanOrEqual(89 * 60_000);
+    }
+    $this->assertDatabaseCount('human_candle_labels', 2);
 });
 
 it('rejects an oversized annotation request before storing any staged labels', function () {
