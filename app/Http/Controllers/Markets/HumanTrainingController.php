@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Markets;
 use App\Domain\Intelligence\CandleTraining;
 use App\Domain\Intelligence\HumanTraining;
 use App\Domain\Intelligence\HumanTrainingExport;
+use App\Domain\Intelligence\OutcomeTrainingSession;
 use App\Repositories\TickerRepository;
 use App\Domain\MarketData\CandleTimeframe;
 use App\Domain\MarketData\SubscribedPairOptions;
@@ -141,11 +142,29 @@ class HumanTrainingController extends Controller
         ])->header('Cache-Control', 'no-store, private');
     }
 
-    public function update(Request $request, string $review, HumanTraining $training): RedirectResponse
+    public function update(Request $request, string $review, HumanTraining $training, OutcomeTrainingSession $sessions): RedirectResponse
     {
         $data = $request->validate(['label' => ['required', Rule::in([...HumanTraining::LABELS, 'skip'])],
-            'confidence' => ['nullable', 'integer', 'between:0,100'], 'reason' => ['nullable', 'string', 'max:2000']]);
-        $training->submit($request->user(), $review, $data['label'], isset($data['confidence']) ? (int) $data['confidence'] : null, $data['reason'] ?? null);
+            'confidence' => ['nullable', 'integer', 'between:0,100'], 'reason' => ['nullable', 'string', 'max:2000'],
+            'next' => ['sometimes', Rule::in([OutcomeTrainingSession::SAME_MARKET, OutcomeTrainingSession::LEAST_TRAINED])]]);
+        $saved = $training->submit($request->user(), $review, $data['label'], isset($data['confidence']) ? (int) $data['confidence'] : null, $data['reason'] ?? null);
+
+        // A skip also advances within the current pair; older clients without
+        // an explicit continuation still reach their saved review as before.
+        $mode = $data['next'] ?? ($data['label'] === 'skip' ? OutcomeTrainingSession::SAME_MARKET : null);
+        if ($mode !== null) {
+            $next = $sessions->next($request->user(), $saved, $mode);
+            $prefix = $data['label'] === 'skip' ? 'Snapshot skipped.' : 'Outcome assessment saved.';
+            if ($next !== null) {
+                return redirect()->route('human-training.show', $next->review_id)
+                    ->with('status', $prefix.' Here is your next scenario.');
+            }
+
+            $scope = $mode === OutcomeTrainingSession::SAME_MARKET ? 'this exchange/pair' : 'another exchange/pair';
+
+            return redirect()->route('human-training.index')->with('status',
+                $prefix.' No unseen, intact snapshot is currently available for '.$scope.'. Choose another dataset to continue.');
+        }
 
         return redirect()->route('human-training.show', $review)->with('status', 'Trend assessment saved. It will be considered at the next model build.');
     }

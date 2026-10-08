@@ -134,11 +134,14 @@ final class IntelligenceTrainer
             // Patterns remain trained and reported, but are intentionally excluded from every KNN feature vector.
             $candidatePatternKeys = [];
             $patternKnownAt = null;
+            // Release the original row buffer before mutating the working rows.
+            // Otherwise PHP's copy-on-write duplicates every normalized row.
             $technicalRows = $rows;
+            unset($rows);
             foreach ($technicalRows as &$row) {
                 unset($row['patterns']);
             }
-            unset($row, $rows);
+            unset($row);
 
             $patternTreeSpools = [];
             foreach ($patternBundle['models'] as &$patternModel) {
@@ -151,7 +154,7 @@ final class IntelligenceTrainer
 
             $leadLagSeries = $leadLag['series'];
             unset($leadLag['series']);
-            [$technicalRows, $technicalLeadLagExcluded] = $this->applyLeadLag(
+            $technicalLeadLagExcluded = $this->applyLeadLag(
                 $technicalRows, $leadLagBundle, $leadLagSeries
             );
             $stackedRows = null;
@@ -544,22 +547,39 @@ final class IntelligenceTrainer
         return [$training, $test, $cutoff];
     }
 
-    private function applyLeadLag(array $rows, array $bundle, array $series): array
+    /**
+     * Enrich the owned dataset buffer without copying the entire dataset.
+     * DatasetStore guarantees strictly increasing decision timestamps, so
+     * all pre-validation rows form a prefix of the array.
+     */
+    private function applyLeadLag(array &$rows, array $bundle, array $series): int
     {
         if ($bundle['keys'] === []) {
-            return [$rows, 0];
+            return 0;
         }
-        $before = count($rows);
-        $rows = array_values(array_filter($rows,
-            fn (array $row): bool => $row['decision_at_ms'] > $bundle['available_at_ms']));
+
+        $excluded = 0;
+        $count = count($rows);
+        while ($excluded < $count && $rows[$excluded]['decision_at_ms'] <= $bundle['available_at_ms']) {
+            $excluded++;
+        }
+        if ($excluded > 0) {
+            $rows = array_slice($rows, $excluded);
+        }
+
         foreach ($rows as &$row) {
             $evidence = $this->leadLag->features($bundle, $series, $row['decision_at_ms']);
-            $row['feature_weights'] = [...array_fill(0, count($row['vector']), 1.0), ...$evidence['weights']];
-            $row['vector'] = [...$row['vector'], ...$evidence['vector']];
+            $row['feature_weights'] = array_fill(0, count($row['vector']), 1.0);
+            foreach ($evidence['weights'] as $weight) {
+                $row['feature_weights'][] = $weight;
+            }
+            foreach ($evidence['vector'] as $value) {
+                $row['vector'][] = $value;
+            }
         }
         unset($row);
 
-        return [$rows, $before - count($rows)];
+        return $excluded;
     }
 
     private function replaceSelectionCandidate(array $selection, array $candidate, array $folds, int $k): array

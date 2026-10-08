@@ -81,7 +81,12 @@
                     <p class="guide-help">Bull: upward expectation. Bear: downward expectation. Super: stronger expectation. Neutral: no clear directional view.</p>
                     <div class="guide-grid"><label for="confidence">Confidence (optional, 0–100)<input id="confidence" name="confidence" type="number" min="0" max="100" step="1" value="{{ old('confidence') }}"></label>
                         <label for="reason">Reason (optional)<textarea id="reason" name="reason" rows="3" maxlength="2000">{{ old('reason') }}</textarea></label></div>
-                    <div class="guide-inline"><button type="submit" class="guide-button">Save Outcome assessment</button><button type="submit" class="review-control" name="label" value="skip">Skip this snapshot</button></div>
+                    <div class="guide-inline">
+                        <button type="submit" class="guide-button" name="next" value="same">Save Outcome assessment</button>
+                        <button type="submit" class="guide-button" name="next" value="least_trained">Save Outcome assessment &amp; choose random scenario</button>
+                        <button type="submit" class="review-control" name="label" value="skip">Skip this snapshot</button>
+                    </div>
+                    <p class="guide-help">Save continues with the same exchange/pair. Random scenario selects a different exchange/pair with the fewest saved Outcome assessments; ties are randomized.</p>
                     <p class="guide-help">Expires <x-display-time :value="$review->expires_at" />. Model output and other trainers’ answers are hidden while you decide.</p>
                 </form>
             @endif
