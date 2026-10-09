@@ -4,6 +4,26 @@ namespace App\Domain\Intelligence;
 
 final class SignalSemantics
 {
+    /** Only BUY and SELL are actionable Client API values; abstentions are HOLD. */
+    public static function clientAction(string $action, string $reason): string
+    {
+        if (! in_array($reason, ['supported', 'degraded_action_only'], true)
+            || ($reason === 'degraded_action_only' && $action === 'buy')) {
+            return 'hold';
+        }
+
+        return in_array($action, ['buy', 'sell'], true) ? $action : 'hold';
+    }
+
+    public static function evidenceStatus(string $reason): string
+    {
+        return match ($reason) {
+            'supported' => 'supported',
+            'degraded_action_only' => 'degraded',
+            default => 'abstaining',
+        };
+    }
+
     public static function actionMeaning(string $action, string $reason, ?array $scoring = null): ?string
     {
         if ($reason === 'degraded_action_only') {

@@ -59,7 +59,9 @@ final class ClientDecisionService
         $degradedActionOnly = $signal->reason === 'degraded_action_only';
         if (! in_array($signal->reason, ['supported', 'degraded_action_only'], true)
             || ($degradedActionOnly && $signal->action === 'buy')) {
-            return [...$base, 'reason' => 'server_abstention'];
+            // No actionable signal is still an explicit HOLD to the Client.
+            // The original diagnostic reason remains in server_signal.reason.
+            return [...$base, 'reason' => 'server_abstention', 'action' => 'hold'];
         }
         if ($signalExpiry === null || $now >= $signalExpiry) {
             return [...$base, 'reason' => 'stale_signal'];
@@ -262,7 +264,8 @@ final class ClientDecisionService
 
         return [
             'id' => $signal->getKey(), 'period' => $signal->period, 'model_id' => $signal->model_id,
-            'action' => $signal->action, 'reason' => $signal->reason,
+            'action' => SignalSemantics::clientAction($signal->action, $signal->reason),
+            'reason' => $signal->reason, 'evidence_status' => SignalSemantics::evidenceStatus($signal->reason),
             'action_meaning' => $signal->payload['action_meaning']
                 ?? SignalSemantics::actionMeaning($signal->action, $signal->reason, $signal->payload['scoring'] ?? null),
             'confidence' => $signal->reason === 'supported' ? (float) ($signal->payload['confidence'] ?? 0.0) : null,
@@ -270,6 +273,7 @@ final class ClientDecisionService
             'regime' => $signal->payload['regime'] ?? null,
             'reference_price' => $signal->payload['reference_price'] ?? null,
             'reference_price_source' => $signal->payload['reference_price_source'] ?? null,
+            'prediction_input_basis' => $signal->payload['prediction_input_basis'] ?? null,
             'scoring' => $signal->payload['scoring'] ?? null,
         ];
     }

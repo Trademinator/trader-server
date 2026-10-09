@@ -23,7 +23,8 @@ function f6Bearer(User $user): string
     return $secret;
 }
 
-function f6Market(User $user, string $period, int $decisionAtMs, string $referencePrice = '100', array $extraPayload = []): array
+function f6Market(User $user, string $period, int $decisionAtMs, string $referencePrice = '100', array $extraPayload = [],
+    string $action = 'buy', string $reason = 'supported'): array
 {
     $exchange = Exchange::query()->create(['name' => 'Kraken', 'class' => 'kraken', 'config' => '{}']);
     $market = Market::query()->create([
@@ -62,8 +63,8 @@ function f6Market(User $user, string $period, int $decisionAtMs, string $referen
         'market_id' => $market->getKey(), 'snapshot_key' => hash('sha256', $model.$decisionAtMs),
         'period' => $period, 'model_id' => $model, 'decision_at_ms' => $decisionAtMs,
         'recorded_at_ms' => now()->getTimestampMs(), 'is_change' => true,
-        'action' => 'buy', 'reason' => 'supported',
-        'payload' => ['confidence' => 0.8, 'evidence_score' => 0.8,
+        'action' => $action, 'reason' => $reason,
+        'payload' => ['confidence' => $reason === 'supported' ? 0.8 : 0.0, 'evidence_score' => 0.8,
             'reference_price' => $referencePrice, 'reference_price_source' => 'closed_candle_close', ...$extraPayload],
     ]);
 
@@ -159,4 +160,42 @@ it('rejects excessive drift from the signal reference price and accepts bounded 
 
     expect((float) $marketResponse->json('market.settings.max_signal_drift_bps'))->toBe(100.0);
     expect($signal->fresh()->payload['reference_price'])->toBe('100');
+});
+
+it('maps abstaining Server Action signals to Client HOLD with the original evidence reason', function () {
+    $this->freezeTime();
+    $user = User::factory()->create();
+    [$secret, $subscription, $signal] = f6Market($user, '1h', now()->subMinutes(30)->getTimestampMs(),
+        extraPayload: ['prediction_input_basis' => 'completed_candle'],
+        action: 'hodl', reason: 'insufficient_effective_neighbors');
+
+    $this->withToken($secret)->postJson('/api/v1/client/markets/'.$subscription->getKey().'/decision', f6DecisionState(100))
+        ->assertOk()->assertJsonPath('eligible', false)->assertJsonPath('action', 'hold')
+        ->assertJsonPath('reason', 'server_abstention')
+        ->assertJsonPath('server_signal.action', 'hold')
+        ->assertJsonPath('server_signal.reason', 'insufficient_effective_neighbors')
+        ->assertJsonPath('server_signal.evidence_status', 'abstaining')
+        ->assertJsonPath('server_signal.prediction_input_basis', 'completed_candle');
+
+    $this->withToken($secret)->getJson('/api/v1/client/markets/'.$subscription->getKey())
+        ->assertOk()->assertJsonPath('market.signal.action', 'hold')
+        ->assertJsonPath('market.signal.reason', 'insufficient_effective_neighbors')
+        ->assertJsonPath('market.signal.evidence_status', 'abstaining')
+        ->assertJsonPath('market.signal.prediction_input_basis', 'completed_candle');
+});
+
+it('exposes a supported HOLD to the Client without falsely marking it as abstention', function () {
+    $this->freezeTime();
+    $user = User::factory()->create();
+    [$secret, $subscription, $signal] = f6Market($user, '1h', now()->subMinutes(30)->getTimestampMs(), action: 'hodl');
+
+    $this->withToken($secret)->postJson('/api/v1/client/markets/'.$subscription->getKey().'/decision', f6DecisionState(100))
+        ->assertOk()->assertJsonPath('action', 'hold')->assertJsonPath('eligible', false)
+        ->assertJsonPath('reason', 'server_hold')
+        ->assertJsonPath('server_signal.reason', 'supported')
+        ->assertJsonPath('server_signal.evidence_status', 'supported');
+    $this->withToken($secret)->getJson('/api/v1/client/markets/'.$subscription->getKey())
+        ->assertOk()->assertJsonPath('market.signal.action', 'hold')
+        ->assertJsonPath('market.signal.reason', 'supported')
+        ->assertJsonPath('market.signal.evidence_status', 'supported');
 });

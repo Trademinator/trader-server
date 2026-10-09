@@ -101,7 +101,10 @@ it('stores shared Outcome and Action KNN knowledge separately and streams it for
     IntelligenceFixtures::feature(244, 0.0);
     IntelligenceFixtures::feature(245, 1.0);
 
-    expect(app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m')['action'])->toBe('buy');
+    $prediction = app(MarketIntelligence::class)->predict('kraken', 'BTC/USD', '1m');
+    expect($prediction['action'])->toBe('buy')
+        ->and($prediction['prediction_input_basis'])->toBe('completed_candle')
+        ->and($prediction['reference_price_source'])->toBe('closed_candle_close');
 });
 
 it('rejects corrupted streamed KNN knowledge', function () {

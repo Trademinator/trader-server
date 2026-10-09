@@ -133,7 +133,9 @@ final class CandleGuidance
             arsort($votes);
             $values = array_values($votes);
             $supported = $values[0] >= $settings['min_confidence'] && $values[0] - $values[1] > 1e-12;
-            $humanPredictions[] = ['action' => $supported ? array_key_first($votes) : 'hodl', 'confidence' => $supported ? $values[0] : 0.0];
+            $humanPredictions[] = ['action' => $supported ? array_key_first($votes) : 'hodl',
+                'confidence' => $supported ? $values[0] : 0.0,
+                'reason' => $supported ? 'supported' : 'weak_consensus'];
         }
         $bundle['comparison']['candle_human_only']['holdout'] = $tuner->evaluatePredictions($machine['test'], $humanPredictions, $settings);
         if (! $accepted) {

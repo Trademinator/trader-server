@@ -3,6 +3,7 @@
 namespace App\Domain\Intelligence;
 
 use App\Domain\Research\WalkForward;
+use InvalidArgumentException;
 use RuntimeException;
 
 final class KnnTuner
@@ -125,29 +126,70 @@ final class KnnTuner
 
     private function newAccumulator(int $k): array
     {
-        return ['k' => $k, 'evaluated' => 0, 'directional' => 0, 'correct' => 0,
+        return ['k' => $k, 'evaluated' => 0, 'supported' => 0, 'abstained' => 0,
+            'directional' => 0, 'correct' => 0, 'supported_holds' => 0, 'correct_holds' => 0,
             'contradictions' => 0, 'confidence' => 0.0, 'folds' => [],
-            'confusion' => array_fill_keys(['buy', 'hodl', 'sell'], array_fill_keys(['buy', 'hodl', 'sell'], 0))];
+            // Confusion includes only supported predictions, never fail-closed abstentions.
+            'confusion' => array_fill_keys(['buy', 'hodl', 'sell'], array_fill_keys(['buy', 'hodl', 'sell'], 0)),
+            'abstentions_by_label' => array_fill_keys(['buy', 'hodl', 'sell'], 0),
+            // Classification disagreements; these are NOT demonstrated financial losses.
+            'classification_errors' => array_fill_keys([
+                'buy_on_sell', 'sell_on_buy', 'buy_on_hold', 'sell_on_hold',
+                'hold_on_buy', 'hold_on_sell',
+            ], 0)];
     }
 
     private function accumulate(array &$state, array $row, array $result, int $fold): void
     {
-        $action = $result['action'];
+        $label = $row['label'] ?? null;
+        $labelAvailable = $row['label_available_at_ms'] ?? null;
+        if (! in_array($label, ['buy', 'hodl', 'sell'], true)
+            || ! is_int($labelAvailable) || $labelAvailable <= ($row['decision_at_ms'] ?? PHP_INT_MAX)) {
+            throw new InvalidArgumentException('Action holdout requires finalized historical action labels.');
+        }
         $state['evaluated']++;
-        $state['confusion'][$row['label']][$action]++;
         $state['folds'][$fold] ??= ['correct' => 0, 'directional' => 0];
-        if ($action === 'hodl') {
+        if (($result['reason'] ?? null) !== 'supported') {
+            $state['abstained']++;
+            $state['abstentions_by_label'][$label]++;
+
             return;
         }
-        $state['directional']++;
-        $state['confidence'] += $result['confidence'];
-        $matches = $action === $row['label'];
-        $state['correct'] += (int) $matches;
-        $state['folds'][$fold]['directional']++;
-        $state['folds'][$fold]['correct'] += (int) $matches;
-        $top = (bool) ($row['semantic_top'] ?? $row['semantic']['top'] ?? false);
-        $bottom = (bool) ($row['semantic_bottom'] ?? $row['semantic']['bottom'] ?? false);
-        $state['contradictions'] += (int) (($action === 'buy' && $top) || ($action === 'sell' && $bottom));
+
+        $action = $result['action'] ?? null;
+        if (! in_array($action, ['buy', 'hodl', 'sell'], true)) {
+            throw new InvalidArgumentException('Supported Action predictions must be BUY, HOLD or SELL.');
+        }
+        $state['supported']++;
+        $state['confusion'][$label][$action]++;
+        if ($action === 'hodl') {
+            $state['supported_holds']++;
+            $state['correct_holds'] += (int) ($label === 'hodl');
+        } else {
+            $state['directional']++;
+            $state['confidence'] += $result['confidence'];
+            $matches = $action === $label;
+            $state['correct'] += (int) $matches;
+            $state['folds'][$fold]['directional']++;
+            $state['folds'][$fold]['correct'] += (int) $matches;
+            $top = (bool) ($row['semantic_top'] ?? $row['semantic']['top'] ?? false);
+            $bottom = (bool) ($row['semantic_bottom'] ?? $row['semantic']['bottom'] ?? false);
+            // Preserve the existing semantic contradiction gate: opposite pivot only.
+            $state['contradictions'] += (int) (($action === 'buy' && $top) || ($action === 'sell' && $bottom));
+        }
+
+        $error = match (true) {
+            $action === 'buy' && $label === 'sell' => 'buy_on_sell',
+            $action === 'sell' && $label === 'buy' => 'sell_on_buy',
+            $action === 'buy' && $label === 'hodl' => 'buy_on_hold',
+            $action === 'sell' && $label === 'hodl' => 'sell_on_hold',
+            $action === 'hodl' && $label === 'buy' => 'hold_on_buy',
+            $action === 'hodl' && $label === 'sell' => 'hold_on_sell',
+            default => null,
+        };
+        if ($error !== null) {
+            $state['classification_errors'][$error]++;
+        }
     }
 
     private function finishAccumulator(array $state, array $settings): array
@@ -158,7 +200,12 @@ final class KnnTuner
         $contradictionRate = $directional ? $state['contradictions'] / $directional : 0;
         $rates = array_map(fn (array $fold): float => $fold['directional'] ? $fold['correct'] / $fold['directional'] : 0, $state['folds']);
         $stability = $rates ? 1 - (max($rates) - min($rates)) : 0;
+        $errors = $state['classification_errors'];
+        $directionalOnHold = $errors['buy_on_hold'] + $errors['sell_on_hold'];
+        $oppositeActions = $errors['buy_on_sell'] + $errors['sell_on_buy'];
 
+        // Phase 1: preserve the existing readiness thresholds. Sparse-class gate
+        // recalibration belongs to Phase 2, after these diagnostics can be audited.
         $gates = [
             'validation_rows' => $state['evaluated'] >= $settings['min_validation_rows'],
             'directional_predictions' => $directional >= $settings['min_directional_predictions'],
@@ -168,57 +215,34 @@ final class KnnTuner
         ];
 
         return ['k' => $state['k'], 'evaluated' => $state['evaluated'], 'directional' => $directional,
+            'supported' => $state['supported'], 'abstained' => $state['abstained'],
+            'supported_holds' => $state['supported_holds'], 'correct_holds' => $state['correct_holds'],
+            'supported_hold_precision' => $state['supported_holds']
+                ? $state['correct_holds'] / $state['supported_holds'] : 0.0,
+            'abstentions_by_label' => $state['abstentions_by_label'],
+            'classification_errors' => $errors,
+            'opposite_action_predictions' => $oppositeActions,
+            'directional_predictions_on_hold' => $directionalOnHold,
+            'directional_predictions_on_hold_rate' => $directional ? $directionalOnHold / $directional : 0.0,
             'semantic_precision' => $precision, 'contradiction_rate' => $contradictionRate,
             'coverage' => $coverage, 'mean_confidence' => $directional ? $state['confidence'] / $directional : 0,
-            'stability' => $stability, 'confusion' => $state['confusion'], 'gates' => $gates,
+            'stability' => $stability, 'confusion' => $state['confusion'],
+            'accounting_version' => 'action-supported-vs-abstain-v1',
+            'evaluation_basis' => 'finalized_historical_action_labels', 'gates' => $gates,
             'failed_gates' => array_keys(array_filter($gates, fn (bool $passed): bool => ! $passed)),
             'eligible' => ! in_array(false, $gates, true)];
     }
 
     private function score(array $cases, int $k, array $settings): array
     {
-        $correct = $directional = $contradictions = $confidence = 0;
-        $folds = [];
-        $matrix = array_fill_keys(['buy', 'hodl', 'sell'], array_fill_keys(['buy', 'hodl', 'sell'], 0));
+        // The auxiliary and automatic paths must use identical accounting.
+        $state = $this->newAccumulator($k);
         foreach ($cases as $case) {
-            $result = $case['result'] ?? $this->knn->vote($case['neighbors'], $k);
-            $row = $case['row'];
-            $action = $result['action'];
-            $matrix[$row['label']][$action]++;
-            $folds[$case['fold']] ??= ['correct' => 0, 'directional' => 0];
-            if ($action === 'hodl') {
-                continue;
-            }
-            $directional++;
-            $confidence += $result['confidence'];
-            $matches = $action === $row['label'];
-            $correct += (int) $matches;
-            $folds[$case['fold']]['directional']++;
-            $folds[$case['fold']]['correct'] += (int) $matches;
-            $top = (bool) ($row['semantic_top'] ?? $row['semantic']['top'] ?? false);
-            $bottom = (bool) ($row['semantic_bottom'] ?? $row['semantic']['bottom'] ?? false);
-            $contradictions += (int) (($action === 'buy' && $top) || ($action === 'sell' && $bottom));
+            $this->accumulate($state, $case['row'],
+                $case['result'] ?? $this->knn->vote($case['neighbors'], $k), (int) $case['fold']);
         }
-        $precision = $directional ? $correct / $directional : 0;
-        $coverage = count($cases) ? $directional / count($cases) : 0;
-        $contradictionRate = $directional ? $contradictions / $directional : 0;
-        $rates = array_map(fn (array $fold): float => $fold['directional'] ? $fold['correct'] / $fold['directional'] : 0, $folds);
-        $stability = $rates ? 1 - (max($rates) - min($rates)) : 0;
 
-        $gates = [
-            'validation_rows' => count($cases) >= $settings['min_validation_rows'],
-            'directional_predictions' => $directional >= $settings['min_directional_predictions'],
-            'semantic_precision' => $precision >= $settings['min_semantic_precision'],
-            'coverage' => $coverage >= $settings['min_coverage'],
-            'contradiction_rate' => $contradictionRate <= $settings['max_contradiction_rate'],
-        ];
-
-        return ['k' => $k, 'evaluated' => count($cases), 'directional' => $directional,
-            'semantic_precision' => $precision, 'contradiction_rate' => $contradictionRate,
-            'coverage' => $coverage, 'mean_confidence' => $directional ? $confidence / $directional : 0,
-            'stability' => $stability, 'confusion' => $matrix, 'gates' => $gates,
-            'failed_gates' => array_keys(array_filter($gates, fn (bool $passed): bool => ! $passed)),
-            'eligible' => ! in_array(false, $gates, true)];
+        return $this->finishAccumulator($state, $settings);
     }
 
     private function best(array $reports): ?int
@@ -233,9 +257,12 @@ final class KnnTuner
         return $eligible[0]['k'] ?? null;
     }
 
-    /** Score an auxiliary classifier against the same objective targets and gates. */
+    /** Score an auxiliary classifier against the same finalized historical action labels. */
     public function evaluatePredictions(array $rows, array $predictions, array $settings): array
     {
+        if (count($rows) !== count($predictions)) {
+            throw new InvalidArgumentException('Action holdout requires one prediction per finalized row.');
+        }
         $cases = [];
         foreach ($rows as $i => $row) {
             $cases[] = ['row' => $row, 'fold' => 1, 'result' => $predictions[$i]];

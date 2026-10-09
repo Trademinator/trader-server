@@ -202,6 +202,9 @@ final class MarketIntelligence
         $currentCandle = $tickers[(int) $current->microtimestamp];
         $context['reference_price'] = (string) $currentCandle['close'];
         $context['reference_price_source'] = 'closed_candle_close';
+        // This path consumes persisted completed-candle features, NOT a live
+        // soft-closed ticker. Do not imply otherwise in the Client API.
+        $context['prediction_input_basis'] = 'completed_candle';
 
         $prepared = $this->predictionVector($model, $current->payload, $history, $current->available_at_ms, $context);
         $preparedError = $prepared['error'] ?? null;

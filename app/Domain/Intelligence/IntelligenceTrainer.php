@@ -318,6 +318,7 @@ final class IntelligenceTrainer
                         'selection' => $action['selection'],
                         'holdout' => $action['holdout'],
                         'samples' => $action['samples'],
+                        'validation_basis' => $action['validation_basis'] ?? 'finalized_historical_action_labels',
                     ],
                     'human' => $humanAction['bundle'],
                     'validation_target' => 'buy_hold_sell_action_labels',
@@ -485,11 +486,16 @@ final class IntelligenceTrainer
             if (! in_array($row['action_label'] ?? null, ['buy', 'hodl', 'sell'], true)) {
                 continue;
             }
+            // Historical reference labels must already be finalized. In real snapshots
+            // Action labels have their own availability time; older fixture datasets
+            // may carry only the common label_available_at_ms timestamp.
+            $available = $row['action_label_available_at_ms'] ?? $row['label_available_at_ms'] ?? null;
+            if (! is_int($available) || $available <= $row['decision_at_ms']) {
+                continue;
+            }
             $label = $row['action_label'];
             $row['label'] = $label;
-            if (is_int($row['action_label_available_at_ms'] ?? null)) {
-                $row['label_available_at_ms'] = $row['action_label_available_at_ms'];
-            }
+            $row['label_available_at_ms'] = $available;
             $row['semantic_bottom'] = $label === 'buy';
             $row['semantic_top'] = $label === 'sell';
             $actionRows[] = $row;
@@ -519,7 +525,8 @@ final class IntelligenceTrainer
             : (($holdout['eligible'] ?? false) ? 'validated' : 'holdout_failed');
 
         return compact('selection', 'holdout', 'reason')
-            + ['training_rows' => count($training), 'holdout_rows' => count($test), 'samples' => $count];
+            + ['training_rows' => count($training), 'holdout_rows' => count($test), 'samples' => $count,
+                'validation_basis' => 'finalized_historical_action_labels'];
     }
 
     private function emptyTraining(string $reason, int $trainingRows = 0, int $holdoutRows = 0, int $samples = 0): array

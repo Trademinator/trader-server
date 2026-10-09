@@ -41,14 +41,18 @@ final class ClientMarketController extends Controller
             'period' => $item->market->feed?->selected_period,
             'settings' => $this->settingsPayload($item->clientSetting),
             'signal' => $item->market->latestSignal === null ? null : [
-                'id' => $item->market->latestSignal->getKey(), 'action' => $item->market->latestSignal->action,
+                'id' => $item->market->latestSignal->getKey(),
+                'action' => SignalSemantics::clientAction($item->market->latestSignal->action, $item->market->latestSignal->reason),
                 'action_meaning' => $item->market->latestSignal->payload['action_meaning']
                     ?? SignalSemantics::actionMeaning($item->market->latestSignal->action, $item->market->latestSignal->reason,
                         $item->market->latestSignal->payload['scoring'] ?? null),
-                'reason' => $item->market->latestSignal->reason, 'recorded_at_ms' => $item->market->latestSignal->recorded_at_ms,
+                'reason' => $item->market->latestSignal->reason,
+                'evidence_status' => SignalSemantics::evidenceStatus($item->market->latestSignal->reason),
+                'recorded_at_ms' => $item->market->latestSignal->recorded_at_ms,
                 'decision_at_ms' => $item->market->latestSignal->decision_at_ms,
                 'reference_price' => $item->market->latestSignal->payload['reference_price'] ?? null,
                 'reference_price_source' => $item->market->latestSignal->payload['reference_price_source'] ?? null,
+                'prediction_input_basis' => $item->market->latestSignal->payload['prediction_input_basis'] ?? null,
                 'scoring' => $item->market->latestSignal->payload['scoring'] ?? null,
             ],
         ]]);
