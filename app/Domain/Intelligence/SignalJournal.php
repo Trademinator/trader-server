@@ -61,15 +61,31 @@ final class SignalJournal
         }
     }
 
+    /** A validated Action-only fallback still has a decision; it is not full Outcome confirmation. */
+    public static function hasDecision(string $action, string $reason): bool
+    {
+        return $reason === 'supported'
+            || ($reason === 'degraded_action_only' && in_array($action, ['hodl', 'sell'], true));
+    }
+
     public static function label(string $action, string $reason): string
     {
-        return $reason === 'supported' ? ($action === 'hodl' ? 'HOLD' : strtoupper($action)) : 'Waiting for evidence';
+        if (! self::hasDecision($action, $reason)) {
+            return 'Waiting for evidence';
+        }
+
+        $label = $action === 'hodl' ? 'HOLD' : strtoupper($action);
+
+        return $reason === 'degraded_action_only' ? $label.' (Action-only)' : $label;
     }
 
     public static function explain(string $reason): string
     {
         return match ($reason) {
             'supported' => 'Similar historical market states support this signal.',
+            'degraded_action_only' => 'Only Action KNN has sufficient evidence for this candle; Outcome KNN cannot confirm it. Supported HOLD/SELL can be retained; a proposed BUY becomes defensive HOLD with zero confidence.',
+            'degraded_outcome_only' => 'Outcome KNN has evidence, but Action KNN cannot confirm a trade. The Server returns defensive HOLD with zero confidence.',
+            'knn_abstention' => 'Neither Outcome nor Action KNN has enough supported evidence for a decision.',
             'no_model' => 'Training has not completed for this market yet.',
             'period_pending' => 'The collector is still selecting a reliable candle period.',
             'awaiting_recording' => 'A trained model is available, but no current recorded signal exists. Check the scheduled signal recorder and intelligence queue.',

@@ -2,6 +2,7 @@
 
 use App\Domain\Intelligence\IntelligenceTrainer;
 use App\Domain\Intelligence\ModelStore;
+use App\Domain\Research\FeatureSchema;
 use App\Models\MarketFeed;
 use App\Models\MarketSignal;
 use App\Models\MarketSubscription;
@@ -27,11 +28,13 @@ function dashboardModel(MarketSubscription $subscription, array $overrides = [])
     $model = (string) Str::uuid();
     $key = ModelStore::marketKey($market->exchange->class, $market->symbol, $market->feed->selected_period);
     DB::table('research_datasets')->insert(['dataset_id' => $dataset, 'manifest' => '{}', 'created_at' => now()]);
+    $keys = FeatureSchema::keys('core');
     DB::table('intelligence_models')->insert(['model_id' => $model, 'dataset_id' => $dataset, 'market_key' => $key,
         'status' => 'ready', 'sha256' => str_repeat('0', 64), 'created_at' => now(),
         'report' => json_encode(array_replace(['model_id' => $model, 'dataset_id' => $dataset, 'status' => 'ready',
             'validation_version' => IntelligenceTrainer::VERSION, 'trained_as_of_ms' => now()->getTimestampMs(),
-            'outcome' => ['status' => 'ready', 'reason' => 'validated'],
+            'keys' => $keys, 'training_data' => ['schema' => 'core'],
+            'outcome' => ['status' => 'ready', 'reason' => 'validated', 'schema' => 'core'],
             'action' => ['status' => 'abstaining', 'reason' => 'action_model_unavailable']], $overrides))]);
     DB::table('intelligence_heads')->insert(['market_key' => $key, 'model_id' => $model, 'updated_at' => now()]);
 }

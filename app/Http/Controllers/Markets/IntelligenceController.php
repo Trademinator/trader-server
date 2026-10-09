@@ -42,11 +42,19 @@ final class IntelligenceController extends Controller
                 $recorded = $item->market->latestSignal;
                 $nowMs = now()->getTimestampMs();
                 $expiresAt = $recorded === null ? null : $freshness->expiresAt($recorded->decision_at_ms, $period);
+                $needsFreshDecision = $recorded !== null
+                    && in_array($recorded->reason, ['supported', 'degraded_action_only'], true);
+                $decisionModelReady = $recorded !== null && match ($recorded->reason) {
+                    'supported' => $modelReady,
+                    'degraded_action_only' => ModelStore::knnReadiness($report)['action']['ready'] ?? false,
+                    default => false,
+                };
                 if ($recorded !== null && $recorded->period === $period
                     && $recorded->model_id === ($report['model_id'] ?? null)
-                    && ($recorded->reason !== 'supported'
-                        || ($modelReady && $recorded->decision_at_ms !== null
-                            && $recorded->decision_at_ms <= $nowMs && $expiresAt !== null && $nowMs < $expiresAt))) {
+                    && (! $needsFreshDecision
+                        || ($decisionModelReady && SignalJournal::hasDecision($recorded->action, $recorded->reason)
+                            && $recorded->decision_at_ms !== null && $recorded->decision_at_ms <= $nowMs
+                            && $expiresAt !== null && $nowMs < $expiresAt))) {
                     $signal = $recorded->payload;
                     $signal['patterns'] ??= [];
                 }

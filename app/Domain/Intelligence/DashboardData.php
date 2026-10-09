@@ -21,7 +21,8 @@ use Illuminate\Support\Facades\DB;
 final class DashboardData
 {
     public function __construct(private MarketChart $charts, private IntelligenceReadiness $readiness,
-        private CandleTimeframe $timeframe, private MarketDiscovery $discovery, private CoinGeckoReadiness $contextReadiness) {}
+        private CandleTimeframe $timeframe, private MarketDiscovery $discovery, private CoinGeckoReadiness $contextReadiness,
+        private SignalFreshness $freshness) {}
 
     public function subscriptions(User $user): Builder
     {
@@ -184,18 +185,22 @@ final class DashboardData
             || $signal->model_id !== ($report['model_id'] ?? null)) {
             return false;
         }
-        if ($signal->reason !== 'supported') {
+        if (! in_array($signal->reason, ['supported', 'degraded_action_only'], true)) {
             return true;
         }
-        if (! $this->ready($report) || $signal->decision_at_ms === null) {
+        if (! SignalJournal::hasDecision($signal->action, $signal->reason)) {
             return false;
         }
-        $expires = $signal->decision_at_ms;
-        for ($i = 0; $i < config('intelligence.max_signal_age_periods'); $i++) {
-            $expires = $this->timeframe->next($expires, $signal->period);
+        $ready = $signal->reason === 'supported'
+            ? $this->ready($report)
+            : (ModelStore::knnReadiness($report)['action']['ready'] ?? false);
+        if (! $ready || $signal->decision_at_ms === null) {
+            return false;
         }
+        $nowMs = now()->getTimestampMs();
+        $expires = $this->freshness->expiresAt($signal->decision_at_ms, $signal->period);
 
-        return now()->getTimestampMs() < $expires;
+        return $signal->decision_at_ms <= $nowMs && $expires !== null && $nowMs < $expires;
     }
 
     private function sparkline(array $chart): ?string

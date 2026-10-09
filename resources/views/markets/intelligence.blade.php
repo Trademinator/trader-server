@@ -16,7 +16,7 @@
             <h2>Latest recorded signal</h2>
             <p class="guide-notice">{{ $explanation }}</p>
             <div class="review-metrics">
-                <div class="review-metric">Action<strong>{{ $signal['reason'] === 'supported' ? ($signal['action'] === 'hodl' ? 'HOLD' : strtoupper($signal['action'])) : 'WAITING' }}</strong></div>
+                <div class="review-metric">Action<strong>{{ \App\Domain\Intelligence\SignalJournal::hasDecision($signal['action'], $signal['reason']) ? \App\Domain\Intelligence\SignalJournal::label($signal['action'], $signal['reason']) : 'WAITING' }}</strong></div>
                 <div class="review-metric">Confidence<strong>{{ \App\Helpers\Decimal::format($signal['confidence'] * 100, 1) }}%</strong></div>
                 <div class="review-metric">Market state<strong>{{ ucwords(str_replace('_', ' ', $signal['regime'] ?? 'neutral')) }}</strong></div>
                 <div class="review-metric">Effective neighbors<strong>{{ \App\Helpers\Decimal::format($signal['effective_neighbors'], 1) }}</strong></div>
@@ -24,8 +24,11 @@
             @if (isset($signal['decision_at_ms']))
                 <p>Closed-candle decision time: <x-display-time :value="$signal['decision_at_ms']" unit="milliseconds" /></p>
             @endif
-            <p class="guide-help">Signals are calculated by background workers. This page shows a recorded observation only for the selected period and current model; expired directional observations are not reused.</p>
-            <p class="guide-help">Confidence describes the supported Outcome and Action KNN evidence; it is not a calibrated probability of profit. Market state is the Outcome KNN class over the market-derived horizon. The client still applies trading fees, balances and execution rules.</p>
+            <p class="guide-help">Signals are calculated by background workers. This page shows a recorded observation only for the selected period and current model; expired directional or Action-only observations are not reused. The CLI computes a new prediction and can differ until the next recorder run.</p>
+            @if ($signal['reason'] === 'degraded_action_only')
+                <p class="guide-notice">Action-only fallback: only Action KNN supplied a supported prediction. Outcome KNN did not confirm it. A proposed BUY is blocked and downgraded to defensive HOLD with zero confidence; this is not full Outcome + Action scoring.</p>
+            @endif
+            <p class="guide-help">Confidence describes the supported evidence (Action KNN alone in Action-only mode); it is not a calibrated probability of profit. Market state is the supported Outcome class, when available. The Client still applies trading fees, balances and execution rules.</p>
             @if ($progress['evidence_evaluated'])
                 <x-intelligence-progress label="Effective neighbors required" :value="$signal['effective_neighbors']" :target="$progress['settings']['min_effective_neighbors']" :decimals="1" />
                 <x-intelligence-progress label="Final KNN confidence required" :value="$signal['confidence'] * 100" :target="$progress['settings']['min_confidence'] * 100" :decimals="1" suffix="%" />
@@ -38,27 +41,31 @@
             <section class="guide-panel"><h2>Outcome + Action scoring</h2>
                 <x-knn-readiness :report="$report" :coingecko="$coingecko" />
                 <p><strong>Outcome KNN</strong> predicts SUPER BEAR, BEAR, NEUTRAL, BULL or SUPER BULL over the market-derived horizon. <strong>Action KNN</strong> predicts BUY, HOLD or SELL. Human Training adjusts each KNN independently and never replaces its algorithmic training.</p>
+                <p class="guide-help">Readiness badges describe training-time model validation, not how many neighbours support this particular candle. Current-candle support and neighbours are shown separately below.</p>
                 <div class="review-table-wrap"><table>
-                    <thead><tr><th scope="col">KNN</th><th scope="col">Prediction</th><th scope="col">Confidence</th><th scope="col">Algorithmic weight</th><th scope="col">Human weight</th></tr></thead>
+                    <thead><tr><th scope="col">KNN</th><th scope="col">Prediction</th><th scope="col">Reason</th><th scope="col">Neighbors</th><th scope="col">Effective neighbors</th><th scope="col">Confidence</th><th scope="col">Algorithmic weight</th><th scope="col">Human weight</th></tr></thead>
                     <tbody>
                         @foreach(['outcome_knn' => 'Outcome KNN', 'action_knn' => 'Action KNN'] as $key => $label)
                             @php $component = $signal[$key] ?? null; @endphp
                             <tr>
                                 <th scope="row">{{ $label }}</th>
                                 @if (is_array($component))
-                                    <td>{{ strtoupper(str_replace('_', ' ', $component[$key === 'outcome_knn' ? 'outcome' : 'action'])) }}</td>
-                                    <td>{{ \App\Helpers\Decimal::format($component['confidence'] * 100, 1) }}%</td>
+                                    <td>{{ ($component['reason'] ?? null) === 'supported' ? strtoupper(str_replace('_', ' ', $component[$key === 'outcome_knn' ? 'outcome' : 'action'])) : 'Unavailable' }}</td>
+                                    <td>{{ ucwords(str_replace('_', ' ', $component['reason'] ?? 'unknown')) }}</td>
+                                    <td>{{ \App\Helpers\Decimal::format($component['neighbors'] ?? 0, 0) }}</td>
+                                    <td>{{ \App\Helpers\Decimal::format($component['effective_neighbors'] ?? 0, 1) }}</td>
+                                    <td>{{ \App\Helpers\Decimal::format(($component['confidence'] ?? 0) * 100, 1) }}%</td>
                                     <td>{{ \App\Helpers\Decimal::format(($component['sources']['effective_weights']['algorithmic'] ?? 0) * 100, 1) }}%</td>
                                     <td>{{ \App\Helpers\Decimal::format(($component['sources']['effective_weights']['human'] ?? 0) * 100, 1) }}%</td>
                                 @else
-                                    <td>Not recorded</td><td>—</td><td>—</td><td>—</td>
+                                    <td>Not recorded</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
                                 @endif
                             </tr>
                         @endforeach
                     </tbody>
                 </table></div>
                 @if(isset($signal['outcome_knn'], $signal['action_knn']))
-                    <p>Decision matrix result: <strong>{{ strtoupper($signal['action'] === 'hodl' ? 'hold' : $signal['action']) }}</strong>.</p>
+                    <p>{{ ($signal['scoring']['decision_mode'] ?? null) === 'degraded_action_only' ? 'Action-only fallback result' : 'Decision matrix result' }}: <strong>{{ strtoupper($signal['action'] === 'hodl' ? 'hold' : $signal['action']) }}</strong>.</p>
                 @else
                     <p class="guide-help">No current recorded Outcome/Action scoring is available. These are unavailable values, not zero-weight evidence.</p>
                 @endif
@@ -67,7 +74,7 @@
                         (requested: {{ $report['outcome']['schema_selection']['requested_schema'] }}).
                         {{ ucwords(str_replace('_', ' ', $report['outcome']['schema_selection']['reason'])) }}.</p>
                 @endif
-                <p class="guide-help">Human influence follows W_H = min(60%, 60% × √(N_H / 750)). An unavailable human source contributes zero. Outcome KNN never creates an action by itself; the final SELL/HOLD/BUY comes from the fixed 3×5 decision matrix.</p>
+                <p class="guide-help">Human influence follows W_H = min(60%, 60% × √(N_H / 750)). An unavailable human source contributes zero. With both KNNs supported, the 3×5 decision matrix determines the action. If Outcome is unavailable, the Action-only fallback may retain HOLD/SELL but never BUY.</p>
                 @can('train-intelligence')<a href="{{ route('human-training.index', ['exchange' => $item->market->exchange->class, 'symbol' => $item->market->symbol, 'period' => $period]) }}">Open Human Training</a>@endcan
             </section>
         @endif
