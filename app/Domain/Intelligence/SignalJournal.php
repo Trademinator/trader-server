@@ -2,7 +2,9 @@
 
 namespace App\Domain\Intelligence;
 
+use App\Domain\Features\FeatureEngine;
 use App\Models\Market;
+use App\Models\MarketFeature;
 use App\Models\MarketSignal;
 use Illuminate\Support\Facades\Cache;
 use Throwable;
@@ -11,24 +13,72 @@ final class SignalJournal
 {
     public function __construct(private MarketIntelligence $intelligence) {}
 
-    public function record(Market $market): ?MarketSignal
+    /**
+     * Process at most a few new source candles per scheduled job, oldest first.
+     * The first observation starts at the newest completed feature: we never
+     * pretend to have made live decisions before the recorder was enabled.
+     */
+    public function recordPending(Market $market, int $limit = 6): void
+    {
+        $market->loadMissing('exchange', 'feed');
+        $period = $market->feed?->selected_period;
+        if ($period === null || ! $market->subscriptions()->where('active', true)->exists()) {
+            return;
+        }
+
+        $query = MarketFeature::query()
+            ->where('exchange', $market->exchange->class)->where('symbol', $market->symbol)
+            ->where('period', $period)->where('version', FeatureEngine::VERSION)
+            ->where('available_at_ms', '<=', now()->getTimestampMs());
+        $cursor = MarketSignal::query()->where('market_id', $market->getKey())
+            ->where('period', $period)->whereNotNull('decision_at_ms')->max('decision_at_ms');
+
+        if ($cursor === null) {
+            // No backfilled decisions for a market newly being followed/recorded.
+            $latest = (clone $query)->max('available_at_ms');
+            $this->record($market);
+
+            return;
+        }
+
+        $pending = (clone $query)->where('available_at_ms', '>', (int) $cursor)
+            ->orderBy('available_at_ms')->limit(max(1, min(12, $limit)))
+            ->pluck('available_at_ms')->all();
+        if ($pending === []) {
+            // Recheck the current candle if the model/reason changes, but dedupe repeats.
+            $this->record($market);
+
+            return;
+        }
+        foreach ($pending as $closedAt) {
+            if (! $market->subscriptions()->where('active', true)->exists()) {
+                break;
+            }
+            $this->record($market, (int) $closedAt);
+        }
+    }
+
+    public function record(Market $market, ?int $asOfMs = null): ?MarketSignal
     {
         $market->loadMissing('exchange', 'feed');
         $period = $market->feed?->selected_period;
         if ($period === null || ! $market->subscriptions()->where('active', true)->exists()) {
             return null;
         }
-        $lock = Cache::lock('trademinator:signal:'.$market->market_id, 180);
+        $lock = Cache::lock('trademinator:signal:'.$market->market_id, 950);
         if (! $lock->get()) {
             return null;
         }
         try {
             try {
-                $signal = $this->intelligence->predict($market->exchange->class, $market->symbol, $period);
+                $signal = $this->intelligence->predict($market->exchange->class, $market->symbol, $period, $asOfMs);
             } catch (Throwable $error) {
                 report($error);
                 $signal = [...WeightedKnn::abstain('model_unavailable'), 'patterns' => []];
             }
+            // Even abstentions are tied to the specific closed candle under review.
+            // A legacy no-feature observation retains its null source timestamp.
+            $signal['decision_at_ms'] ??= $asOfMs;
             $signal['explanation'] = self::explain($signal['reason']);
             $signal['execution_status'] = 'unknown';
             if (! $market->subscriptions()->where('active', true)->exists()) {
@@ -94,6 +144,7 @@ final class SignalJournal
             'stale_model' => 'The trained model is too old. A fresh training run is needed.',
             'stale_features' => 'Recent closed-candle features are not available.',
             'no_post_training_candle' => 'Waiting for a closed candle after the training cutoff.',
+            'model_not_published_at_close' => 'The currently published model was not yet available when this candle closed; no retrospective trading decision was fabricated.',
             'missing_features', 'missing_selected_features' => 'The model needs more complete feature history.',
             'source_feature_mismatch' => 'Stored candles and features do not match. Features need rebuilding.',
             'model_version_mismatch' => 'The model needs rebuilding with the current intelligence version.',

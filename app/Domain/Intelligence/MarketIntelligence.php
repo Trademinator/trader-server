@@ -147,6 +147,14 @@ final class MarketIntelligence
         if ($model === null) {
             return [...WeightedKnn::abstain('no_model'), ...$context];
         }
+        if ($asOfMs !== null && isset($model['created_at'])
+            && ($publishedAt = strtotime((string) $model['created_at'])) !== false
+            && $publishedAt * 1000 > $asOfMs) {
+            // An inference job may catch up after a new model is published.
+            // Never run that newer model as though it existed at an older candle close.
+            return [...WeightedKnn::abstain('model_not_published_at_close'),
+                ...$context, 'decision_at_ms' => $asOfMs];
+        }
         if (($model['validation_version'] ?? null) !== IntelligenceTrainer::VERSION
             || $model['feature_version'] !== FeatureEngine::VERSION || $model['normalization'] !== NormalizedVector::VERSION
             || $model['patterns']['version'] !== PatternCatalog::VERSION) {

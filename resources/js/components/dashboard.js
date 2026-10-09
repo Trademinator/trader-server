@@ -99,20 +99,43 @@ export function mountDashboardMarkets(root) {
     return dispose;
 }
 
-// Never draw a decision on an earlier candle than its actual recording time.
+// Attach observations to their actual source candles; recording time remains separate.
 export function signalMarkers(chart) {
+    const candles = new Set((chart.series ?? []).map(c => Number(c.time)));
+    return (chart.signals ?? []).flatMap(s => {
+        const time = Number(s.source_time);
+        if (!candles.has(time) || !['supported','degraded_action_only'].includes(s.reason) ||
+            !['buy','sell'].includes(s.action)) return [];
+        const buy = s.action === 'buy';
+        return [{ id:s.id, time, position:buy?'belowBar':'aboveBar',
+            color:buy?'#087b6b':'#c33e50', shape:buy?'arrowUp':'arrowDown', text:buy?'BUY':'SELL' }];
+    }).sort((a,b)=>a.time-b.time);
+}
+export function actionDecisionMarkers(chart) {
+    const candles = new Set((chart.series ?? []).map(c => Number(c.time)));
+    return (chart.signals ?? []).flatMap(s => {
+        const time = Number(s.source_time), buy = s.action_prediction === 'buy';
+        if (!candles.has(time) || s.action_reason !== 'supported' ||
+            !['buy','sell'].includes(s.action_prediction)) return [];
+        return [{ id:'action-'+s.id, time, position:buy?'belowBar':'aboveBar',
+            color:'#2563eb', shape:buy?'arrowUp':'arrowDown', text:buy?'A BUY':'A SELL' }];
+    }).sort((a,b)=>a.time-b.time);
+}
+// Observed movement, never a predicted numerical target price.
+export function outcomeSegments(chart) {
     const candles = chart.series ?? [];
-    return (chart.signals ?? []).flatMap(signal => {
-        const candle = candles.find(row => row.time * 1000 >= signal.recorded_at_ms);
-        if (!candle) return [];
-        const supported = signal.reason === 'supported';
-        const buy = supported && signal.action === 'buy';
-        const sell = supported && signal.action === 'sell';
-        return [{ time: candle.time, position: buy ? 'belowBar' : 'aboveBar',
-            color: buy ? '#087b6b' : sell ? '#c33e50' : '#64748b',
-            shape: buy ? 'arrowUp' : sell ? 'arrowDown' : supported ? 'circle' : 'square',
-            text: buy ? 'BUY' : sell ? 'SELL' : supported ? 'HOLD' : 'WAIT', id: signal.id }];
-    }).sort((a, b) => a.time - b.time);
+    const positions = new Map(candles.map((c,i)=>[Number(c.time),i]));
+    return (chart.signals ?? []).flatMap(s => {
+        if (s.outcome_reason !== 'supported' ||
+            !['bull','super_bull','bear','super_bear'].includes(s.outcome_prediction)) return [];
+        const start=Number(s.source_time), end=Number(s.horizon_end_time), h=Number(s.horizon_candles);
+        const a=positions.get(start), b=positions.get(end);
+        if (!Number.isInteger(h) || h<1 || a===undefined || b!==a+h) return [];
+        return [{ id:'outcome-'+s.id, points:[
+            {time:start,value:Number(candles[a].close)},
+            {time:end,value:Number(candles[b].close)}
+        ] }];
+    });
 }
 
 export function humanMarkers(chart) {
@@ -172,6 +195,8 @@ export async function mountDashboardChart(root) {
     const historyRetry = root.querySelector('[data-history-retry]');
     const showMarkers = root.querySelector('[data-markers]');
     const showHuman = root.querySelector('[data-human-training]');
+    const showAction = root.querySelector('[data-action-decisions]');
+    const showOutcome = root.querySelector('[data-outcome-decisions]');
     const showClient = root.querySelector('[data-client-activity]');
     const automatic = root.querySelector('[data-auto]');
     let data = JSON.parse(root.dataset.chart);
@@ -181,6 +206,7 @@ export async function mountDashboardChart(root) {
     data.has_newer ??= false;
 
     let chart, price, volume, markers, observer, timer, request, timeout, historyTimer, historyRequest, unsubscribeTime;
+    let chartLibrary, outcomeLines = [];
     let inspectedCandle, lastTimedStatus;
     let disposed = false, stopped = false, busy = false, historyBusy = false, historyFailed = false;
     let userInteracted = false, previousPeriod = null, lastVisibleRange = null, retryDirection = 'older';
@@ -205,10 +231,25 @@ export async function mountDashboardChart(root) {
         if (!markers) return;
         markers.setMarkers([
             ...(showMarkers?.checked ? signalMarkers(data) : []),
+            ...(showAction?.checked ? actionDecisionMarkers(data) : []),
             ...(showHuman?.checked ? humanMarkers(data) : []),
             ...(showClient?.checked ? clientMarkers(data, tickSize) : []),
         ].sort((a, b) => Number(a.time) - Number(b.time) || String(a.id).localeCompare(String(b.id))));
     };
+    const updateOutcomes = () => {
+        if (!chart || !price) return;
+        outcomeLines.forEach(series => chart.removeSeries(series));
+        outcomeLines = [];
+        if (!showOutcome?.checked) return;
+        for (const segment of outcomeSegments(data).slice(-120)) {
+            const line = chart.addSeries(chartLibrary.LineSeries, {color:'#2563eb',
+                lineWidth:2,priceLineVisible:false,lastValueVisible:false,
+                crosshairMarkerVisible:false});
+            line.setData(segment.points);
+            outcomeLines.push(line);
+        }
+    };
+    const updateOverlays = () => { updateMarkers(); updateOutcomes(); };
     const updateStatus = () => {
         const checked = data.checked_at_ms != null && Number.isFinite(Number(data.checked_at_ms))
             ? `Checked ${formatTimestamp(Number(data.checked_at_ms))}.`
@@ -223,7 +264,7 @@ export async function mountDashboardChart(root) {
         const range = chart.timeScale().getVisibleLogicalRange();
         price.setData(values.candles);
         volume.setData(values.volume);
-        updateMarkers();
+        updateOverlays();
 
         if (fit || previousPeriod !== data.period || range === null) {
             chart.timeScale().fitContent();
@@ -440,6 +481,8 @@ export async function mountDashboardChart(root) {
         earliestButton.removeEventListener('click', earliest);
         historyRetry?.removeEventListener('click', retryHistory);
         showMarkers.removeEventListener('change', updateMarkers);
+        showAction?.removeEventListener('change', updateMarkers);
+        showOutcome?.removeEventListener('change', updateOutcomes);
         showHuman?.removeEventListener('change', updateMarkers);
         showClient?.removeEventListener('change', updateMarkers);
         automatic.removeEventListener('change', schedule);
@@ -454,6 +497,7 @@ export async function mountDashboardChart(root) {
     try {
         const library = await import('lightweight-charts');
         if (disposed) return dispose;
+        chartLibrary = library;
         chart = library.createChart(canvas, { autoSize: true, ...theme() });
         price = chart.addSeries(library.CandlestickSeries, { upColor: '#159b83', downColor: '#d64a5e', borderVisible: false,
             wickUpColor: '#159b83', wickDownColor: '#d64a5e',
@@ -489,6 +533,8 @@ export async function mountDashboardChart(root) {
         earliestButton.addEventListener('click', earliest);
         historyRetry?.addEventListener('click', retryHistory);
         showMarkers.addEventListener('change', updateMarkers);
+        showAction?.addEventListener('change', updateMarkers);
+        showOutcome?.addEventListener('change', updateOutcomes);
         showHuman?.addEventListener('change', updateMarkers);
         showClient?.addEventListener('change', updateMarkers);
         automatic.addEventListener('change', schedule);

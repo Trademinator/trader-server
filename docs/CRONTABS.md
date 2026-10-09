@@ -41,7 +41,7 @@ Those two entries cover collection and M2 features. M4 training also requires th
 | `trademinator:refresh-market-discovery` | Hourly at minute 10, application timezone | Refresh optional, bounded CoinGecko discovery/context in the background; never subscribe or trade. |
 | `trademinator:prune-access-statistics` | Daily at 02:40, application timezone | Apply configured retention to access aggregates and daily visitor hashes. |
 | `trademinator:prune-portable-archives` | Daily at 04:40, application timezone | Delete expired multipart import/export staging files and database transfer metadata; permanent archives and hot candles are unaffected. |
-| `trademinator:dispatch-market-features` | Every five minutes | Queue M2 feature builds for subscribed markets with selected candle periods. |
+| `trademinator:dispatch-market-features` | Every minute | Queue idempotent M2 feature builds only for subscribed markets with unbuilt selected-period candles. |
 | `trademinator:collect-market-context` | Hourly | Resolve pending subscription-driven CoinGecko mappings and collect timestamped market context. |
 | `trademinator:dispatch-market-intelligence` | Monday at 04:00, application timezone | Queue one intelligence build per subscribed market and selected period; each build auto-labels the full model-age window once, feeds Action KNN, derives d/H, then trains Outcome KNN when at least 30 valid d observations exist. |
 | `trademinator:dispatch-lead-lag` | Daily at 03:45, application timezone | Reevaluate lead/lag and downstream KNN/pattern intelligence for overlapping shared markets. |
@@ -198,3 +198,26 @@ The Laravel scheduler runs `trademinator:archive-eligible-tickers` daily at **04
 At **04:40** daily, `trademinator:prune-portable-archives` runs as a background Artisan command using `onOneServer()` and `withoutOverlapping(60)`. It removes expired temporary multipart transfer files and associated database metadata based on `ARCHIVE_PORTABLE_RETENTION_HOURS` (default 24); it does not delete permanent archive shards or hot ticker rows. This cleanup does not depend on an `archive` queue worker. You can run it manually using `php artisan trademinator:prune-portable-archives`.
 
 No daemon is required. Keep the existing once-per-minute `schedule:run` cron and ensure `ARCHIVE_PATH` points to durable shared storage when multiple application nodes must read the same cold-history tier.
+
+## Candle-level Server decision charts (October 2026)
+
+No new queue or system cron is introduced. The existing \`features\` queue now checks
+for new candles every minute; the existing \`intelligence\` queue continues to drain
+\`trademinator:dispatch-market-signals\` jobs every minute. Each recorder processes
+up to six new completed source candles per run, records the original model and
+raw Action/Outcome KNN verdicts, and never backdates its recording time.
+If the model was not yet published at a source candle's close, the job records
+an abstention rather than inventing a historical trading action. Signals remain
+immutable. Supported repeated BUY/SELL signals are stored per candle even when
+\`is_change=false\`; \`is_change\` is only for the notification timeline.
+
+Worker settings: \`RecordMarketSignal\` now allows 900 seconds with a 1200-second
+unique-lock safety period. Keep the existing \`intelligence\` worker's timeout
+>= 900s and the existing \`retry_after\` >= 2400s. The shared Redis/Laravel cache
+keeps exchange OHLCV windows for 45 seconds when recent or 10 minutes when historical.
+User-specific Human Training labels and Client activity are never cached in that
+shared key. No chart endpoint performs live inference.
+
+Deploy: \`php artisan migrate --force\`, rebuild Vite assets with
+\`npm run build\`, and verify \`php artisan schedule:list\`, the \`features\`
+worker and the \`intelligence\` worker.

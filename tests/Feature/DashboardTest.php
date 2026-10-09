@@ -142,6 +142,6 @@ it('paginates dashboard candles in both directions within the captured browsing 
 
     $this->get(route('dashboard', ['subscription' => $sub->getKey()]))->assertOk()
         ->assertSee('Earliest data')->assertSee('Show Server decisions')
-        ->assertSee('Show my Action Training labels')->assertSee('>Train<', false)
+        ->assertSee('Show Action KNN decisions')->assertSee('Show Outcome KNN decisions')->assertSee('>Train<', false)
         ->assertSee('Full intelligence report');
 });

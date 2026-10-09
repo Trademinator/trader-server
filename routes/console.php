@@ -31,7 +31,7 @@ Schedule::command('trademinator:collect-market-events')
     ->everyFiveMinutes()->onOneServer()->withoutOverlapping(15)->runInBackground();
 
 Schedule::command('trademinator:dispatch-market-features')
-    ->everyFiveMinutes()->onOneServer()->withoutOverlapping(5);
+    ->everyMinute()->onOneServer()->withoutOverlapping(5);
 
 Schedule::command('trademinator:dispatch-market-signals')
     ->everyMinute()->onOneServer()->withoutOverlapping(5);

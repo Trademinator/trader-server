@@ -221,12 +221,12 @@
                     <a class="review-control candle-step" data-step-previous
                         href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['earliest_window_decision_at_ms']]) }}"
                         aria-label="Jump to earliest available date" title="Jump to earliest available date">&lt;&lt;</a>
-                    <x-market-candlestick class="candle-chart-stage"
+                    <x-candle-training-chart class="candle-chart-stage"
                         canvas-class="review-chart"
                         aria-label="Historical candlesticks with human training markers and A/B measurement selections"
-                        :show-status="false" :show-legend="false">
+                        >
                         <div class="candle-measure-tooltip" data-measure-tooltip hidden role="tooltip"></div>
-                    </x-market-candlestick>
+                    </x-candle-training-chart>
                     <a class="review-control candle-step" data-step-next
                         href="{{ route('human-training.candles.show', ['dataset' => $state['manifest']['dataset_id'], 'decision_at_ms' => $state['latest_decision_at_ms']]) }}"
                         aria-label="Jump to latest available date" title="Jump to latest available date">&gt;&gt;</a>

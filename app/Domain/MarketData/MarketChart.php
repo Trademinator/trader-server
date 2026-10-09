@@ -5,6 +5,7 @@ namespace App\Domain\MarketData;
 use App\Models\Market;
 use App\Models\MarketSignal;
 use App\Repositories\TickerRepository;
+use Illuminate\Support\Facades\Cache;
 
 final class MarketChart
 {
@@ -55,13 +56,11 @@ final class MarketChart
             $data['stale'] = $now >= $staleAt;
         }
         if ($data['series'] !== [] && $limit > 60) {
-            $data['signals'] = MarketSignal::query()->where('market_id', $market->market_id)->where('period', $period)
-                ->where('is_change', true)->where('recorded_at_ms', '>=', $data['series'][0]['time'] * 1000)
-                ->where('recorded_at_ms', '<=', $now)->orderByDesc('recorded_at_ms')->orderByDesc('market_signal_id')
-                ->limit(200)->get(['market_signal_id', 'recorded_at_ms', 'decision_at_ms', 'action', 'reason'])->reverse()->map(fn (MarketSignal $signal): array => [
-                    'id' => $signal->getKey(), 'recorded_at_ms' => $signal->recorded_at_ms,
-                    'decision_at_ms' => $signal->decision_at_ms, 'action' => $signal->action, 'reason' => $signal->reason,
-                ])->values()->all();
+            $firstOpen = $data['series'][0]['time'] * 1000;
+            $lastOpen = $data['series'][array_key_last($data['series'])]['time'] * 1000;
+            $data['signals'] = $this->signals($market, $period,
+                $this->timeframe->next($firstOpen, $period),
+                $this->timeframe->next($lastOpen, $period), 900);
         }
 
         return $data;
@@ -116,17 +115,58 @@ final class MarketChart
 
         if ($data['series'] !== []) {
             $from = $data['series'][0]['time'] * 1000;
-            $to = $this->timeframe->next($data['series'][array_key_last($data['series'])]['time'] * 1000, $period);
-            $data['signals'] = MarketSignal::query()->where('market_id', $market->market_id)->where('period', $period)
-                ->where('is_change', true)->where('recorded_at_ms', '>=', $from)->where('recorded_at_ms', '<=', min($to, $untilMs))
-                ->orderBy('recorded_at_ms')->orderBy('market_signal_id')->limit(200)
-                ->get(['market_signal_id', 'recorded_at_ms', 'decision_at_ms', 'action', 'reason'])->map(fn (MarketSignal $signal): array => [
-                    'id' => $signal->getKey(), 'recorded_at_ms' => $signal->recorded_at_ms,
-                    'decision_at_ms' => $signal->decision_at_ms, 'action' => $signal->action, 'reason' => $signal->reason,
-                ])->values()->all();
+            $data['signals'] = $this->signals($market, $period,
+                $this->timeframe->next($from, $period),
+                min($this->timeframe->next($data['series'][array_key_last($data['series'])]['time'] * 1000, $period), $untilMs),
+                900);
         }
 
         return $data;
+    }
+
+    /**
+     * The historical candle itself, not a transient UI state, is the source
+     * of truth. Only select JSON metadata needed by the chart leaves the Server.
+     */
+    private function signals(Market $market, string $period, int $fromCloseMs, int $toCloseMs, int $limit): array
+    {
+        if ($toCloseMs < $fromCloseMs) {
+            return [];
+        }
+
+        return MarketSignal::query()->where('market_id', $market->market_id)
+            ->where('period', $period)->whereBetween('decision_at_ms', [$fromCloseMs, $toCloseMs])
+            ->where('recorded_at_ms', '<=', now()->getTimestampMs())
+            ->whereIn('reason', ['supported', 'degraded_action_only', 'degraded_outcome_only'])
+            ->orderBy('decision_at_ms')->orderBy('recorded_at_ms')->orderBy('market_signal_id')
+            ->limit($limit)->get(['market_signal_id', 'recorded_at_ms', 'decision_at_ms',
+                'action', 'reason', 'payload'])
+            ->map(function (MarketSignal $signal) use ($period): array {
+                $payload = $signal->payload ?? [];
+                $action = $payload['action_knn'] ?? $payload['scoring']['action'] ?? [];
+                // Exclude optional CoinGecko fusion: this overlay is specifically Outcome KNN.
+                $outcome = $payload['scoring']['outcome_core'] ?? $payload['outcome_knn'] ?? [];
+                $sourceOpen = $this->timeframe->previous((int) $signal->decision_at_ms, $period);
+                $horizon = max(0, min(512, (int) ($payload['horizon_candles'] ?? 0)));
+                $endOpen = $sourceOpen;
+                for ($i = 0; $i < $horizon; $i++) {
+                    $endOpen = $this->timeframe->next($endOpen, $period);
+                }
+
+                return [
+                    'id' => $signal->getKey(),
+                    'recorded_at_ms' => $signal->recorded_at_ms,
+                    'decision_at_ms' => $signal->decision_at_ms,
+                    'action' => $signal->action, 'reason' => $signal->reason,
+                    'source_time' => intdiv($sourceOpen, 1000),
+                    'horizon_candles' => $horizon,
+                    'horizon_end_time' => $horizon ? intdiv($endOpen, 1000) : null,
+                    'action_prediction' => $action['action'] ?? null,
+                    'action_reason' => $action['reason'] ?? null,
+                    'outcome_prediction' => $outcome['outcome'] ?? null,
+                    'outcome_reason' => $outcome['reason'] ?? null,
+                ];
+            })->values()->all();
     }
 
     /** @return array<int, array<string, mixed>> */
@@ -136,21 +176,28 @@ final class MarketChart
             return [];
         }
 
-        $wanted = array_fill_keys($timestamps, true);
-        $rows = [];
-        foreach ($this->tickers->streamHistory(
-            $market->exchange->class,
-            $market->symbol,
-            $period,
-            min($timestamps),
-            max($timestamps)
-        ) as $timestamp => $payload) {
-            if (isset($wanted[$timestamp])) {
-                $rows[$timestamp] = $payload;
-            }
-        }
+        // Shared market OHLCV, never user-specific training labels or Client reports.
+        // Recent candles get a short TTL so exchange repairs surface promptly.
+        $key = 'trademinator:chart:ohlcv:v1:'.hash('sha256', json_encode([
+            $market->market_id, $market->exchange->class, $market->symbol,
+            $period, $timestamps,
+        ], JSON_THROW_ON_ERROR));
+        $ttl = max($timestamps) < now()->getTimestampMs() - 86_400_000 ? 600 : 45;
 
-        return $rows;
+        return Cache::remember($key, $ttl, function () use ($market, $period, $timestamps): array {
+            $wanted = array_fill_keys($timestamps, true);
+            $rows = [];
+            foreach ($this->tickers->streamHistory(
+                $market->exchange->class, $market->symbol, $period,
+                min($timestamps), max($timestamps)
+            ) as $timestamp => $payload) {
+                if (isset($wanted[$timestamp])) {
+                    $rows[$timestamp] = $payload;
+                }
+            }
+
+            return $rows;
+        });
     }
 
     private function valid(int $time, array $raw): bool

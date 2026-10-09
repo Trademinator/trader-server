@@ -12,15 +12,19 @@
     'humanTraining' => false,
     'clientActivity' => false,
     'autoRefresh' => false,
+    'actionDecisions' => false,
+    'outcomeDecisions' => false,
 ])
 
 <div {{ $attributes }}>
-    @if ($refresh || $fit || $earliest || $serverSignals || $humanTraining || $clientActivity || $autoRefresh)
+    @if ($refresh || $fit || $earliest || $serverSignals || $humanTraining || $clientActivity || $autoRefresh || $actionDecisions || $outcomeDecisions)
         <div class="flex flex-wrap items-center gap-4 my-3">
             @if ($refresh)<button type="button" class="dashboard-button" data-refresh>Refresh chart</button>@endif
             @if ($fit)<button type="button" class="dashboard-button" data-fit>Fit candles</button>@endif
             @if ($earliest)<button type="button" class="dashboard-button" data-earliest>Earliest data</button>@endif
             @if ($serverSignals)<label><input type="checkbox" data-markers checked> Show Server decisions</label>@endif
+            @if ($actionDecisions)<label><input type="checkbox" data-action-decisions> Show Action KNN decisions</label>@endif
+            @if ($outcomeDecisions)<label><input type="checkbox" data-outcome-decisions> Show Outcome KNN decisions</label>@endif
             @if ($humanTraining)<label><input type="checkbox" data-human-training> Show my Action Training labels</label>@endif
             @if ($clientActivity)<label><input type="checkbox" data-client-activity checked> Show Client activity</label>@endif
             @if ($autoRefresh)<label><input type="checkbox" data-auto checked> Refresh every minute</label>@endif

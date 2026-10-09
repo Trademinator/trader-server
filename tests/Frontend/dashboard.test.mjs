@@ -1,27 +1,39 @@
 import { chartTimeOptions, formatTimestamp, subscribeTimeDisplay, configureTimeDisplay, setTimeMode } from '../../resources/js/components/time-display.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { humanMarkers, signalMarkers } from '../../resources/js/components/dashboard.js';
+import { humanMarkers, signalMarkers, actionDecisionMarkers, outcomeSegments } from '../../resources/js/components/dashboard.js';
 import { historyPanDirection, mergeCandleHistory } from '../../resources/js/components/candlestick-history.js';
 import { chartData, formatPrice } from '../../resources/js/components/market-review-chart.js';
 
 const series = [60, 120, 240].map(time => ({ time, open: 100, high: 103, low: 98, close: 102, volume: 50 }));
 
-test('places observations no earlier than recording time, keeps gaps and distinguishes HOLD from waiting', () => {
+test('shows directional decisions on source candle, hides HOLD and abstention', () => {
     const markers = signalMarkers({ series, signals: [
-        { id: 'buy', action: 'buy', reason: 'supported', decision_at_ms: 60000, recorded_at_ms: 61000 },
-        { id: 'sell', action: 'sell', reason: 'supported', recorded_at_ms: 150000 },
-        { id: 'hold', action: 'hodl', reason: 'supported', recorded_at_ms: 120000 },
-        { id: 'wait', action: 'hodl', reason: 'weak_consensus', recorded_at_ms: 240000 },
-        { id: 'future', action: 'buy', reason: 'supported', recorded_at_ms: 241000 },
+        { id:'buy',action:'buy',reason:'supported',source_time:60,recorded_at_ms:200000 },
+        { id:'sell',action:'sell',reason:'degraded_action_only',source_time:120 },
+        { id:'hold',action:'hodl',reason:'supported',source_time:240 },
+        { id:'wait',action:'hodl',reason:'knn_abstention',source_time:240 },
     ] });
-    assert.deepEqual(markers.map(({ id, time, text, shape }) => ({ id, time, text, shape })), [
-        { id: 'buy', time: 120, text: 'BUY', shape: 'arrowUp' },
-        { id: 'hold', time: 120, text: 'HOLD', shape: 'circle' },
-        { id: 'sell', time: 240, text: 'SELL', shape: 'arrowDown' },
-        { id: 'wait', time: 240, text: 'WAIT', shape: 'square' },
+    assert.deepEqual(markers.map(({id,time,text})=>({id,time,text})),[
+        {id:'buy',time:60,text:'BUY'}, {id:'sell',time:120,text:'SELL'}
     ]);
-    assert.deepEqual(signalMarkers({ series: [], signals: [{ recorded_at_ms: 60000 }] }), []);
+});
+test('optional Action KNN overlay only shows supported blue BUY/SELL markers', () => {
+    const marks = actionDecisionMarkers({series,signals:[
+        {id:'a',source_time:60,action_prediction:'buy',action_reason:'supported'},
+        {id:'b',source_time:120,action_prediction:'sell',action_reason:'supported'},
+        {id:'c',source_time:240,action_prediction:'buy',action_reason:'no_eligible_k'},
+    ]});
+    assert.deepEqual(marks.map(m=>m.text),['A BUY','A SELL']);
+    assert.ok(marks.every(m=>m.color==='#2563eb'));
+});
+test('Outcome segments use observed closes only after H candles exist', () => {
+    const history=[60,120,180,240].map((time,i)=>({time,close:100+i}));
+    const signals=[{id:'first',source_time:60,horizon_end_time:180,horizon_candles:2,
+        outcome_prediction:'bull',outcome_reason:'supported'}];
+    assert.deepEqual(outcomeSegments({series:history,signals})[0].points,
+        [{time:60,value:100},{time:180,value:102}]);
+    assert.equal(outcomeSegments({series:history.slice(0,2),signals}).length,0);
 });
 
 

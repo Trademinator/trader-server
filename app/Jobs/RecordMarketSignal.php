@@ -14,9 +14,9 @@ final class RecordMarketSignal implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 2;
 
-    public int $timeout = 120;
+    public int $timeout = 900;
 
-    public int $uniqueFor = 300;
+    public int $uniqueFor = 1200;
 
     public array $backoff = [60];
 
@@ -31,7 +31,7 @@ final class RecordMarketSignal implements ShouldBeUnique, ShouldQueue
     {
         $market = Market::query()->with('feed', 'exchange')->find($this->marketId);
         if ($market !== null && config('dashboard.signals_enabled') && config('intelligence.enabled')) {
-            $journal->record($market);
+            $journal->recordPending($market);
         }
     }
 }
