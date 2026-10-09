@@ -129,8 +129,9 @@ final class DatasetSnapshotBuilder
                 $count = 0;
                 $firstDecision = $lastDecision = null;
                 foreach ($query->lazy(500) as $feature) {
-                    if (microtime(true) - $started > 540) {
-                        throw new RuntimeException('Dataset build exceeded 540 seconds; use a smaller date range or horizon.');
+                    $maxSeconds = config('research.dataset_max_seconds', 540);
+                    if (microtime(true) - $started > $maxSeconds) {
+                        throw new RuntimeException('Dataset build exceeded '.$maxSeconds.' seconds; use a smaller date range or increase RESEARCH_DATASET_MAX_SECONDS.');
                     }
                     $payload = $feature->payload;
                     $timestamp = $feature->microtimestamp;
