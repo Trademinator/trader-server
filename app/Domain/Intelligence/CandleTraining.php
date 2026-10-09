@@ -38,6 +38,7 @@ final class CandleTraining
         private HumanTraining $snapshots,
         private ActionAutoLabeler $autoLabeler,
         private PublishedTakerFee $takerFees,
+        private ActionLabelReportStore $actionReports,
     ) {}
 
     public static function submissionLimit(): int
@@ -472,10 +473,11 @@ final class CandleTraining
         throw ValidationException::withMessages(['dataset' => 'No intact candle was found in this bounded search. Retry, choose another dataset or collect more history.']);
     }
 
-    /** Saved algorithmic counts cover the dataset's analysed market window, not KNN eligibility. */
+    /** Latest shared market analysis, independent of this immutable chart dataset. */
     private function automaticLabelStats(array $manifest): array
     {
-        $raw = $manifest['action_label_analysis']['action_counts'] ?? null;
+        $published = $this->actionReports->latest($manifest['exchange'], $manifest['symbol'], $manifest['period']);
+        $raw = $published['analysis']['action_counts'] ?? null;
         $available = is_array($raw) && array_diff(self::ACTIONS, array_keys($raw)) === [];
         $counts = array_fill_keys(self::ACTIONS, 0);
         if ($available) {
@@ -484,7 +486,13 @@ final class CandleTraining
             }
         }
 
-        return ['available' => $available, 'counts' => $counts, 'total' => array_sum($counts)];
+        return [
+            'available' => $available, 'counts' => $counts, 'total' => array_sum($counts),
+            'as_of_ms' => $available ? $published['as_of_ms'] : null,
+            'computed_at' => $available ? $published['computed_at'] : null,
+            'source' => $available ? $published['source'] : null,
+            'dataset_id' => $available ? $published['dataset_id'] : null,
+        ];
     }
 
     /** Counts this trainer's distinct recorded candle opinions, not model eligibility. */

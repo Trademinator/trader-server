@@ -6,6 +6,7 @@ use App\Models\MarketFeed;
 use App\Models\MarketSubscription;
 use App\Models\User;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 
 function autoLabelCommandMarket(string $exchangeClass, string $symbol): void
 {
@@ -61,4 +62,10 @@ it('manually runs auto-label analysis globally by exchange and by exchange pair'
         ->and($pair[0]['symbol'])->toBe('ATOM/USD')
         ->and($pair[0]['status'])->toBe('insufficient_distance_observations')
         ->and($pair[0]['distance_observations'])->toBe(0);
+
+    $report = DB::table('market_action_label_analyses')->where('exchange', 'bitso')
+        ->where('symbol', 'ATOM/USD')->where('period', '15m')->first();
+    expect($report)->not->toBeNull()
+        ->and(json_decode($report->analysis, true, flags: JSON_THROW_ON_ERROR)['action_counts'])
+        ->toBe($pair[0]['action_counts']);
 });

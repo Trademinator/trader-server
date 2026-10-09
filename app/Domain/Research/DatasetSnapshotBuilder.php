@@ -5,6 +5,7 @@ namespace App\Domain\Research;
 use App\Domain\Features\ContextFeatures;
 use App\Domain\Features\FeatureEngine;
 use App\Domain\Intelligence\ActionLabelAnalysis;
+use App\Domain\Intelligence\ActionLabelReportStore;
 use App\Domain\Intelligence\KnowledgeWindow;
 use App\Domain\Intelligence\PatternCatalog;
 use App\Domain\MarketData\CandleProvenance;
@@ -25,6 +26,7 @@ final class DatasetSnapshotBuilder
         private DatasetStore $store,
         private TickerRepository $tickers,
         private ActionLabelAnalysis $actionAnalysis,
+        private ActionLabelReportStore $actionReports,
     ) {}
 
     /**
@@ -338,6 +340,11 @@ final class DatasetSnapshotBuilder
                     throw new RuntimeException('Could not publish dataset snapshot.');
                 }
                 DB::table('research_datasets')->insert(['dataset_id' => $id, 'manifest' => json_encode($manifest, JSON_THROW_ON_ERROR), 'created_at' => now()]);
+                // Publish atomically with the immutable dataset record. Never
+                // replace a more recent CLI or intelligence-build analysis.
+                if ($actionDiagnostics !== null) {
+                    $this->actionReports->publish($exchange, $symbol, $period, $actionDiagnostics, $id);
+                }
 
                 return $manifest;
             });

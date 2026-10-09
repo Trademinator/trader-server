@@ -132,7 +132,7 @@
                         </div>
                         <strong class="candle-training-source-total" data-automatic-stat-total>{{ $state['automatic_label_stats']['available'] ? number_format($state['automatic_label_stats']['total']) : '—' }}</strong>
                     </div>
-                    <p class="guide-help candle-training-source-note">Algorithm-generated BUY/HOLD/SELL labels for this market's frozen analysis window.</p>
+                    <p class="guide-help candle-training-source-note">Latest published market analysis, shared with the CLI. Reload after a CLI run or completed background build.</p>
                     <div class="candle-training-stats" aria-label="Automatic Training BUY HOLD SELL counts">
                         @foreach(['buy' => 'BUY', 'hold' => 'HOLD', 'sell' => 'SELL'] as $action => $title)
                             @php
@@ -146,7 +146,12 @@
                             </div>
                         @endforeach
                     </div>
-                    <p class="guide-help">{{ $state['automatic_label_stats']['available'] ? 'Saved at dataset creation. Run auto-labelling and select the new dataset to refresh.' : 'No saved auto-label analysis for this dataset. Trigger auto-labelling to generate a new dataset.' }}</p>
+                    @if($state['automatic_label_stats']['available'])
+                        <p class="guide-help">Analysis as of <x-display-time :value="$state['automatic_label_stats']['as_of_ms']" unit="milliseconds" /> · Source: {{ $state['automatic_label_stats']['source'] === 'cli' ? 'CLI' : 'intelligence dataset build' }}.</p>
+                        <p class="guide-help">Chart markers remain tied to the selected frozen dataset and may differ from these current market-wide totals.</p>
+                    @else
+                        <p class="guide-help">No shared analysis published yet. Run <code>php artisan trademinator:auto-label</code> or trigger auto-labelling, then reload this page.</p>
+                    @endif
                 </section>
                 <section class="candle-training-source candle-training-source--human" aria-labelledby="human-training-heading">
                     <div class="candle-training-source-header">
@@ -174,7 +179,7 @@
                     <p class="guide-help">Counts each submitted candle once across revisions and updates after Submit.</p>
                 </section>
             </div>
-            <p class="guide-help">Both sections show label volume, not KNN-eligible training rows or validation results. Automatic counts span the frozen market analysis window; human counts are your saved opinions. There is no target BUY/HOLD/SELL percentage.</p>
+            <p class="guide-help">Both sections show label volume, not KNN-eligible training rows or validation results. Automatic counts come from the same latest published market analysis as the CLI; historical chart markers remain frozen. Human counts are your saved opinions. There is no target BUY/HOLD/SELL percentage.</p>
             <details class="candle-training-milestone-help">
                 <summary>What do the milestone colours mean?</summary>
                 <ul class="candle-training-milestone-list">

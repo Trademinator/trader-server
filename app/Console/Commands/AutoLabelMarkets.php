@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Domain\Intelligence\ActionLabelAnalysis;
+use App\Domain\Intelligence\ActionLabelReportStore;
 use App\Models\MarketFeed;
 use Illuminate\Console\Command;
 use InvalidArgumentException;
@@ -15,9 +16,9 @@ final class AutoLabelMarkets extends Command
         {symbol? : Optional pair; requires exchange, for example ATOM/USD}
         {--json : Emit machine-readable JSON instead of a table}';
 
-    protected $description = 'Run Action auto-labeling and Outcome horizon diagnostics for active market feeds';
+    protected $description = 'Run Action auto-labeling and publish shared Outcome/Action diagnostics for active market feeds';
 
-    public function handle(ActionLabelAnalysis $analysis): int
+    public function handle(ActionLabelAnalysis $analysis, ActionLabelReportStore $reports): int
     {
         $exchange = $this->argument('exchange');
         $symbol = $this->argument('symbol');
@@ -52,11 +53,27 @@ final class AutoLabelMarkets extends Command
                     $feed->selected_period,
                     $asOfMs
                 );
+                // Publish the exact diagnostics that both CLI and Web UI read.
+                // A newer concurrent build may already have published a later snapshot.
+                $reports->publish(
+                    $feed->market->exchange->class,
+                    $feed->market->symbol,
+                    $feed->selected_period,
+                    $result
+                );
+                $published = $reports->latest(
+                    $feed->market->exchange->class,
+                    $feed->market->symbol,
+                    $feed->selected_period
+                );
+                if ($published === null) {
+                    throw new \RuntimeException('Published Action auto-label report is unavailable.');
+                }
                 $rows[] = [
                     'exchange' => $feed->market->exchange->class,
                     'symbol' => $feed->market->symbol,
                     'period' => $feed->selected_period,
-                    ...ActionLabelAnalysis::publicDiagnostics($result),
+                    ...$published['analysis'],
                 ];
             } catch (Throwable $error) {
                 $failed = true;

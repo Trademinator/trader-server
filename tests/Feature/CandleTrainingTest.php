@@ -1,5 +1,6 @@
 <?php
 
+use App\Domain\Intelligence\ActionLabelReportStore;
 use App\Domain\Intelligence\CandleTraining;
 use App\Domain\Research\DatasetStore;
 use App\Models\Exchange;
@@ -107,20 +108,28 @@ it('displays automatic and human training separately, with honest missing-analys
     $decision = $rows[0]['decision_at_ms'];
     $training = app(CandleTraining::class);
 
-    expect($training->review($user, $manifest['dataset_id'], $decision)['automatic_label_stats'])
-        ->toBe(['available' => false, 'counts' => ['buy' => 0, 'hold' => 0, 'sell' => 0], 'total' => 0]);
+    $empty = $training->review($user, $manifest['dataset_id'], $decision)['automatic_label_stats'];
+    expect($empty['available'])->toBeFalse()->and($empty['total'])->toBe(0);
 
-    $manifest['action_label_analysis'] = ['action_counts' => ['buy' => 112, 'hold' => 1210, 'sell' => 115]];
+    // A deliberately different archived manifest must not govern the live CLI/UI totals.
+    $manifest['action_label_analysis'] = ['action_counts' => ['buy' => 1, 'hold' => 2, 'sell' => 3]];
     $path = app(DatasetStore::class)->directory($manifest['dataset_id']);
     file_put_contents($path.'/manifest.json', json_encode($manifest, JSON_THROW_ON_ERROR));
     DB::table('research_datasets')->where('dataset_id', $manifest['dataset_id'])
         ->update(['manifest' => json_encode($manifest, JSON_THROW_ON_ERROR)]);
+    app(ActionLabelReportStore::class)->publish('kraken', 'BTC/USD', '1m', [
+        'as_of_ms' => $manifest['as_of_ms'],
+        'status' => 'validated',
+        'action_counts' => ['buy' => 112, 'hold' => 1210, 'sell' => 115],
+    ]);
 
     $training->save($user, $manifest['dataset_id'], $decision, 'hold');
     $state = $training->review($user, $manifest['dataset_id'], $decision);
-    expect($state['automatic_label_stats'])->toBe([
-        'available' => true, 'counts' => ['buy' => 112, 'hold' => 1210, 'sell' => 115], 'total' => 1437,
-    ])->and($state['label_stats']['counts'])->toBe(['buy' => 0, 'hold' => 1, 'sell' => 0]);
+    expect($state['automatic_label_stats']['available'])->toBeTrue()
+        ->and($state['automatic_label_stats']['counts'])->toBe(['buy' => 112, 'hold' => 1210, 'sell' => 115])
+        ->and($state['automatic_label_stats']['total'])->toBe(1437)
+        ->and($state['automatic_label_stats']['source'])->toBe('cli')
+        ->and($state['label_stats']['counts'])->toBe(['buy' => 0, 'hold' => 1, 'sell' => 0]);
 
     $this->actingAs($user)->get(route('human-training.candles.show', [
         'dataset' => $manifest['dataset_id'], 'decision_at_ms' => $decision,
