@@ -66,6 +66,10 @@
                                     <p class="owner-muted"><strong>H</strong> = round(Σ(d × frequency) / Σfrequency), using every valid d in the full <code>INTELLIGENCE_MAX_MODEL_AGE_DAYS</code> window. At least 30 valid d observations are required.</p>
                                     <p class="owner-muted"><strong>K<sub>O</sub></strong> and <strong>K<sub>A</sub></strong> are tuned independently. K<sub>min</sub> = floor(min effective neighbors) + 1; K<sub>max</sub> = min(configured K cap, training warmup size, available rows). Validation selects the final K inside that range.</p>
                                 </details>
+                                <details class="owner-details">
+                                    <summary>Outcome / Action KNN holdout diagnostics</summary>
+                                    @include('owner.partials.action-validation', ['report' => $model->summary])
+                                </details>
                             </td>
                         </tr>
                     @empty

@@ -766,18 +766,20 @@ Implementation: [`DispatchMarketSignals.php`](../app/Console/Commands/DispatchMa
 
 ## trademinator:model-info
 
-Signature: `trademinator:model-info {model}`
+Signature: `trademinator:model-info {model} {--validation-summary}`
 
-Description: Verify an intelligence artifact and show its schema, cutoffs and validation report
+Description: Verify an intelligence artifact or inspect its persisted validation summary
 
-Verify an existing model artifact and print its saved report as JSON, including schema, cutoffs and validation evidence. Read-only inspection, not retraining. Requires the saved model record and private artifact files.
+Default mode verifies the model artifact and KNN sidecars, then prints its saved report. The optional summary mode reads **only the persisted database report**, without loading large model sidecars; it separates Outcome/Action, algorithmic/human, HOLD/abstention counts and validation gates. Both modes are read-only.
 
 | Parameter | Default / requirement | Explanation |
 | --- | --- | --- |
 | `model` | Required | Existing model UUID from a build/report; replace `MODEL_UUID`, not a filesystem path. |
+| `--validation-summary` | Off | Compact, DB-only validation report; does not verify model sidecar checksums. |
 
 ```bash
 php artisan trademinator:model-info MODEL_UUID
+php artisan trademinator:model-info MODEL_UUID --validation-summary
 ```
 
 Implementation: [`InspectIntelligenceModel.php`](../app/Console/Commands/InspectIntelligenceModel.php).
@@ -808,17 +810,19 @@ Implementation: [`CompactIntelligenceModel.php`](../app/Console/Commands/Compact
 
 ## trademinator:analyze-validation-gates
 
-Signature: `trademinator:analyze-validation-gates {--directional=5,20,30,50,75,100 : Comma-separated candidate minimum directional counts} {--precision=0.55,0.60,0.65 : Comma-separated candidate absolute semantic precision floors} {--baseline-lift=0.10 : Required Wilson lower-bound lift over the training prediction-mix baseline} {--wilson-floor=0.50 : Absolute Wilson 95% lower-bound floor} {--all-models : Include historical models instead of current heads only} {--limit=500 : Maximum models when --all-models is used} {--json : Print the complete report as JSON}`
+Signature: `trademinator:analyze-validation-gates {--directional=5,20,30,50,75,100} {--precision=0.55,0.60,0.65} {--baseline-lift=0.10} {--wilson-floor=0.50} {--all-models} {--limit=500} {--json}`
 
-Description: Analyze Server model holdouts to calibrate directional-count and semantic-precision readiness gates
+Description: Read-only Action KNN holdout calibration; never uses Outcome confusion
 
-Analyze saved model holdouts against candidate readiness thresholds and print a comparison report. Reads models/datasets; **does not change readiness settings, mark models validated or retrain them**. Missing/corrupt artifacts are reported as skipped. Ratios below are fractions, not percentages.
+Analyze **independent algorithmic Action KNN holdouts only**. This command reads persisted database reports without loading entire research datasets or model sidecars. Models predating Phase 2 Action validation are skipped explicitly. Natural HOLD and abstention counts remain separate; no minimum directional coverage quota is imposed. Neither readiness nor training data is changed.
+
+The Phase 2 prediction-mix baseline comes from **observed finalized Action holdout class frequencies**, not training priors. This candidate grid is exploratory: selecting thresholds based on an already observed final holdout requires fresh unseen chronological data for subsequent validation. Ratios below are fractions, not percentages.
 
 | Parameter | Default / requirement | Explanation |
 | --- | --- | --- |
 | `--directional` | `5,20,30,50,75,100` | Comma-separated positive integer candidate minimum directional prediction counts. |
 | `--precision` | `0.55,0.60,0.65` | Comma-separated candidate semantic precision floors; each 0–1. |
-| `--baseline-lift` | 0.10 | Required Wilson lower-bound lift above the training prediction-mix baseline; 0–1. |
+| `--baseline-lift` | 0.10 | Required Wilson lower-bound lift above the observed Action holdout prediction-mix baseline; 0–1. |
 | `--wilson-floor` | 0.50 | Absolute Wilson 95% lower confidence-bound floor; 0–1. |
 | `--all-models` | Off | Analyze historical models instead of current heads only. |
 | `--limit` | 500 | Maximum historical models when `--all-models` is used; integer 1–5000. |

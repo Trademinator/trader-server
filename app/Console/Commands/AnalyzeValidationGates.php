@@ -2,9 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Domain\Intelligence\ModelStore;
 use App\Domain\Intelligence\ValidationGateCalibration;
-use App\Domain\Research\DatasetStore;
 use App\Helpers\Decimal;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -16,19 +14,16 @@ final class AnalyzeValidationGates extends Command
     protected $signature = 'trademinator:analyze-validation-gates
         {--directional=5,20,30,50,75,100 : Comma-separated candidate minimum directional counts}
         {--precision=0.55,0.60,0.65 : Comma-separated candidate absolute semantic precision floors}
-        {--baseline-lift=0.10 : Required Wilson lower-bound lift over the training prediction-mix baseline}
+        {--baseline-lift=0.10 : Required Wilson lower-bound lift over the observed Action holdout prediction-mix baseline}
         {--wilson-floor=0.50 : Absolute Wilson 95% lower-bound floor}
         {--all-models : Include historical models instead of current heads only}
         {--limit=500 : Maximum models when --all-models is used}
         {--json : Print the complete report as JSON}';
 
-    protected $description = 'Analyze Server model holdouts to calibrate directional-count and semantic-precision readiness gates';
+    protected $description = 'Read-only Action KNN holdout calibration; never uses Outcome confusion';
 
-    public function handle(
-        ModelStore $models,
-        DatasetStore $datasets,
-        ValidationGateCalibration $calibration
-    ): int {
+    public function handle(ValidationGateCalibration $calibration): int
+    {
         try {
             $directional = $this->positiveIntegers((string) $this->option('directional'));
             $precision = $this->unitFloats((string) $this->option('precision'));
@@ -45,7 +40,7 @@ final class AnalyzeValidationGates extends Command
         }
 
         $query = DB::table('intelligence_models as models')
-            ->select(['models.model_id', 'models.created_at'])
+            ->select(['models.model_id', 'models.created_at', 'models.report'])
             ->orderByDesc('models.created_at');
         if (! $this->option('all-models')) {
             $query->join('intelligence_heads as heads', 'heads.model_id', '=', 'models.model_id');
@@ -53,13 +48,17 @@ final class AnalyzeValidationGates extends Command
             $query->limit($limit);
         }
 
+        // Work only from persisted model reports. Loading the archived dataset and
+        // three KNN sidecars can exceed 512 MB and is unnecessary for Phase 2 metrics.
         $analyses = [];
         $skipped = [];
-        foreach ($query->get() as $record) {
+        foreach ($query->cursor() as $record) {
             try {
-                $artifact = $models->load((string) $record->model_id);
-                [, $rows] = $datasets->load((string) $artifact['dataset_id']);
-                $analyses[] = $calibration->analyze($artifact, $rows);
+                $report = json_decode($record->report, true, flags: JSON_THROW_ON_ERROR);
+                if (! isset($report['action']['algorithmic']['holdout'])) {
+                    throw new InvalidArgumentException('No persisted independent Action KNN holdout; rebuild with Phase 2 validation.');
+                }
+                $analyses[] = $calibration->analyze($report);
             } catch (Throwable $error) {
                 $skipped[] = [
                     'model_id' => (string) $record->model_id,
@@ -107,9 +106,12 @@ final class AnalyzeValidationGates extends Command
         $report = [
             'generated_at' => now('UTC')->toIso8601String(),
             'scope' => $this->option('all-models') ? 'historical_models' : 'current_heads',
+            'scoring_component' => 'algorithmic_action',
+            'baseline_source' => 'observed_finalized_action_holdout',
+            'selection_policy' => 'exploratory_only_no_holdout_retuning',
             'server_only' => true,
             'financial_execution_inputs_used' => false,
-            'rule' => 'existing validation/coverage/contradiction gates plus Wilson95 >= max(wilson_floor, training_prediction_mix_baseline + baseline_lift)',
+            'rule' => 'existing Action evidence/class-diversity/contradiction gates plus candidate count, precision and Wilson95 >= max(wilson_floor, observed_action_baseline + baseline_lift); no coverage minimum',
             'baseline_lift' => $baselineLift,
             'wilson_floor' => $wilsonFloor,
             'models' => $analyses,
@@ -130,17 +132,19 @@ final class AnalyzeValidationGates extends Command
             count($skipped)
         ));
         $this->line(sprintf(
-            'Candidate rule: Wilson95 >= max(%.1f%%, training prediction-mix baseline + %.1f%%), while preserving each model\'s existing validation-row, coverage and contradiction gates.',
+            'Exploratory rule: Wilson95 >= max(%.1f%%, observed Action holdout baseline + %.1f%%); preserve evidence, class diversity and contradiction gates. No coverage quota.',
             $wilsonFloor * 100,
             $baselineLift * 100
         ));
+        $this->warn('Do not deploy a threshold chosen from this grid on the same final holdout; use new unseen chronological data.');
 
         if ($analyses !== []) {
             $this->table(
-                ['Market', 'Status', 'Eval', 'Dir', 'Correct', 'Precision', 'Wilson95', 'Mix baseline', 'Coverage', 'Contradictions'],
+                ['Market', 'Action status', 'Holdout status', 'Eval', 'Dir', 'Correct', 'Precision', 'Wilson95', 'Mix baseline', 'Coverage', 'Contradictions'],
                 array_map(fn (array $row): array => [
                     $row['exchange'].' '.$row['symbol'].' '.$row['period'],
                     $row['status'],
+                    $row['validation_status'],
                     $row['evaluated'],
                     $row['directional'],
                     $row['correct_directional'],

@@ -14,8 +14,15 @@ final class ValidationGateCalibration
      * @param  list<array<string, mixed>>  $sourceRows
      * @return array<string, mixed>
      */
-    public function analyze(array $artifact, array $sourceRows): array
+    public function analyze(array $artifact, array $sourceRows = []): array
     {
+        // Modern models have independent five-class Outcome and three-class Action
+        // reports. The top-level `holdout` remains an OUTCOME compatibility alias.
+        if (isset($artifact['action']['algorithmic'])) {
+            return ActionHoldoutCalibration::analyze($artifact);
+        }
+
+        // Legacy single-KNN research artifacts retain their historical reader.
         $holdout = $artifact['holdout'] ?? null;
         if (! is_array($holdout) || ! is_array($holdout['confusion'] ?? null)) {
             throw new RuntimeException('Model has no final holdout confusion matrix to calibrate.');
@@ -119,6 +126,10 @@ final class ValidationGateCalibration
         float $baselineLift,
         float $wilsonFloor
     ): bool {
+        if (($analysis['scoring_component'] ?? null) === 'action') {
+            return ActionHoldoutCalibration::passes($analysis, $minDirectional, $minPrecision, $baselineLift, $wilsonFloor);
+        }
+
         $gates = $analysis['existing_gates'];
 
         return $analysis['evaluated'] >= $gates['min_validation_rows']
