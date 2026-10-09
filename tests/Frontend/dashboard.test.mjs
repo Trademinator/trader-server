@@ -146,13 +146,17 @@ async function searchHarness({ owner = true } = {}) {
     });
     results.querySelector = selector => selector === '[data-dashboard-attention]' ? attentionPanel : null;
     results.replaceChildren = () => { cards = ''; attentionPanel = null; };
-    form.querySelector = () => input;
+    const favorites = element(), scope = owner ? element() : null;
+    favorites.checked = false;
+    if (scope) scope.value = 'all';
+    form.querySelector = selector => ({ 'input[type="search"]': input, '[name="favorites"]': favorites, '[name="scope"]': scope })[selector] ?? null;
     const parts = { '[data-market-search]': form, '[data-market-results]': results, '[data-search-status]': status };
     const root = { dataset: { url: '/dashboard', selected: 'selected-subscription' }, querySelector: selector => parts[selector] };
     const pending = [], timers = new Map();
     let timerId = 0;
+    let navigated = null;
     const context = { URL, AbortController, Number, Error,
-        window: { location: { href: 'https://trademinator.test/dashboard' }, addEventListener() {} },
+        window: { location: { href: 'https://trademinator.test/dashboard', assign(value) { navigated = value; } }, addEventListener() {} },
         document: { querySelector: selector => ({ '[data-attention-count]': attention, '[data-attention-toggle]': attentionToggle })[selector] },
         setTimeout(callback, delay) { const id = ++timerId; timers.set(id, { callback, delay }); return id; },
         clearTimeout(id) { timers.delete(id); },
@@ -171,7 +175,8 @@ async function searchHarness({ owner = true } = {}) {
         attentionPanel.open = !attentionPanel.open;
         results.listeners.toggle({ target: attentionPanel });
     };
-    return { input, form, results, status, attention, attentionToggle, get attentionPanel() { return attentionPanel; },
+    return { input, favorites, scope, form, results, status, attention, attentionToggle,
+        get attentionPanel() { return attentionPanel; }, get navigated() { return navigated; },
         toggleTitle, pending, timers, submit, respond, dispose };
 }
 
@@ -240,6 +245,31 @@ test('searches and clears all followed markets without navigating or reloading',
     assert.equal(view.pending[1].url.searchParams.get('q'), '');
     assert.equal(view.results.innerHTML, 'all cards');
     assert.equal(view.status.textContent, '27 matching markets');
+    view.dispose();
+});
+
+test('carries owner scope and favourites through live search and navigates when those filters change', async () => {
+    const view = await searchHarness();
+    view.scope.value = 'mine';
+    view.favorites.checked = true;
+    const request = view.submit('xrp');
+    assert.equal(view.pending[0].url.searchParams.get('scope'), 'mine');
+    assert.equal(view.pending[0].url.searchParams.get('favorites'), '1');
+    view.respond(0, { html: 'XRP card', count: 1, attention_count: 0 });
+    await request;
+
+    view.scope.value = 'all';
+    view.scope.listeners.change();
+    let url = new URL(view.navigated);
+    assert.equal(url.searchParams.get('q'), 'xrp');
+    assert.equal(url.searchParams.get('scope'), 'all');
+    assert.equal(url.searchParams.get('favorites'), '1');
+    assert.equal(url.searchParams.get('subscription'), 'selected-subscription');
+
+    view.favorites.checked = false;
+    view.favorites.listeners.change();
+    url = new URL(view.navigated);
+    assert.equal(url.searchParams.has('favorites'), false);
     view.dispose();
 });
 

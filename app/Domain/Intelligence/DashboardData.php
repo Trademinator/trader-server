@@ -30,9 +30,18 @@ final class DashboardData
             ->with('market.exchange', 'market.feed', 'market.latestSignal');
     }
 
-    public function markets(User $user, ?string $selectedId = null, string $search = ''): array
+    public function accessibleSubscriptions(User $user): Builder
     {
-        $query = $this->subscriptions($user);
+        return MarketSubscription::query()->where('active', true)
+            ->when(! $user->isOwner(), fn (Builder $query) => $query->where('user_id', $user->user_id))
+            ->with('market.exchange', 'market.feed', 'market.latestSignal');
+    }
+
+    public function markets(User $user, ?string $selectedId = null, string $search = '', string $scope = 'mine',
+        bool $favoritesOnly = false): array
+    {
+        $query = $this->scopedSubscriptions($user, $scope, $favoritesOnly)
+            ->withExists(['favoritedBy as is_favorite' => fn (Builder $favorites) => $favorites->where('users.user_id', $user->user_id)]);
         if ($search !== '') {
             $term = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], mb_strtolower($search)).'%';
             $query->whereHas('market', fn ($market) => $market->where(function ($match) use ($term): void {
@@ -51,7 +60,7 @@ final class DashboardData
             $metadata = [];
         }
         $canManage = $user->can('manage-server');
-        $cards = $subscriptions->getCollection()->map(function (MarketSubscription $item) use ($reports, $contexts, $metadata, $canManage): array {
+        $cards = $subscriptions->getCollection()->map(function (MarketSubscription $item) use ($reports, $contexts, $metadata, $canManage, $user): array {
             $chart = $this->charts->data($item->market, 48);
             $report = $reports->get($this->key($item->market));
             $ready = $this->ready($report);
@@ -61,13 +70,15 @@ final class DashboardData
 
             return ['subscription' => $item, 'chart' => $chart, 'report' => $report, 'ready' => $ready,
                 'coingecko' => $contexts->get($this->key($item->market)),
+                'is_mine' => $item->user_id === $user->user_id,
+                'is_favorite' => (bool) $item->is_favorite,
                 'logo_url' => MarketCatalog::logoUrl($metadata[$item->market->exchange->class]['logo'] ?? null),
                 'signal' => $signal, 'signal_fresh' => $fresh, 'attention' => $issues !== [], 'issues' => $issues,
                 'sparkline' => $this->sparkline($chart), 'label' => $fresh && $signal !== null
                     ? SignalJournal::label($signal->action, $signal->reason) : 'Waiting for evidence'];
         });
 
-        return compact('subscriptions', 'cards', 'selectedId', 'search');
+        return compact('subscriptions', 'cards', 'selectedId', 'search', 'scope', 'favoritesOnly');
     }
 
     public function chart(User $user, Market $market, int $limit = 360): array
@@ -115,18 +126,21 @@ final class DashboardData
             ->mapWithKeys(fn ($row) => [$row->market_key => json_decode($row->report, true, flags: JSON_THROW_ON_ERROR)]);
     }
 
-    public function overview(User $user, ?string $selectedId, int $since, string $search = ''): array
+    public function overview(User $user, ?string $selectedId, int $since, string $search = '', string $scope = 'mine',
+        bool $favoritesOnly = false): array
     {
-        $page = $this->markets($user, $selectedId, $search);
+        $page = $this->markets($user, $selectedId, $search, $scope, $favoritesOnly);
         ['subscriptions' => $subscriptions, 'cards' => $cards] = $page;
-        $selected = $selectedId === null ? $subscriptions->first() : $this->subscriptions($user)->findOrFail($selectedId);
+        $selected = $selectedId === null ? $subscriptions->first()
+            : $this->scopedSubscriptions($user, $scope, $favoritesOnly)->find($selectedId);
+        $selected ??= $subscriptions->first();
         $keys = $subscriptions->getCollection()->map(fn ($item) => $this->key($item->market))->all();
         if ($selected !== null) {
             $keys[] = $this->key($selected->market);
         }
         $reports = $this->reports($keys);
         $totals = ['followed' => 0, 'outcome' => 0, 'action' => 0, 'coingecko' => 0];
-        $this->subscriptions($user)->setEagerLoads([])->with('market.exchange', 'market.feed')
+        $this->scopedSubscriptions($user, $scope, false)->setEagerLoads([])->with('market.exchange', 'market.feed')
             ->chunkById(100, function ($items) use (&$totals): void {
                 $reports = $this->reports($items->map(fn ($item) => $this->key($item->market))->all());
                 $contexts = $this->contextReadiness->forMarkets($items->pluck('market'));
@@ -140,7 +154,12 @@ final class DashboardData
             }, 'market_subscription_id');
         $changes = MarketSignal::query()->where('is_change', true)->where('recorded_at_ms', '>', $since)
             ->where('recorded_at_ms', '<=', now()->getTimestampMs())
-            ->whereHas('market.subscriptions', fn ($query) => $query->where('user_id', $user->user_id)->where('active', true));
+            ->whereHas('market.subscriptions', function (Builder $query) use ($user, $scope): void {
+                $query->where('active', true);
+                if (! $user->isOwner() || $scope !== 'all') {
+                    $query->where('user_id', $user->user_id);
+                }
+            });
         $changeCount = (clone $changes)->count();
         $timeline = $changes->with('market.exchange')->orderByDesc('recorded_at_ms')->orderByDesc('market_signal_id')->limit(20)->get();
         $details = null;
@@ -165,8 +184,19 @@ final class DashboardData
         $overlap = $cards->groupBy(fn (array $card): string => explode('/', $card['subscription']->market->symbol)[0])
             ->filter(fn ($group): bool => $group->count() > 1)->map->count();
 
-        return compact('subscriptions', 'cards', 'details', 'timeline', 'changeCount', 'overlap', 'since', 'totals', 'search')
+        return compact('subscriptions', 'cards', 'details', 'timeline', 'changeCount', 'overlap', 'since', 'totals', 'search',
+            'scope', 'favoritesOnly')
             + ['conditions' => $this->discovery->snapshot(), 'selectedId' => $selected?->getKey()];
+    }
+
+    private function scopedSubscriptions(User $user, string $scope, bool $favoritesOnly): Builder
+    {
+        $query = $user->isOwner() && $scope === 'all' ? $this->accessibleSubscriptions($user) : $this->subscriptions($user);
+        if ($favoritesOnly) {
+            $query->whereHas('favoritedBy', fn (Builder $favorites) => $favorites->where('users.user_id', $user->user_id));
+        }
+
+        return $query;
     }
 
     private function key(Market $market): string

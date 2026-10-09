@@ -1,6 +1,8 @@
 <x-layouts.app :title="__('Dashboard')">
     @php
         $number = fn ($value, $digits = 2) => $value === null ? 'Unknown' : \App\Helpers\Decimal::format($value, $digits);
+        $owner = auth()->user()->isOwner();
+        $ownerViewingAll = $owner && $scope === 'all';
     @endphp
     @include('markets.guide-styles')
     @include('markets.intelligence-styles')
@@ -12,16 +14,16 @@
     <div class="dashboard-page flex flex-col gap-5">
         <header class="dashboard-hero">
             <div class="flex flex-wrap items-start justify-between gap-4">
-                <div><p class="dashboard-eyebrow">Your market intelligence</p><h1>Dashboard</h1>
-                    <p>Follow markets, understand the evidence, and see what changed.</p></div>
+                <div><p class="dashboard-eyebrow">{{ $ownerViewingAll ? 'Server market intelligence' : 'Your market intelligence' }}</p><h1>Dashboard</h1>
+                    <p>{{ $ownerViewingAll ? 'Review every active market subscription, understand the evidence, and see what changed.' : 'Follow markets, understand the evidence, and see what changed.' }}</p></div>
                 <a class="dashboard-button dashboard-button-light" href="{{ route('markets.index') }}">Manage subscriptions</a>
             </div>
             <p class="dashboard-contract">A subscription lets you follow a market and is required for the Client to trade it. Following a market does not enable trading; the Client decides whether to act.</p>
         </header>
         @if (session('status'))<p class="guide-notice" role="status">{{ session('status') }}</p>@endif
         <div class="grid gap-3 sm:grid-cols-2 {{ auth()->user()->can('manage-server') ? 'xl:grid-cols-4' : 'lg:grid-cols-3' }}" aria-label="Dashboard overview">
-            <a class="dashboard-stat" href="#subscriptions"><span>Markets you follow</span><strong>{{ $totals['followed'] }}</strong><small>Active subscriptions</small></a>
-            <a class="dashboard-stat" href="#subscriptions"><span>Intelligence readiness</span><div class="my-2"><x-knn-readiness :counts="$totals" :total="$totals['followed']" /></div><small>Across all markets you follow</small></a>
+            <a class="dashboard-stat" href="#subscriptions"><span>{{ $ownerViewingAll ? 'Markets followed by users' : 'Markets you follow' }}</span><strong>{{ $totals['followed'] }}</strong><small>Active subscriptions in this scope</small></a>
+            <a class="dashboard-stat" href="#subscriptions"><span>Intelligence readiness</span><div class="my-2"><x-knn-readiness :counts="$totals" :total="$totals['followed']" /></div><small>{{ $ownerViewingAll ? 'Across all active subscriptions' : 'Across all markets you follow' }}</small></a>
             @can('manage-server')
             <button type="button" class="dashboard-stat" data-attention-toggle aria-controls="attention" aria-expanded="false"><span>Needs attention</span><strong data-attention-count>{{ $cards->where('attention', true)->count() }}</strong><small>Collection or history on this page</small></button>
             @endcan
@@ -64,12 +66,25 @@
             @endif
         </section>
         <section id="subscriptions" aria-labelledby="subscriptions-title">
-            <div class="flex flex-wrap items-center justify-between gap-3 mb-3"><h2 id="subscriptions-title" class="text-xl font-semibold">Markets you follow</h2><span class="dashboard-muted">Choose a market to inspect its chart and readiness</span></div>
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-3"><h2 id="subscriptions-title" class="text-xl font-semibold">{{ $favoritesOnly ? 'Favourite markets' : ($ownerViewingAll ? 'All followed markets' : 'Markets you follow') }}</h2><span class="dashboard-muted">Choose a market to inspect its chart and readiness</span></div>
             <div data-dashboard-markets data-url="{{ route('dashboard') }}" data-selected="{{ $selectedId }}">
                 <form method="GET" action="{{ route('dashboard') }}" class="mb-4" data-market-search>
-                    <label for="market-search" class="block font-semibold mb-2">Search your markets</label>
-                    <input id="market-search" name="q" type="search" maxlength="100" value="{{ $search }}" placeholder="Pair, exchange or period…" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100" aria-controls="market-results" autocomplete="off">
-                    <noscript><button type="submit" class="dashboard-button mt-2">Search</button></noscript>
+                    <div class="flex flex-wrap items-end gap-3">
+                        <div class="flex-1">
+                            <label for="market-search" class="block font-semibold mb-2">{{ $ownerViewingAll ? 'Search all markets' : 'Search your markets' }}</label>
+                            <input id="market-search" name="q" type="search" maxlength="100" value="{{ $search }}" placeholder="Pair, exchange or period…" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100" aria-controls="market-results" autocomplete="off">
+                        </div>
+                        @if ($owner)
+                            <label class="block font-semibold">Scope
+                                <select name="scope" class="mt-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+                                    <option value="all" @selected($scope === 'all')>All markets</option>
+                                    <option value="mine" @selected($scope === 'mine')>My markets</option>
+                                </select>
+                            </label>
+                        @endif
+                        <label class="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"><input name="favorites" type="checkbox" value="1" @checked($favoritesOnly)> Favourites only</label>
+                    </div>
+                    <noscript><button type="submit" class="dashboard-button mt-2">Apply filters</button></noscript>
                 </form>
                 <p class="guide-help mb-3" role="status" aria-live="polite" data-search-status>{{ $subscriptions->total() }} matching markets</p>
                 <div id="market-results" data-market-results>@include('dashboard-markets')</div>

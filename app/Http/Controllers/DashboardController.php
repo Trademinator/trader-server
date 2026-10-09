@@ -6,6 +6,7 @@ use App\Domain\Client\ClientDashboardActivity;
 use App\Domain\Intelligence\DashboardData;
 use App\Domain\MarketData\MarketChart;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Validation\Rule;
@@ -16,11 +17,14 @@ final class DashboardController extends Controller
     public function index(Request $request, DashboardData $dashboard, ClientDashboardActivity $clientActivity): Response|JsonResponse
     {
         $input = $request->validate(['subscription' => ['nullable', 'uuid'], 'page' => ['sometimes', 'integer', 'min:1'],
-            'q' => ['nullable', 'string', 'max:100']]);
+            'q' => ['nullable', 'string', 'max:100'], 'scope' => ['nullable', Rule::in(['mine', 'all'])],
+            'favorites' => ['nullable', 'boolean']]);
         $user = $request->user();
         $search = trim($input['q'] ?? '');
+        $scope = $user->isOwner() ? ($input['scope'] ?? 'all') : 'mine';
+        $favoritesOnly = $request->boolean('favorites');
         if ($request->expectsJson()) {
-            $data = $dashboard->markets($user, $input['subscription'] ?? null, $search);
+            $data = $dashboard->markets($user, $input['subscription'] ?? null, $search, $scope, $favoritesOnly);
 
             return response()->json(['html' => view('dashboard-markets', $data)->render(),
                 'count' => $data['subscriptions']->total(),
@@ -32,7 +36,8 @@ final class DashboardController extends Controller
             $request->session()->put('dashboard_since_ms', (int) ($user->dashboard_seen_at_ms ?? $now - 86400000));
             $request->session()->put('dashboard_visit_started_ms', $now);
         }
-        $data = $dashboard->overview($user, $input['subscription'] ?? null, (int) $request->session()->get('dashboard_since_ms'), $search);
+        $data = $dashboard->overview($user, $input['subscription'] ?? null,
+            (int) $request->session()->get('dashboard_since_ms'), $search, $scope, $favoritesOnly);
         if ($data['details'] !== null) {
             $subscription = $data['details']['subscription'];
             $chart = $data['details']['chart'];
@@ -46,7 +51,7 @@ final class DashboardController extends Controller
 
     public function chart(Request $request, string $subscription, DashboardData $dashboard, ClientDashboardActivity $clientActivity): JsonResponse
     {
-        $item = $dashboard->subscriptions($request->user())->findOrFail($subscription);
+        $item = $dashboard->accessibleSubscriptions($request->user())->findOrFail($subscription);
         $chart = $dashboard->chart($request->user(), $item->market);
         $chart['client_events'] = $this->clientEvents($clientActivity, $request->user(), $item, $chart);
 
@@ -72,7 +77,7 @@ final class DashboardController extends Controller
             throw ValidationException::withMessages(['anchor_ms' => 'The chart history cursor must stay before the browsing ceiling.']);
         }
 
-        $item = $dashboard->subscriptions($request->user())->findOrFail($subscription);
+        $item = $dashboard->accessibleSubscriptions($request->user())->findOrFail($subscription);
         $page = $chart->page($item->market, $data['direction'], $data['anchor_ms'] ?? null, $data['until_ms'],
             (int) config('dashboard.chart_page_size', 90));
 
@@ -88,6 +93,44 @@ final class DashboardController extends Controller
 
         return response()->json(['subscription_id' => $item->getKey(), 'symbol' => $item->market->symbol, 'chart' => $page])
             ->header('Cache-Control', 'private, no-store');
+    }
+
+    public function favorite(Request $request, string $subscription, DashboardData $dashboard): RedirectResponse
+    {
+        $item = $dashboard->accessibleSubscriptions($request->user())->findOrFail($subscription);
+        $request->user()->favoriteMarketSubscriptions()->syncWithoutDetaching([$item->getKey()]);
+
+        return $this->dashboardRedirect($request, $item->market->symbol.' added to favourites.');
+    }
+
+    public function unfavorite(Request $request, string $subscription, DashboardData $dashboard): RedirectResponse
+    {
+        $item = $dashboard->accessibleSubscriptions($request->user())->findOrFail($subscription);
+        $request->user()->favoriteMarketSubscriptions()->detach($item->getKey());
+
+        return $this->dashboardRedirect($request, $item->market->symbol.' removed from favourites.');
+    }
+
+    private function dashboardRedirect(Request $request, string $status): RedirectResponse
+    {
+        $input = $request->validate([
+            'selected' => ['nullable', 'uuid'],
+            'scope' => ['nullable', Rule::in(['mine', 'all'])],
+            'favorites' => ['nullable', 'boolean'],
+            'q' => ['nullable', 'string', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $search = trim($input['q'] ?? '');
+        $page = (int) ($input['page'] ?? 1);
+        $query = array_filter([
+            'subscription' => $input['selected'] ?? null,
+            'scope' => $request->user()->isOwner() ? ($input['scope'] ?? 'all') : null,
+            'favorites' => $request->boolean('favorites') ? 1 : null,
+            'q' => $search !== '' ? $search : null,
+            'page' => $page > 1 ? $page : null,
+        ], fn (mixed $value): bool => $value !== null);
+
+        return redirect()->route('dashboard', $query)->with('status', $status);
     }
 
     private function clientEvents(ClientDashboardActivity $activity, $user, $subscription, array $chart): array

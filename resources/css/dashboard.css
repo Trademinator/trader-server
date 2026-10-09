@@ -15,6 +15,14 @@ button.dashboard-stat { text-align: left; cursor: pointer; }
 .dashboard-market h3 { font-size: 1.15rem; font-weight: 750; }
 .dashboard-market.is-selected { border: 2px solid #087b8a; padding: 17px; }
 .dark .dashboard-market.is-selected { border-color: #4ce0cb; }
+.dashboard-market-link { display: block; color: inherit; }
+.dashboard-favourite-button { display: inline-flex; align-items: center; justify-content: center; width: 2.5rem; height: 2.5rem;
+    border: 1px solid #ccd7e1; border-radius: 9999px; background: #fff; color: #536b82; font-size: 1.35rem; line-height: 1; cursor: pointer; }
+.dashboard-favourite-button:hover { border-color: #b87800; color: #b87800; }
+.dashboard-favourite-button[aria-pressed="true"] { border-color: #b87800; color: #b87800; }
+.dark .dashboard-favourite-button { background: #111827; border-color: #516174; color: #bacada; }
+.dark .dashboard-favourite-button:hover,
+.dark .dashboard-favourite-button[aria-pressed="true"] { border-color: #ffd381; color: #ffd381; }
 .dashboard-muted { color: #4b6279; font-size: .9rem; }
 .dashboard-sparkline { width: 100%; height: 64px; margin: 12px 0; color: #087b8a; }
 .dark .dashboard-sparkline { color: #4ce0cb; }

@@ -6,6 +6,7 @@ use App\Traits\HasUniqueIdentifier;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -69,6 +70,12 @@ class User extends Authenticatable implements MustVerifyEmail
     public function subscriptions(): HasMany
     {
         return $this->hasMany(MarketSubscription::class, 'user_id', 'user_id');
+    }
+
+    public function favoriteMarketSubscriptions(): BelongsToMany
+    {
+        return $this->belongsToMany(MarketSubscription::class, 'dashboard_market_favorites', 'user_id',
+            'market_subscription_id', 'user_id', 'market_subscription_id')->withTimestamps();
     }
 
     public function clientApiKeys(): HasMany

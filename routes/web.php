@@ -31,6 +31,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->middleware('throttle:30,1')->name('dashboard.chart');
     Route::get('dashboard/markets/{subscription}/chart/history', [DashboardController::class, 'history'])
         ->middleware('throttle:30,1')->name('dashboard.chart.history');
+    Route::put('dashboard/markets/{subscription}/favorite', [DashboardController::class, 'favorite'])
+        ->whereUuid('subscription')->middleware('throttle:30,1')->name('dashboard.favorites.store');
+    Route::delete('dashboard/markets/{subscription}/favorite', [DashboardController::class, 'unfavorite'])
+        ->whereUuid('subscription')->middleware('throttle:30,1')->name('dashboard.favorites.destroy');
     Route::get('dashboard/suggestions', [DashboardSuggestionController::class, 'index'])
         ->middleware('throttle:12,1')->name('dashboard.suggestions');
     Route::post('dashboard/suggestions/dismiss', [DashboardSuggestionController::class, 'store'])

@@ -4,7 +4,9 @@ import { historyPanDirection, mergeCandleHistory } from './candlestick-history.j
 
 export function mountDashboardMarkets(root) {
     const form = root.querySelector('[data-market-search]');
-    const input = form.querySelector('input');
+    const input = form.querySelector('input[type="search"]');
+    const favorites = form.querySelector('[name="favorites"]');
+    const scope = form.querySelector('[name="scope"]');
     const results = root.querySelector('[data-market-results]');
     const status = root.querySelector('[data-search-status]');
     const attentionToggle = document.querySelector('[data-attention-toggle]');
@@ -19,6 +21,12 @@ export function mountDashboardMarkets(root) {
         if (panel.open) panel.scrollIntoView({ block: 'nearest' });
     };
     let timer, request, revision = 0, disposed = false;
+    const addFilters = url => {
+        if (scope?.value) url.searchParams.set('scope', scope.value);
+        else url.searchParams.delete('scope');
+        if (favorites?.checked) url.searchParams.set('favorites', '1');
+        else url.searchParams.delete('favorites');
+    };
     const logos = () => results.querySelectorAll('.dashboard-exchange-logo img').forEach(image => {
         const fallback = () => image.remove();
         image.addEventListener('error', fallback, { once: true });
@@ -33,9 +41,10 @@ export function mountDashboardMarkets(root) {
         const url = new URL(root.dataset.url, window.location.href);
         url.searchParams.set('q', input.value.trim());
         url.searchParams.set('page', page);
+        addFilters(url);
         if (root.dataset.selected) url.searchParams.set('subscription', root.dataset.selected);
         results.setAttribute('aria-busy', 'true');
-        status.textContent = 'Searching your followed markets…';
+        status.textContent = 'Searching markets…';
         try {
             const response = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store', signal: request.signal });
             if ([401, 403, 419].includes(response.status) || response.redirected) {
@@ -77,6 +86,14 @@ export function mountDashboardMarkets(root) {
         clearTimeout(timer);
         return search(new URL(link.href).searchParams.get('page') ?? 1);
     };
+    const navigateFilters = () => {
+        const url = new URL(root.dataset.url, window.location.href);
+        const query = input.value.trim();
+        if (query) url.searchParams.set('q', query);
+        addFilters(url);
+        if (root.dataset.selected) url.searchParams.set('subscription', root.dataset.selected);
+        window.location.assign(url.toString());
+    };
     const dispose = () => {
         disposed = true;
         ++revision;
@@ -84,12 +101,16 @@ export function mountDashboardMarkets(root) {
         request?.abort();
         input.removeEventListener('input', changed);
         form.removeEventListener('submit', submit);
+        favorites?.removeEventListener('change', navigateFilters);
+        scope?.removeEventListener('change', navigateFilters);
         results.removeEventListener('click', paginate);
         results.removeEventListener('toggle', attentionChanged, true);
         attentionToggle?.removeEventListener('click', toggleAttention);
     };
     input.addEventListener('input', changed);
     form.addEventListener('submit', submit);
+    favorites?.addEventListener('change', navigateFilters);
+    scope?.addEventListener('change', navigateFilters);
     results.addEventListener('click', paginate);
     results.addEventListener('toggle', attentionChanged, true);
     attentionToggle?.addEventListener('click', toggleAttention);

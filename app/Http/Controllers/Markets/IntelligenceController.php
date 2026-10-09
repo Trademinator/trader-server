@@ -21,7 +21,8 @@ final class IntelligenceController extends Controller
     public function show(Request $request, string $subscription, ModelStore $models, IntelligenceReadiness $readiness, MarketCatalog $catalog, CoinGeckoReadiness $contextReadiness, SignalFreshness $freshness): View
     {
         $item = MarketSubscription::query()->with('market.exchange', 'market.feed', 'market.latestSignal')
-            ->where('user_id', $request->user()->user_id)->where('active', true)->findOrFail($subscription);
+            ->where('active', true)->when(! $request->user()->isOwner(),
+                fn ($query) => $query->where('user_id', $request->user()->user_id))->findOrFail($subscription);
         $period = $item->market->feed?->selected_period;
         $coingecko = $contextReadiness->forMarkets([$item->market])->get(ModelStore::marketKey(
             $item->market->exchange->class, $item->market->symbol, $period ?? ''));

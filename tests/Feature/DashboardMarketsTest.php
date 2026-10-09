@@ -114,6 +114,55 @@ it('searches partial pairs exchange names and periods across pages without leaki
         ->assertSee('Search your markets');
 });
 
+it('lets the owner browse every active subscription while keeping non owners limited to their own markets', function () {
+    $owner = User::factory()->create();
+    $other = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->getKey()]);
+    followedDashboardMarket($owner, 'BTC/USD', 'kraken', '15m');
+    followedDashboardMarket($other, 'ETH/USD', 'coinbase', '1h');
+
+    $this->actingAs($owner)->get('/dashboard')->assertOk()
+        ->assertViewHas('scope', 'all')->assertSee('All followed markets')
+        ->assertSee('BTC/USD')->assertSee('ETH/USD')->assertSee('Mine')->assertSee('User market');
+
+    $this->get('/dashboard?scope=mine')->assertOk()->assertViewHas('scope', 'mine')
+        ->assertSee('BTC/USD')->assertDontSee('ETH/USD')->assertSee('Markets you follow');
+
+    $this->actingAs($other)->get('/dashboard?scope=all')->assertOk()->assertViewHas('scope', 'mine')
+        ->assertSee('ETH/USD')->assertDontSee('BTC/USD')->assertDontSee('All markets');
+});
+
+it('stores favourites per viewer and applies the favourite filter inside the selected scope', function () {
+    $owner = User::factory()->create();
+    $other = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->getKey()]);
+    $own = followedDashboardMarket($owner, 'BTC/USD', 'kraken', '15m');
+    $otherSubscription = followedDashboardMarket($other, 'ETH/USD', 'coinbase', '1h');
+
+    $this->actingAs($owner)->put(route('dashboard.favorites.store', [
+        'subscription' => $otherSubscription->getKey(), 'scope' => 'all',
+    ]))->assertRedirect(route('dashboard', ['scope' => 'all']));
+
+    $this->assertDatabaseHas('dashboard_market_favorites', [
+        'user_id' => $owner->getKey(), 'market_subscription_id' => $otherSubscription->getKey(),
+    ]);
+    $this->get('/dashboard?scope=all&favorites=1')->assertOk()->assertSee('ETH/USD')->assertDontSee('BTC/USD')
+        ->assertSee('★', false);
+    $this->get('/dashboard?scope=mine&favorites=1')->assertOk()->assertDontSee('ETH/USD')->assertDontSee('BTC/USD');
+
+    $this->put(route('dashboard.favorites.store', ['subscription' => $own->getKey()]))->assertRedirect();
+    $this->get('/dashboard?scope=mine&favorites=1')->assertSee('BTC/USD')->assertDontSee('ETH/USD');
+
+    $this->delete(route('dashboard.favorites.destroy', ['subscription' => $otherSubscription->getKey(), 'scope' => 'all']))
+        ->assertRedirect(route('dashboard', ['scope' => 'all']));
+    $this->assertDatabaseMissing('dashboard_market_favorites', [
+        'user_id' => $owner->getKey(), 'market_subscription_id' => $otherSubscription->getKey(),
+    ]);
+
+    $this->actingAs($other)->put(route('dashboard.favorites.store', ['subscription' => $own->getKey()]))
+        ->assertNotFound();
+});
+
 it('exposes detailed collection errors and recovery commands only to the server owner', function () {
     $user = User::factory()->create();
     $sub = followedDashboardMarket($user, 'BTC/USD', 'kraken', '1m');
