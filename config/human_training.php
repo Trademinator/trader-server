@@ -24,6 +24,7 @@ return [
     // Independent validation against human candle actions, not automatic labels.
     'candle_validation' => [
         'min_validation_rows' => 10,
+        'min_directional_opportunities' => 3,
         'min_directional_predictions' => 3,
     ],
     'candle_min_precision_gain' => 0.02,

@@ -53,7 +53,9 @@ final class IntelligenceReadiness
         }
         if ($report !== null) {
             $candidates = $report['selection']['candidates'] ?? [];
-            $gatesFor = fn (array $metrics): array => array_key_exists('supported', $metrics)
+            // Action accounting also has a `supported` count. Only the
+            // five-class Outcome report has macro-F1 and its Outcome gates.
+            $gatesFor = fn (array $metrics): array => array_key_exists('macro_f1', $metrics)
                 ? TrainingRequirements::outcomeGates($metrics, $settings, $outcomeSettings)
                 : TrainingRequirements::gates($metrics, $settings);
             usort($candidates, function (array $a, array $b) use ($gatesFor): int {
@@ -269,6 +271,7 @@ final class IntelligenceReadiness
             'period_pending' => 'Let the collector select a reliable period; check collection if it remains pending.',
             'no_model' => 'Run the M4 knowledge build after M2 features exist, or dispatch training and drain the intelligence queue. M2/M3 jobs alone do not train an M4 model.',
             'no_eligible_k', 'holdout_failed' => 'Review the failed validation checks below. Once history improves, rebuild the model; existing models do not absorb new rows automatically.',
+            'insufficient_directional_evidence' => 'There are too few finalized BUY/SELL opportunities or supported directional predictions for a reliable Action validation. Collect more history before rebuilding.',
             'stale_model', 'model_version_mismatch' => 'Rebuild the model from current features.',
             'missing_features', 'stale_features', 'missing_selected_features', 'source_feature_mismatch' => 'Check collection and rebuild the selected M2 features. Then rebuild the model if needed.',
             'no_post_training_candle' => 'Wait for the next genuinely closed candle and its feature build.',

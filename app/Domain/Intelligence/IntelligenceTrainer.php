@@ -13,7 +13,8 @@ use RuntimeException;
 
 final class IntelligenceTrainer
 {
-    public const VERSION = 'm6-outcome-action-knn-v5';
+    // A new version prevents pre-Phase-2 Action readiness from bypassing evidence gates.
+    public const VERSION = 'm6-outcome-action-knn-v6';
 
     public function __construct(
         private DatasetStore $datasets,
@@ -521,8 +522,12 @@ final class IntelligenceTrainer
         $holdout = $selection['k'] === null
             ? ['eligible' => false, 'reason' => 'no_eligible_k']
             : $tuner->evaluatePrepared($training, $test, $selection['k'], $settings, $deadline);
-        $reason = $selection['k'] === null ? 'no_eligible_k'
-            : (($holdout['eligible'] ?? false) ? 'validated' : 'holdout_failed');
+        $reason = $selection['k'] === null ? ($selection['reason'] ?? 'no_eligible_k')
+            : match ($holdout['validation_status']) {
+                'validated' => 'validated',
+                'insufficient_evidence' => 'insufficient_directional_evidence',
+                default => 'holdout_failed',
+            };
 
         return compact('selection', 'holdout', 'reason')
             + ['training_rows' => count($training), 'holdout_rows' => count($test), 'samples' => $count,

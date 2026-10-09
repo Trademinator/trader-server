@@ -185,7 +185,11 @@ it('keeps final holdout annotations out of policy selection and purges both chro
     HumanCandleLabel::query()->whereIn('snapshot_id', array_map(fn ($snapshot) => $snapshot->snapshot_id, array_slice($snapshots, 192)))
         ->update(['action' => 'hold']);
     $second = $service->train($manifest, config('intelligence.knn'), microtime(true) + 30)['bundle'];
-    expect($first['status'])->toBe('validated')->and($second['status'])->toBe('holdout_failed')
+    // The modified holdout has only HOLD annotations: there are no directional
+    // opportunities to judge. This is insufficient evidence, not bad predictions.
+    expect($first['status'])->toBe('validated')
+        ->and($second['status'])->toBe('insufficient_directional_evidence')
+        ->and($second['holdout']['validation_status'])->toBe('insufficient_evidence')
         ->and($second['weight_candidates'])->toBe($first['weight_candidates'])
         ->and($second['weight_policy'])->toBe($first['weight_policy'])
         ->and($first['tuning_training_labels_available_by_ms'])->toBeLessThan($first['tuning_from_ms'])

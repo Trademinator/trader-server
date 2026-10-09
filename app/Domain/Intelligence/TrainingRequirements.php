@@ -46,24 +46,31 @@ final class TrainingRequirements
         ], $rows);
     }
 
-    /** @return list<array{label: string, value: float, target: float, maximum: bool, percent: bool, passed: bool}> */
+    /** The Action readiness UI must show the *actual* evidence/quality gates. */
     public static function gates(array $metrics, array $settings): array
     {
-        $gates = [];
-        foreach ([
-            ['Evaluated rows', 'evaluated', 'min_validation_rows', false, false],
-            ['Directional predictions', 'directional', 'min_directional_predictions', false, false],
-            ['Semantic precision', 'semantic_precision', 'min_semantic_precision', false, true],
-            ['Directional coverage', 'coverage', 'min_coverage', false, true],
-            ['Top/bottom contradictions', 'contradiction_rate', 'max_contradiction_rate', true, true],
-        ] as [$label, $key, $setting, $maximum, $percent]) {
-            $value = (float) ($metrics[$key] ?? 0);
-            $target = (float) $settings[$setting];
-            $gates[] = compact('label', 'value', 'target', 'maximum', 'percent') + [
-                'passed' => $maximum ? $value <= $target : $value >= $target,
-            ];
+        if (! isset($metrics['validation_status'])) {
+            // Older model reports remain inspectable, but cannot acquire v6 readiness.
+            return [];
         }
+        $rows = [
+            ['validation_rows', 'Evaluated historical rows', $metrics['evaluated'], $settings['min_validation_rows'], false, false],
+            ['directional_opportunities', 'Historical BUY/SELL opportunities', $metrics['directional_opportunities'],
+                $settings['min_directional_opportunities'] ?? $settings['min_directional_predictions'], false, false],
+            ['directional_predictions', 'Supported BUY/SELL predictions', $metrics['directional'], $settings['min_directional_predictions'], false, false],
+            ['historical_class_diversity', 'At least two historical classes',
+                count(array_filter($metrics['natural_class_counts'])), 2, false, false],
+            ['semantic_precision', 'Directional precision', $metrics['semantic_precision'], $settings['min_semantic_precision'], false, true],
+            ['directional_wilson_lower', 'Directional Wilson 95% lower bound',
+                $metrics['directional_wilson_95']['lower'] ?? 0.0,
+                $metrics['required_directional_wilson_lower'], false, true],
+            ['contradiction_rate', 'Opposite-pivot disagreement', $metrics['contradiction_rate'], $settings['max_contradiction_rate'], true, true],
+        ];
 
-        return $gates;
+        return array_map(static fn (array $row): array => [
+            'label' => $row[1], 'value' => (float) $row[2], 'target' => (float) $row[3],
+            'maximum' => $row[4], 'percent' => $row[5],
+            'passed' => (bool) ($metrics['gates'][$row[0]] ?? false),
+        ], $rows);
     }
 }

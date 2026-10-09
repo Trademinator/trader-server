@@ -73,8 +73,15 @@ final class KnnTuner
         $reports = array_intersect_key($allReports, array_flip($selected));
         ksort($reports);
 
-        return ['k' => $this->best($reports), 'k_min' => $minimum, 'k_max' => $maximum, 'folds' => $folds,
-            'candidates' => array_values($reports), 'selection' => 'semantic_precision_then_confidence_coverage_stability'];
+        $winner = $this->best($reports);
+        $insufficient = array_filter($reports,
+            static fn (array $candidate): bool => $candidate['validation_status'] === 'insufficient_evidence');
+        $reason = $winner !== null ? 'validated'
+            : (count($insufficient) === count($reports) ? 'insufficient_directional_evidence' : 'no_eligible_k');
+
+        return ['k' => $winner, 'k_min' => $minimum, 'k_max' => $maximum, 'folds' => $folds,
+            'candidates' => array_values($reports), 'selection' => 'wilson_lower_then_semantic_precision_confidence_stability',
+            'reason' => $reason];
     }
 
     public function evaluateWalkForwardPrepared(array $rows, array $settings, int $k, float $deadline): array
@@ -204,18 +211,8 @@ final class KnnTuner
         $directionalOnHold = $errors['buy_on_hold'] + $errors['sell_on_hold'];
         $oppositeActions = $errors['buy_on_sell'] + $errors['sell_on_buy'];
 
-        // Phase 1: preserve the existing readiness thresholds. Sparse-class gate
-        // recalibration belongs to Phase 2, after these diagnostics can be audited.
-        $gates = [
-            'validation_rows' => $state['evaluated'] >= $settings['min_validation_rows'],
-            'directional_predictions' => $directional >= $settings['min_directional_predictions'],
-            'semantic_precision' => $precision >= $settings['min_semantic_precision'],
-            'coverage' => $coverage >= $settings['min_coverage'],
-            'contradiction_rate' => $contradictionRate <= $settings['max_contradiction_rate'],
-        ];
-
-        return ['k' => $state['k'], 'evaluated' => $state['evaluated'], 'directional' => $directional,
-            'supported' => $state['supported'], 'abstained' => $state['abstained'],
+        $report = ['k' => $state['k'], 'evaluated' => $state['evaluated'], 'directional' => $directional,
+            'correct' => $state['correct'], 'supported' => $state['supported'], 'abstained' => $state['abstained'],
             'supported_holds' => $state['supported_holds'], 'correct_holds' => $state['correct_holds'],
             'supported_hold_precision' => $state['supported_holds']
                 ? $state['correct_holds'] / $state['supported_holds'] : 0.0,
@@ -225,12 +222,13 @@ final class KnnTuner
             'directional_predictions_on_hold' => $directionalOnHold,
             'directional_predictions_on_hold_rate' => $directional ? $directionalOnHold / $directional : 0.0,
             'semantic_precision' => $precision, 'contradiction_rate' => $contradictionRate,
+            // Observed frequency is useful to diagnose rarity, NOT a minimum trading quota.
             'coverage' => $coverage, 'mean_confidence' => $directional ? $state['confidence'] / $directional : 0,
             'stability' => $stability, 'confusion' => $state['confusion'],
             'accounting_version' => 'action-supported-vs-abstain-v1',
-            'evaluation_basis' => 'finalized_historical_action_labels', 'gates' => $gates,
-            'failed_gates' => array_keys(array_filter($gates, fn (bool $passed): bool => ! $passed)),
-            'eligible' => ! in_array(false, $gates, true)];
+            'evaluation_basis' => 'finalized_historical_action_labels'];
+
+        return [...$report, ...ActionKnnValidation::assess($report, $settings)];
     }
 
     private function score(array $cases, int $k, array $settings): array
@@ -248,10 +246,14 @@ final class KnnTuner
     private function best(array $reports): ?int
     {
         $eligible = array_values(array_filter($reports, fn (array $report): bool => $report['eligible']));
+        // Rank only candidates that passed every evidence/quality gate. Prefer
+        // the statistically stronger candidate, not the most frequent trader.
         usort($eligible, fn (array $a, array $b): int => [
-            $b['semantic_precision'], $b['mean_confidence'], $b['coverage'], $b['stability'], -$b['k'],
+            $b['directional_wilson_95']['lower'], $b['semantic_precision'], $b['mean_confidence'],
+            $b['stability'], -$b['k'],
         ] <=> [
-            $a['semantic_precision'], $a['mean_confidence'], $a['coverage'], $a['stability'], -$a['k'],
+            $a['directional_wilson_95']['lower'], $a['semantic_precision'], $a['mean_confidence'],
+            $a['stability'], -$a['k'],
         ]);
 
         return $eligible[0]['k'] ?? null;

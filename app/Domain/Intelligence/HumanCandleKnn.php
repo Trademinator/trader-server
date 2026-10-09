@@ -16,7 +16,7 @@ use RuntimeException;
 /** Independent technical KNN whose targets are authorized human candle annotations. */
 final class HumanCandleKnn
 {
-    public const VERSION = 'm5-human-candle-knn-v1';
+    public const VERSION = 'm5-human-candle-knn-v2';
 
     public function __construct(private DatasetStore $datasets, private HumanTraining $snapshots) {}
 
@@ -77,7 +77,12 @@ final class HumanCandleKnn
             'tuning_training_labels_available_by_ms' => max(array_column($training, 'label_available_at_ms')),
             'label_provenance_sha256' => HumanTrainingSnapshot::digest(array_column($rows, 'provenance'))];
         if ($selected === null) {
-            return ['bundle' => [...$bundle, 'status' => 'tuning_failed']];
+            $tuningScores = array_column($bundle['weight_candidates'], 'tuning');
+            $onlyInsufficient = $tuningScores !== [] && count(array_filter($tuningScores,
+                static fn (array $score): bool => $score['validation_status'] === 'insufficient_evidence')) === count($tuningScores);
+
+            return ['bundle' => [...$bundle, 'status' => $onlyInsufficient
+                ? 'insufficient_directional_evidence' : 'tuning_failed']];
         }
         // Fix the policy before touching the final holdout; never try a runner-up afterward.
         $training = $this->purge(array_slice($rows, 0, $holdoutStart), $holdout[0]['decision_at_ms']);
@@ -87,7 +92,11 @@ final class HumanCandleKnn
         $bundle = [...$bundle, 'weight_policy' => $selected['policy'], 'tuning' => $selected['tuning'],
             'holdout' => $score, 'holdout_passed' => $score['eligible'],
             'holdout_training_labels_available_by_ms' => max(array_column($training, 'label_available_at_ms')),
-            'status' => $score['eligible'] ? 'validated' : 'holdout_failed', 'influence' => $score['eligible']];
+            'status' => match ($score['validation_status']) {
+                'validated' => 'validated',
+                'insufficient_evidence' => 'insufficient_directional_evidence',
+                default => 'holdout_failed',
+            }, 'influence' => $score['eligible']];
         if (! $score['eligible']) {
             return ['bundle' => $bundle];
         }
@@ -437,7 +446,8 @@ final class HumanCandleKnn
 
     private function rank(array $score): array
     {
-        return [$score['directional_annotation_agreement'], $score['coverage'], -$score['opposite_annotation_rate'], $score['mean_confidence']];
+        return [$score['directional_wilson_95']['lower'] ?? 0.0, $score['directional_annotation_agreement'],
+            -$score['opposite_annotation_rate'], $score['mean_confidence']];
     }
 
     private function purge(array $rows, int $cutoff): array

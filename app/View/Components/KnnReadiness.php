@@ -48,6 +48,7 @@ class KnnReadiness extends Component
             'insufficient_action_diversity' => 'More than one action class is needed',
             'no_eligible_k', 'tuning_failed' => 'Tuning validation has not passed',
             'holdout_failed' => 'Holdout validation has not passed',
+            'insufficient_directional_evidence' => 'Not enough directional evidence to validate; this is not a failed quality test',
             'optional_budget_exhausted' => 'Human training exceeded its build time budget',
             'coingecko_disabled' => 'CoinGecko collection is disabled',
             'coingecko_period_pending' => 'Waiting for a selected candle period',

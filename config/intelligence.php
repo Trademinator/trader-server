@@ -28,9 +28,14 @@ return [
         'min_effective_neighbors' => (float) env('INTELLIGENCE_KNN_MIN_EFFECTIVE_NEIGHBORS', 3.0),
         'min_confidence' => (float) env('INTELLIGENCE_KNN_MIN_CONFIDENCE', 0.6),
         'min_validation_rows' => 50,
+        // An absence of opportunities/evidence is UNKNOWN, never a quality failure.
+        'min_directional_opportunities' => 5,
         'min_directional_predictions' => 5,
         'min_semantic_precision' => 0.55,
+        'min_directional_wilson_lower' => 0.55,
+        'min_directional_baseline_lift' => 0.02,
         'max_contradiction_rate' => 0.05,
+        // Legacy diagnostic setting: Action directional coverage is no longer a hard gate.
         'min_coverage' => 0.01,
     ],
     'outcome' => [

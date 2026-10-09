@@ -364,7 +364,7 @@ final class ModelStore
         $hash = hash_init('sha256');
         try {
             foreach ($rows as $row) {
-                $line = json_encode($row, JSON_THROW_ON_ERROR)."\n";
+                $line = json_encode($row, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION)."\n";
                 if (fwrite($handle, $line) !== strlen($line)) {
                     throw new RuntimeException('Cannot write private model knowledge file.');
                 }
