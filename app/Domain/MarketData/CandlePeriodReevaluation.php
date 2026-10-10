@@ -61,20 +61,34 @@ final class CandlePeriodReevaluation
             $minimumCoverage = max(0.0, min(1.0, (float) config('candle_period.minimum_coverage', 0.8)));
             $minimumCandles = max(1, (int) config('candle_period.minimum_candles', 50));
             $minimumActionRatio = max(0.0, min(1.0, (float) config('candle_period.minimum_action_ratio', 0.01)));
+            $maximumTrueFlatRatio = max(0.0, min(1.0, (float) config('candle_period.max_true_flat_ratio', 0.10)));
+            $shorterReentryFlatRatio = min($maximumTrueFlatRatio,
+                max(0.0, min(1.0, (float) config('candle_period.shorter_reentry_flat_ratio', 0.05))));
+            $shorterConfirmationWindows = max(1, min(4, (int) config('candle_period.shorter_confirmation_windows', 2)));
             $primaryDays = max(1, (int) config('candle_period.evaluation_days', 7));
             $fallbackDays = max(1, (int) config('candle_period.fallback_days', 7));
-            $windows = [$primaryDays, $primaryDays + $fallbackDays];
             $toMs = now()->getTimestampMs();
             $attempts = [];
 
             foreach ($supported as $period) {
+                $isShorter = $feed->selected_period !== null
+                    && in_array($feed->selected_period, CandleTimeframe::SUPPORTED, true)
+                    && periods_to_seconds($period) < periods_to_seconds($feed->selected_period);
+                $flatLimit = $isShorter ? $shorterReentryFlatRatio : $maximumTrueFlatRatio;
+                // Each shorter-period confirmation needs an independent, sufficiently sized
+                // historical window. At 4h, 7 days is not enough for 50 candles.
+                $confirmationDays = max($primaryDays,
+                    (int) ceil($minimumCandles * periods_to_seconds($period) / 86_400));
+                $windows = $isShorter ? [$confirmationDays] : [$primaryDays, $primaryDays + $fallbackDays];
+
                 foreach ($windows as $windowIndex => $days) {
                     $fromMs = max(0, $toMs - $days * 86_400_000);
                     $candles = $this->window($exchange->class, $market->symbol, $period, $fromMs, $toMs);
                     $historyState = $this->historyState($feed, $period, $fromMs, $candles);
 
                     if ($historyState === 'pending') {
-                        $attempts[] = ['period' => $period, 'days' => $days, 'status' => 'needs_backfill'];
+                        $attempts[] = ['period' => $period, 'days' => $days, 'status' => 'needs_backfill',
+                            'flat_limit' => $flatLimit, 'confirmation_window' => $isShorter ? 1 : null];
                         if (! $dryRun) {
                             $queued = $this->history->dispatchCandidate($feed, $period, $fromMs);
                             $this->scheduleRetry($feed, (int) config('candle_period.backfill_retry_minutes', 15));
@@ -90,18 +104,34 @@ final class CandlePeriodReevaluation
                             $this->withPreviousEconomicFailure("{$period} needs history back to {$days} days.", $attempts), $attempts);
                     }
                     if ($historyState === 'unavailable') {
-                        $attempts[] = ['period' => $period, 'days' => $days, 'status' => 'history_unavailable'];
+                        $attempts[] = ['period' => $period, 'days' => $days, 'status' => 'history_unavailable',
+                            'flat_limit' => $flatLimit, 'confirmation_window' => $isShorter ? 1 : null];
                         unset($candles);
                         break;
                     }
 
-                    $quality = $this->quality->choose([$period => $candles], (float) $market->tick_size,
-                        $qualityThreshold, $minimumCandles, $minimumCoverage);
-                    if ($quality === null) {
-                        $attempts[] = ['period' => $period, 'days' => $days, 'status' => 'quality_failed'];
+                    if (! $this->coversWindowEnd($candles, $period, $toMs)) {
+                        $attempts[] = ['period' => $period, 'days' => $days, 'status' => 'stale_sample',
+                            'flat_limit' => $flatLimit, 'confirmation_window' => $isShorter ? 1 : null];
                         unset($candles);
-                        // A 4h period has only 42 candles in seven days. The same
-                        // 7+7 fallback also gives quality a fair minimum sample.
+                        break;
+                    }
+
+                    $diagnostics = [];
+                    $quality = $this->quality->choose([$period => $candles], (float) $market->tick_size,
+                        $qualityThreshold, $minimumCandles, $minimumCoverage, $flatLimit, $diagnostics);
+                    $measured = $diagnostics[$period] ?? [];
+                    if ($quality === null) {
+                        $failure = $measured['status'] ?? 'quality_failed';
+                        $attempts[] = ['period' => $period, 'days' => $days, 'status' => $failure,
+                            'true_flat_ratio' => $measured['true_flat_ratio'] ?? null,
+                            'flat_limit' => $flatLimit, 'confirmation_window' => $isShorter ? 1 : null];
+                        unset($candles);
+                        // A 14-day aggregate must not hide a recent true-flat failure.
+                        // Shorter reentry is checked on independent windows, never aggregates.
+                        if ($failure === 'flat_failed' || $isShorter) {
+                            break;
+                        }
                         if ($windowIndex === 0) {
                             continue;
                         }
@@ -115,23 +145,38 @@ final class CandlePeriodReevaluation
                         'period' => $period,
                         'days' => $days,
                         'status' => $economic['passes'] ? 'passed' : 'economic_failed',
+                        'true_flat_ratio' => $quality['quality']['true_flat_ratio'],
+                        'flat_limit' => $flatLimit,
+                        'confirmation_window' => $isShorter ? 1 : null,
                         'buy_ratio' => $economic['buy_ratio'],
                         'sell_ratio' => $economic['sell_ratio'],
                         'buy' => $economic['buy'],
                         'sell' => $economic['sell'],
                         'hold' => $economic['hold'],
                     ];
+                    unset($candles);
                     if (! $economic['passes']) {
-                        unset($candles);
-                        // First miss: extend the same candidate another seven
-                        // days backward before rejecting it for a larger period.
-                        if ($windowIndex === 0) {
+                        if (! $isShorter && $windowIndex === 0) {
                             continue;
                         }
                         break;
                     }
 
-                    unset($candles);
+                    if ($isShorter && $shorterConfirmationWindows > 1) {
+                        $confirmation = $this->confirmShorter($feed, $period, $toMs,
+                            $days, $shorterConfirmationWindows, $flatLimit, (float) $market->tick_size,
+                            $qualityThreshold, $minimumCandles, $minimumCoverage, $takerFee,
+                            $minimumActionRatio, $dryRun, $attempts);
+                        if (! $confirmation['passes']) {
+                            if ($confirmation['pending']) {
+                                return $this->result($feed, $dryRun ? 'needs_backfill' : 'pending',
+                                    $confirmation['reason'], $attempts);
+                            }
+                            break;
+                        }
+                        $days *= $shorterConfirmationWindows;
+                    }
+
                     $probe = $this->depth->depthProbe($period, $toMs);
                     if (! $this->exchanges->hasHistoricalData($market->symbol, $period,
                         $probe['from'], $probe['until'], $probe['limit'])) {
@@ -139,8 +184,13 @@ final class CandlePeriodReevaluation
                         break;
                     }
 
+                    $selectionQuality = [...$quality['quality'], 'max_true_flat_ratio' => $flatLimit,
+                        'shorter_reentry' => $isShorter,
+                        'confirmation_windows' => $isShorter ? $shorterConfirmationWindows : 1,
+                        'confirmation_window_days' => $isShorter ? $confirmationDays : $days];
+
                     return $this->accept($feed, $period, $version, $days, $sampleFromMs, $sampleToMs,
-                        $quality['quality'], $economic, $qualityThreshold, $minimumCoverage, $dryRun, $attempts);
+                        $selectionQuality, $economic, $qualityThreshold, $minimumCoverage, $dryRun, $attempts);
                 }
             }
 
@@ -148,10 +198,98 @@ final class CandlePeriodReevaluation
                 $this->scheduleRetry($feed, (int) config('candle_period.no_candidate_retry_minutes', 360));
             }
 
-            return $this->result($feed, 'no_candidate', 'No supported period passed quality, history depth and the BUY/SELL density gate.', $attempts);
+            return $this->result($feed, 'no_candidate', 'No supported period passed true-flat, quality, history depth and BUY/SELL density gates.', $attempts);
         } finally {
             $lock->release();
         }
+    }
+
+    /**
+     * Confirm reentry using consecutive, non-overlapping historical windows.
+     * Running the evaluator again on the same data cannot count as confirmation.
+     *
+     * @param list<array<string, mixed>> $attempts
+     * @return array{passes: bool, pending: bool, reason: string}
+     */
+    private function confirmShorter(MarketFeed $feed, string $period, int $toMs, int $days, int $windows,
+        float $flatLimit, float $tickSize, float $qualityThreshold, int $minimumCandles,
+        float $minimumCoverage, float $takerFee, float $minimumActionRatio,
+        bool $dryRun, array &$attempts): array
+    {
+        for ($index = 1; $index < $windows; $index++) {
+            $untilMs = $toMs - $index * $days * 86_400_000;
+            $fromMs = max(0, $untilMs - $days * 86_400_000);
+            $candles = $this->window($feed->market->exchange->class, $feed->market->symbol,
+                $period, $fromMs, $untilMs);
+            $historyState = $this->historyState($feed, $period, $fromMs, $candles);
+            $window = $index + 1;
+            $attempt = ['period' => $period, 'days' => $days,
+                'confirmation_window' => $window, 'flat_limit' => $flatLimit];
+
+            if ($historyState === 'pending') {
+                $attempts[] = [...$attempt, 'status' => 'needs_backfill'];
+                if (! $dryRun) {
+                    $this->history->dispatchCandidate($feed, $period, $fromMs);
+                    $this->scheduleRetry($feed, (int) config('candle_period.backfill_retry_minutes', 15));
+                }
+
+                return ['passes' => false, 'pending' => true,
+                    'reason' => "{$period} needs {$windows} separate {$days}-day windows for shorter-period reentry; window {$window} needs backfill."];
+            }
+            if ($historyState === 'unavailable') {
+                $attempts[] = [...$attempt, 'status' => 'history_unavailable'];
+
+                return ['passes' => false, 'pending' => false, 'reason' => "{$period} confirmation history is unavailable."];
+            }
+
+            if (! $this->coversWindowEnd($candles, $period, $untilMs)) {
+                $attempts[] = [...$attempt, 'status' => 'stale_sample'];
+
+                return ['passes' => false, 'pending' => false,
+                    'reason' => "{$period} reentry window {$window} has stale candle data."];
+            }
+
+            $diagnostics = [];
+            $quality = $this->quality->choose([$period => $candles], $tickSize,
+                $qualityThreshold, $minimumCandles, $minimumCoverage, $flatLimit, $diagnostics);
+            $measured = $diagnostics[$period] ?? [];
+            if ($quality === null) {
+                $status = $measured['status'] ?? 'quality_failed';
+                $attempts[] = [...$attempt, 'status' => $status,
+                    'true_flat_ratio' => $measured['true_flat_ratio'] ?? null];
+
+                return ['passes' => false, 'pending' => false,
+                    'reason' => "{$period} reentry window {$window} failed {$status}."];
+            }
+
+            $economic = $this->viability->evaluate($candles, $takerFee, $minimumActionRatio);
+            $attempts[] = [...$attempt,
+                'status' => $economic['passes'] ? 'passed' : 'economic_failed',
+                'true_flat_ratio' => $quality['quality']['true_flat_ratio'],
+                'buy_ratio' => $economic['buy_ratio'], 'sell_ratio' => $economic['sell_ratio'],
+                'buy' => $economic['buy'], 'sell' => $economic['sell'], 'hold' => $economic['hold']];
+            unset($candles);
+            if (! $economic['passes']) {
+                return ['passes' => false, 'pending' => false,
+                    'reason' => "{$period} reentry window {$window} failed BUY/SELL density."];
+            }
+        }
+
+        return ['passes' => true, 'pending' => false, 'reason' => 'All shorter-period confirmation windows passed.'];
+    }
+
+    /** @param list<array<string, mixed>> $candles */
+    private function coversWindowEnd(array $candles, string $period, int $untilMs): bool
+    {
+        if ($candles === []) {
+            return false;
+        }
+        // Allow the last completed candle to be up to one timeframe behind the
+        // window cutoff. Do not treat a small burst at the beginning as a full week.
+        $timeframe = new CandleTimeframe;
+        $lastMs = (int) $candles[array_key_last($candles)]['microtimestamp'];
+
+        return $timeframe->next($timeframe->next($lastMs, $period), $period) >= $untilMs;
     }
 
     /** @return list<array<string, mixed>> */
@@ -315,6 +453,12 @@ final class CandlePeriodReevaluation
         ?string $period = null, ?int $days = null, ?array $economic = null): array
     {
         $lastEconomic = $economic ?? $this->latestEconomicAttempt($attempts);
+        $lastFlat = null;
+        foreach ($attempts as $attempt) {
+            if (isset($attempt['true_flat_ratio'])) {
+                $lastFlat = $attempt['true_flat_ratio'];
+            }
+        }
 
         return [
             'market_id' => $feed->market_id,
@@ -329,6 +473,7 @@ final class CandlePeriodReevaluation
             'window_days' => $days ?? ($lastEconomic['days'] ?? null),
             'buy_ratio' => $lastEconomic['buy_ratio'] ?? null,
             'sell_ratio' => $lastEconomic['sell_ratio'] ?? null,
+            'true_flat_ratio' => $lastFlat,
             'attempts' => $attempts,
         ];
     }

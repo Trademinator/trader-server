@@ -39,3 +39,35 @@ it('does not count a moving open-equals-close candle as truly flat', function ()
     expect($metrics['true_flat_ratio'])->toBe(0.0)
         ->and($metrics['score'])->toBeGreaterThan(0.7);
 });
+
+it('rejects true flats independently of an otherwise passing quality score', function () {
+    $candles = [];
+    for ($index = 0; $index < 100; $index++) {
+        $flat = $index < 12;
+        $candles[] = $flat
+            ? ['open' => '100', 'high' => '100', 'low' => '100', 'close' => '100', 'volume' => '1']
+            : ['open' => '100', 'high' => '110', 'low' => '99', 'close' => '109', 'volume' => '1'];
+    }
+    $quality = new CandleQuality;
+    $diagnostics = [];
+
+    expect($quality->choose(['5m' => $candles], 0.01, 0.7, 50, 0.8, 1.0))->not->toBeNull()
+        ->and($quality->choose(['5m' => $candles], 0.01, 0.7, 50, 0.8, 0.10, $diagnostics))->toBeNull()
+        ->and($diagnostics['5m']['status'])->toBe('flat_failed')
+        ->and($diagnostics['5m']['true_flat_ratio'])->toBe(0.12);
+});
+
+it('does not allow an undersized recent window to evade the flat rejection', function () {
+    $candles = array_fill(0, 40, [
+        'open' => '100', 'high' => '105', 'low' => '99', 'close' => '104', 'volume' => '1',
+    ]);
+    for ($i = 0; $i < 8; $i++) {
+        $candles[$i] = ['open' => '100', 'high' => '100', 'low' => '100', 'close' => '100', 'volume' => '1'];
+    }
+    $diagnostics = [];
+    $selected = (new CandleQuality)->choose(['4h' => $candles], 0.01, 0.7, 50, 0.8, 0.10, $diagnostics);
+
+    expect($selected)->toBeNull()
+        ->and($diagnostics['4h']['status'])->toBe('flat_failed')
+        ->and($diagnostics['4h']['true_flat_ratio'])->toBe(0.2);
+});

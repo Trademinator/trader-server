@@ -346,7 +346,11 @@ Description: Evaluate and optionally update automatic candle periods for subscri
 
 Reevaluate active subscribed feeds using the automatic selection policy, including fee-aware label viability and available history. Runs immediately and reports current/result periods, BUY/SELL ratios, status and reason. Normal mode may change a selected period or request more history; it keeps a current period until a replacement qualifies. Unlike gap/backfill commands, the pair filter is **`--pair`**, not `--symbol`.
 
-Dry run still performs evaluation and can contact exchanges; it does not change a selected period or queue history backfill.
+The hard true-flat cap (`CANDLE_PERIOD_MAX_TRUE_FLAT_RATIO`, default 10%) rejects O=H=L=C-heavy periods regardless of their composite quality score, including when the seven-day window is followed by a longer fallback. The existing BUY and SELL action-ratio floor is independent; keep `CANDLE_PERIOD_MINIMUM_ACTION_RATIO=0.05` if that is the operational target.
+
+Moving to a **shorter** period is intentionally harder: it must satisfy `CANDLE_PERIOD_SHORTER_REENTRY_FLAT_RATIO` (default 5%) and all existing quality and fee-aware BUY/SELL gates in `CANDLE_PERIOD_SHORTER_CONFIRMATION_WINDOWS` (default 2) separate, non-overlapping historical windows. Each window is at least `CANDLE_PERIOD_EVALUATION_DAYS` (default 7) and long enough to provide `CANDLE_PERIOD_MINIMUM_CANDLES`. Repeating the same evaluation does not create a new confirmation. When history is missing, the existing backfill queue is used; no new queue is introduced.
+
+Dry run still performs evaluation and can contact exchanges; it does not change a selected period or queue history backfill. It now shows true-flat percentages and limits for each attempted timeframe/window, with specific rejection statuses such as `flat_failed`.
 
 | Parameter | Default / requirement | Explanation |
 | --- | --- | --- |

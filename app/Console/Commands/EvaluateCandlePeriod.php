@@ -38,6 +38,7 @@ final class EvaluateCandlePeriod extends Command
             ? max(1, (int) config('candle_period.scheduled_markets_per_run', 10))
             : null;
         $rows = [];
+        $candidateRows = [];
         $failed = false;
         $processed = 0;
         foreach ($query->orderBy('market_id')->lazy(5) as $feed) {
@@ -51,14 +52,28 @@ final class EvaluateCandlePeriod extends Command
                     $result['exchange'], $result['symbol'], $result['current_period'] ?? '-',
                     $result['selected_period'] ?? '-', $result['status'],
                     $result['window_days'] ?? '-', $this->percent($result['buy_ratio']),
-                    $this->percent($result['sell_ratio']), $result['reason'],
+                    $this->percent($result['sell_ratio']), $this->percent($result['true_flat_ratio'] ?? null),
+                    $result['reason'],
                 ];
+                if ($dryRun) {
+                    foreach ($result['attempts'] ?? [] as $attempt) {
+                        $window = $attempt['confirmation_window'] ?? null;
+                        $candidateRows[] = [
+                            $result['exchange'], $result['symbol'], $attempt['period'],
+                            $window === null ? "{$attempt['days']}d" : "{$window}: {$attempt['days']}d",
+                            $attempt['status'], $this->percent($attempt['true_flat_ratio'] ?? null),
+                            $this->percent($attempt['flat_limit'] ?? null),
+                            $this->percent($attempt['buy_ratio'] ?? null),
+                            $this->percent($attempt['sell_ratio'] ?? null),
+                        ];
+                    }
+                }
             } catch (Throwable $error) {
                 report($error);
                 $failed = true;
                 $rows[] = [
                     $feed->market->exchange->class, $feed->market->symbol, $feed->selected_period ?? '-', '-',
-                    'error', '-', '-', '-', $error->getMessage(),
+                    'error', '-', '-', '-', '-', $error->getMessage(),
                 ];
             } finally {
                 $feed->unsetRelations();
@@ -73,8 +88,13 @@ final class EvaluateCandlePeriod extends Command
             return self::SUCCESS;
         }
 
-        $this->table(['Exchange', 'Pair', 'Current', 'Result', 'Status', 'Days', 'BUY', 'SELL', 'Reason'], $rows);
+        $this->table(['Exchange', 'Pair', 'Current', 'Result', 'Status', 'Days', 'BUY', 'SELL', 'True flats', 'Reason'], $rows);
         if ($dryRun) {
+            if ($candidateRows !== []) {
+                $this->info('Candidate windows (confirmation windows are numbered from newest to oldest):');
+                $this->table(['Exchange', 'Pair', 'Period', 'Window', 'Status', 'True flats', 'Flat cap', 'BUY', 'SELL'],
+                    $candidateRows);
+            }
             $this->info('Dry run: no period was changed and no history backfill was queued.');
         }
 

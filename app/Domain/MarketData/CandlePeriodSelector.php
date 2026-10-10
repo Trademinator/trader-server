@@ -49,7 +49,8 @@ final class CandlePeriodSelector
             if ($last !== false && $timeframe->next($timeframe->next((int) $last['microtimestamp'], $period), $period) < $closedBefore) {
                 continue;
             }
-            $selected = $this->quality->choose([$period => $complete], $tickSize, $threshold, $minimum, $coverage);
+            $selected = $this->quality->choose([$period => $complete], $tickSize, $threshold, $minimum, $coverage,
+                max(0.0, min(1.0, (float) config('candle_period.max_true_flat_ratio', 0.10))));
             if ($selected === null) {
                 continue;
             }
