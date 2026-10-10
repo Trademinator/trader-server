@@ -125,6 +125,41 @@ it('returns the saved independent model scores in decision and market payloads',
         ->assertJsonPath('market.signal.action_meaning', 'supported_buy_by_outcome_action_matrix');
 });
 
+it('allows an Action-only BUY through the Client API while retaining degraded provenance and safeguards', function () {
+    $this->freezeTime();
+    $user = User::factory()->create();
+    $scoring = ['version' => 'outcome-action-matrix-v3', 'decision_mode' => 'degraded_action_only',
+        'action' => ['action' => 'buy', 'reason' => 'supported', 'confidence' => 0.82],
+        'outcome' => ['outcome' => 'neutral', 'reason' => 'holdout_failed']];
+    [$secret, $subscription, $signal] = f6Market($user, '1h', now()->subMinutes(30)->getTimestampMs(),
+        extraPayload: ['confidence' => 0.82, 'scoring' => $scoring],
+        action: 'buy', reason: 'degraded_action_only');
+    DB::table('intelligence_models')->where('model_id', $signal->model_id)->update(['status' => 'abstaining']);
+    $url = '/api/v1/client/markets/'.$subscription->getKey().'/decision';
+
+    $this->withToken($secret)->postJson($url, f6DecisionState(100))
+        ->assertOk()->assertJsonPath('eligible', true)->assertJsonPath('action', 'buy')
+        ->assertJsonPath('reason', 'eligible')
+        ->assertJsonPath('action_meaning', 'degraded_buy_by_action_knn_without_outcome_confirmation')
+        ->assertJsonPath('server_signal.action', 'buy')
+        ->assertJsonPath('server_signal.reason', 'degraded_action_only')
+        ->assertJsonPath('server_signal.evidence_status', 'degraded')
+        ->assertJsonPath('server_signal.confidence', 0.82)
+        ->assertJsonPath('server_signal.scoring', $scoring);
+    $this->withToken($secret)->getJson('/api/v1/client/markets/'.$subscription->getKey())
+        ->assertOk()->assertJsonPath('market.signal.action', 'buy');
+});
+
+it('still blocks weak Action-only BUY evidence at the Client confidence gate', function () {
+    $this->freezeTime();
+    $user = User::factory()->create();
+    [$secret, $subscription] = f6Market($user, '1h', now()->subMinutes(30)->getTimestampMs(),
+        extraPayload: ['confidence' => 0.59], action: 'buy', reason: 'degraded_action_only');
+    $this->withToken($secret)->postJson('/api/v1/client/markets/'.$subscription->getKey().'/decision', f6DecisionState(100))
+        ->assertOk()->assertJsonPath('eligible', false)->assertJsonPath('action', 'buy')
+        ->assertJsonPath('reason', 'confidence_below_client_minimum');
+});
+
 it('rejects excessive drift from the signal reference price and accepts bounded drift', function () {
     $this->freezeTime();
     config([

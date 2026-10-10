@@ -15,7 +15,7 @@ final class SignalDecisionMatrix
 
         return match ($action) {
             'sell' => in_array($outcome, ['super_bear', 'bear', 'neutral'], true) ? 'sell' : 'hodl',
-            'buy' => in_array($outcome, ['bull', 'super_bull'], true) ? 'buy' : 'hodl',
+            'buy' => in_array($outcome, ['neutral', 'bull', 'super_bull'], true) ? 'buy' : 'hodl',
             default => 'hodl',
         };
     }
@@ -38,7 +38,9 @@ final class SignalDecisionMatrix
 
         if ($actionSupported) {
             $rawAction = (string) $action['action'];
-            $resolved = $rawAction === 'sell' ? 'sell' : 'hodl';
+            // An unavailable Outcome cannot veto supported Action KNN evidence.
+            // Unknown actions still fail closed to HOLD.
+            $resolved = in_array($rawAction, ['buy', 'hodl', 'sell'], true) ? $rawAction : 'hodl';
             $preserved = $resolved === $rawAction;
 
             return [

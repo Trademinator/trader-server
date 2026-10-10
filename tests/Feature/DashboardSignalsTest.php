@@ -66,7 +66,7 @@ it('records the original model evidence, preserves its time and distinguishes su
         $first = app(SignalJournal::class)->record($market);
         expect($first->reason)->toBe('supported')->and($first->action)->toBe('hodl')
             ->and($first->model_id)->toBe($report['model_id'])->and($first->payload['horizon_candles'])->toBe(2);
-        expect($first->payload['scoring']['version'])->toBe('outcome-action-matrix-v2')
+        expect($first->payload['scoring']['version'])->toBe('outcome-action-matrix-v3')
             ->and($first->payload['scoring']['action']['sources']['components']['algorithmic']['action'])->toBe('hodl')
             ->and((float) $first->payload['scoring']['action']['sources']['effective_weights']['algorithmic'])->toBe(1.0);
         expect(app(SignalJournal::class)->record($market)->getKey())->toBe($first->getKey());

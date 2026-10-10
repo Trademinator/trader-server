@@ -303,7 +303,7 @@ final class MarketIntelligence
             'similarity' => $decision['similarity'],
             'votes' => $action['votes'],
             'scoring' => [
-                'version' => 'outcome-action-matrix-v2',
+                'version' => 'outcome-action-matrix-v3',
                 'decision_mode' => $decision['mode'],
                 'outcome' => $outcome,
                 'outcome_core' => $coreOutcome,

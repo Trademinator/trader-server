@@ -115,7 +115,7 @@ final class SignalJournal
     public static function hasDecision(string $action, string $reason): bool
     {
         return $reason === 'supported'
-            || ($reason === 'degraded_action_only' && in_array($action, ['hodl', 'sell'], true));
+            || ($reason === 'degraded_action_only' && in_array($action, ['buy', 'hodl', 'sell'], true));
     }
 
     public static function label(string $action, string $reason): string
@@ -133,7 +133,7 @@ final class SignalJournal
     {
         return match ($reason) {
             'supported' => 'Similar historical market states support this signal.',
-            'degraded_action_only' => 'Only Action KNN has sufficient evidence for this candle; Outcome KNN cannot confirm it. Supported HOLD/SELL can be retained; a proposed BUY becomes defensive HOLD with zero confidence.',
+            'degraded_action_only' => 'Only Action KNN has sufficient evidence for this candle; Outcome KNN cannot confirm it. Supported BUY/HOLD/SELL are retained with Action-only confidence.',
             'degraded_outcome_only' => 'Outcome KNN has evidence, but Action KNN cannot confirm a trade. The Server returns defensive HOLD with zero confidence.',
             'knn_abstention' => 'Neither Outcome nor Action KNN has enough supported evidence for a decision.',
             'no_model' => 'Training has not completed for this market yet.',

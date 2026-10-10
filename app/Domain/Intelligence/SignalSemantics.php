@@ -7,8 +7,7 @@ final class SignalSemantics
     /** Only BUY and SELL are actionable Client API values; abstentions are HOLD. */
     public static function clientAction(string $action, string $reason): string
     {
-        if (! in_array($reason, ['supported', 'degraded_action_only'], true)
-            || ($reason === 'degraded_action_only' && $action === 'buy')) {
+        if (! in_array($reason, ['supported', 'degraded_action_only'], true)) {
             return 'hold';
         }
 
@@ -27,12 +26,16 @@ final class SignalSemantics
     public static function actionMeaning(string $action, string $reason, ?array $scoring = null): ?string
     {
         if ($reason === 'degraded_action_only') {
-            return $action === 'sell' ? 'degraded_sell_by_action_knn_without_outcome_confirmation' : null;
+            return match ($action) {
+                'buy' => 'degraded_buy_by_action_knn_without_outcome_confirmation',
+                'sell' => 'degraded_sell_by_action_knn_without_outcome_confirmation',
+                default => null,
+            };
         }
         if ($reason !== 'supported') {
             return null;
         }
-        if (in_array(($scoring['version'] ?? null), ['outcome-action-matrix-v1', 'outcome-action-matrix-v2'], true)) {
+        if (in_array(($scoring['version'] ?? null), ['outcome-action-matrix-v1', 'outcome-action-matrix-v2', 'outcome-action-matrix-v3'], true)) {
             return match ($action) {
                 'buy' => 'supported_buy_by_outcome_action_matrix',
                 'sell' => 'supported_sell_by_outcome_action_matrix',

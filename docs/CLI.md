@@ -1269,8 +1269,8 @@ The automated documentation test checks command coverage, normalized signatures/
 
 ### Current Outcome + Action KNN contract
 
-trademinator:knn-build builds independently tuned Outcome and Action KNNs. H is the frequency-weighted mean spacing of opposite Action pivots. Outcome uses M=tanh(beta*sqrt(H)/V), V=ATR_t/Close_t, and hard boundaries -0.60/-0.20/0.20/0.60. K candidates begin at 4. Human source weight is min(0.60,0.60*sqrt(N_H/750)). Final SELL/HOLD/BUY is produced by the fixed Outcome x Action matrix. The default build budget is INTELLIGENCE_MAX_SECONDS=1800; intelligence workers use --timeout=2200.
+trademinator:knn-build builds independently tuned Outcome and Action KNNs. H is the frequency-weighted mean spacing of opposite Action pivots. Outcome uses M=tanh(beta*sqrt(H)/V), V=ATR_t/Close_t, and hard boundaries -0.60/-0.20/0.20/0.60. K candidates begin at 4. Human source weight is min(0.60,0.60*sqrt(N_H/750)). Decision matrix v3 allows Action BUY with Neutral/Bull/Super Bull, keeps the Bear/Super Bear BUY veto, and preserves previous SELL rules. The default build budget is INTELLIGENCE_MAX_SECONDS=1800; intelligence workers use --timeout=2200.
 
 ### Degraded KNN availability
 
-Action-only SELL/HOLD can be returned with `degraded_action_only`; Action-only BUY and Outcome-only states return HOLD.
+When Outcome is unavailable, supported Action KNN BUY/HOLD/SELL predictions are retained with `degraded_action_only`, preserving Action confidence and evidence metadata; the Client still applies its normal safeguards. Outcome-only states return HOLD. An abstaining Action KNN cannot initiate a trade. Old recorded signals remain immutable; new recordings use `outcome-action-matrix-v3`. A model rebuild is not required for this inference-only policy change.

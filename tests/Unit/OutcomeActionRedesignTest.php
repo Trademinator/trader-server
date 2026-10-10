@@ -56,18 +56,37 @@ it('applies all fifteen Outcome and Action combinations', function (string $acti
     ['hodl', 'super_bull', 'hodl'],
     ['buy', 'super_bear', 'hodl'],
     ['buy', 'bear', 'hodl'],
-    ['buy', 'neutral', 'hodl'],
+    ['buy', 'neutral', 'buy'],
     ['buy', 'bull', 'buy'],
     ['buy', 'super_bull', 'buy'],
 ]);
 
 
-it('uses Action-only degraded mode to preserve exits without allowing a new BUY', function (string $action, string $expected, float $confidence) {
+it('supports Action BUY with a neutral Outcome and keeps the lower confidence', function () {
+    $a = ['action' => 'buy', 'reason' => 'supported', 'confidence' => 0.88,
+        'neighbors' => 10, 'effective_neighbors' => 8.5, 'similarity' => 0.90];
+    $o = ['outcome' => 'neutral', 'reason' => 'supported', 'confidence' => 0.70,
+        'neighbors' => 9, 'effective_neighbors' => 7.5, 'similarity' => 0.87];
+    expect(SignalDecisionMatrix::resolve($a, $o))->toMatchArray([
+        'action' => 'buy', 'reason' => 'supported', 'mode' => 'full', 'confidence' => 0.70,
+    ]);
+});
+
+it('preserves supported Action predictions when Outcome cannot decide', function (string $action, string $expected) {
     $a = ['action' => $action, 'reason' => 'supported', 'confidence' => 0.82, 'neighbors' => 9, 'effective_neighbors' => 7.5, 'similarity' => 0.91];
     $o = ['outcome' => 'neutral', 'reason' => 'no_eligible_k', 'confidence' => 0.0, 'neighbors' => 0, 'effective_neighbors' => 0.0, 'similarity' => 0.0];
     $d = SignalDecisionMatrix::resolve($a, $o);
-    expect($d['action'])->toBe($expected)->and($d['reason'])->toBe('degraded_action_only')->and($d['confidence'])->toBe($confidence);
-})->with([['sell','sell',0.82],['hodl','hodl',0.82],['buy','hodl',0.0]]);
+    expect($d)->toMatchArray(['action' => $expected, 'reason' => 'degraded_action_only',
+        'confidence' => 0.82, 'neighbors' => 9, 'effective_neighbors' => 7.5, 'similarity' => 0.91]);
+})->with([['sell','sell'],['hodl','hodl'],['buy','buy']]);
+
+it('still refuses an unsupported Action BUY even if Outcome is unavailable', function () {
+    $a = ['action' => 'buy', 'reason' => 'weak_consensus', 'confidence' => 0.90];
+    $o = ['outcome' => 'neutral', 'reason' => 'holdout_failed'];
+    expect(SignalDecisionMatrix::resolve($a, $o))->toMatchArray([
+        'action' => 'hodl', 'reason' => 'knn_abstention', 'confidence' => 0.0,
+    ]);
+});
 
 it('returns HOLD when only Outcome KNN is supported', function () {
     $d = SignalDecisionMatrix::resolve(

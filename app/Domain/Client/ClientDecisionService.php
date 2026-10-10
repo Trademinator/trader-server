@@ -56,9 +56,7 @@ final class ClientDecisionService
 
         $signalExpiry = $this->freshness->expiresAt($signal->decision_at_ms, $signal->period);
         $base['expires_at_ms'] = min($expires, $signalExpiry ?? $expires);
-        $degradedActionOnly = $signal->reason === 'degraded_action_only';
-        if (! in_array($signal->reason, ['supported', 'degraded_action_only'], true)
-            || ($degradedActionOnly && $signal->action === 'buy')) {
+        if (! in_array($signal->reason, ['supported', 'degraded_action_only'], true)) {
             // No actionable signal is still an explicit HOLD to the Client.
             // The original diagnostic reason remains in server_signal.reason.
             return [...$base, 'reason' => 'server_abstention', 'action' => 'hold'];
@@ -268,7 +266,8 @@ final class ClientDecisionService
             'reason' => $signal->reason, 'evidence_status' => SignalSemantics::evidenceStatus($signal->reason),
             'action_meaning' => $signal->payload['action_meaning']
                 ?? SignalSemantics::actionMeaning($signal->action, $signal->reason, $signal->payload['scoring'] ?? null),
-            'confidence' => $signal->reason === 'supported' ? (float) ($signal->payload['confidence'] ?? 0.0) : null,
+            'confidence' => in_array($signal->reason, ['supported', 'degraded_action_only'], true)
+                ? (float) ($signal->payload['confidence'] ?? 0.0) : null,
             'decision_at_ms' => $signal->decision_at_ms, 'recorded_at_ms' => $signal->recorded_at_ms,
             'regime' => $signal->payload['regime'] ?? null,
             'reference_price' => $signal->payload['reference_price'] ?? null,

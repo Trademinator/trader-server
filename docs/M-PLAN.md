@@ -171,4 +171,4 @@ npm run build
 
 The standard PHP suite uses SQLite `:memory:` only. Follow [the test safety rules](M3-R1-RECOVERY.md); never aim tests at deployment databases.
 
-- **Degraded KNN availability:** Action-only SELL/HOLD are preserved while BUY becomes HOLD; Outcome-only becomes HOLD. Client execution never opens a new BUY from degraded intelligence.
+- **Degraded KNN availability:** Supported Action-only BUY/HOLD/SELL are preserved with Action-only evidence; Outcome-only becomes HOLD. Client execution can BUY from validated Action-only evidence after its normal trading safeguards. With both models supported, Action BUY + Outcome NEUTRAL becomes BUY; BEAR/SUPER BEAR still veto BUY.

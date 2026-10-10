@@ -206,7 +206,7 @@ idempotence, and owner authorization. Application integration tests require the
 project's locked Composer dependencies and its PHP extensions.
 ## Degraded KNN availability
 
-If Action KNN is supported while Outcome KNN is unavailable, SELL remains SELL, HOLD remains HOLD, and BUY becomes HOLD. The Server reports `degraded_action_only`. If only Outcome KNN is supported, the Server returns HOLD with `degraded_outcome_only`. The Client never opens a new BUY from degraded intelligence.
+If Action KNN is supported while Outcome KNN is unavailable, its BUY/HOLD/SELL prediction remains unchanged. The Server reports `degraded_action_only`, retaining the Action confidence/evidence and explicitly marking the lack of Outcome confirmation. If only Outcome KNN is supported, the Server returns HOLD with `degraded_outcome_only`. With both KNNs supported, Action BUY + Outcome NEUTRAL is now BUY; BEAR/SUPER BEAR still veto BUY. Client execution still requires a fresh signal and all configured execution safeguards. New scoring uses `outcome-action-matrix-v3`; old recorded snapshots remain immutable.
 
 ## Weekly auto-label and horizon provenance
 

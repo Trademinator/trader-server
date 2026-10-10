@@ -26,7 +26,7 @@
             @endif
             <p class="guide-help">Signals are calculated by background workers. This page shows a recorded observation only for the selected period and current model; expired directional or Action-only observations are not reused. The CLI computes a new prediction and can differ until the next recorder run.</p>
             @if ($signal['reason'] === 'degraded_action_only')
-                <p class="guide-notice">Action-only fallback: only Action KNN supplied a supported prediction. Outcome KNN did not confirm it. A proposed BUY is blocked and downgraded to defensive HOLD with zero confidence; this is not full Outcome + Action scoring.</p>
+                <p class="guide-notice">Action-only fallback: Action KNN supplied a supported BUY/HOLD/SELL prediction without Outcome KNN confirmation. Its own confidence and evidence gates apply, followed by the normal Client trading safeguards.</p>
             @endif
             <p class="guide-help">Confidence describes the supported evidence (Action KNN alone in Action-only mode); it is not a calibrated probability of profit. Market state is the supported Outcome class, when available. The Client still applies trading fees, balances and execution rules.</p>
             @if ($progress['evidence_evaluated'])
@@ -74,7 +74,7 @@
                         (requested: {{ $report['outcome']['schema_selection']['requested_schema'] }}).
                         {{ ucwords(str_replace('_', ' ', $report['outcome']['schema_selection']['reason'])) }}.</p>
                 @endif
-                <p class="guide-help">Human influence follows W_H = min(60%, 60% × √(N_H / 750)). An unavailable human source contributes zero. With both KNNs supported, the 3×5 decision matrix determines the action. If Outcome is unavailable, the Action-only fallback may retain HOLD/SELL but never BUY.</p>
+                <p class="guide-help">Human influence follows W_H = min(60%, 60% × √(N_H / 750)). An unavailable human source contributes zero. With both KNNs supported, the 3×5 decision matrix allows Action BUY with Neutral/Bull/Super Bull, but blocks BUY with Bear/Super Bear. If Outcome is unavailable, a supported Action KNN BUY/HOLD/SELL remains actionable on its own evidence.</p>
                 @can('train-intelligence')<a href="{{ route('human-training.index', ['exchange' => $item->market->exchange->class, 'symbol' => $item->market->symbol, 'period' => $period]) }}">Open Human Training</a>@endcan
             </section>
         @endif

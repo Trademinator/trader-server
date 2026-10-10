@@ -14,7 +14,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
-function degradedSignalDisplayFixture(User $user, int $ageMinutes = 15): MarketSubscription
+function degradedSignalDisplayFixture(User $user, int $ageMinutes = 15, string $action = 'hodl'): MarketSubscription
 {
     $exchange = Exchange::query()->create(['name' => 'Bitso', 'class' => 'bitso', 'config' => '{}']);
     $market = Market::query()->create(['exchange_id' => $exchange->getKey(),
@@ -46,14 +46,14 @@ function degradedSignalDisplayFixture(User $user, int $ageMinutes = 15): MarketS
 
     $decision = now()->subMinutes($ageMinutes)->getTimestampMs();
     $signal = [
-        'action' => 'hodl', 'reason' => 'degraded_action_only', 'confidence' => 0.6393635744,
+        'action' => $action, 'reason' => 'degraded_action_only', 'confidence' => 0.6393635744,
         'neighbors' => 64, 'effective_neighbors' => 60.39435353, 'similarity' => 0.8188,
         'decision_at_ms' => $decision, 'regime' => 'neutral', 'patterns' => [],
         'scoring' => ['decision_mode' => 'degraded_action_only'],
         'outcome_knn' => ['outcome' => 'neutral', 'reason' => 'holdout_failed', 'confidence' => 0,
             'neighbors' => 0, 'effective_neighbors' => 0,
             'sources' => ['effective_weights' => ['algorithmic' => 0, 'human' => 0]]],
-        'action_knn' => ['action' => 'hodl', 'reason' => 'supported', 'confidence' => 0.6393635744,
+        'action_knn' => ['action' => $action, 'reason' => 'supported', 'confidence' => 0.6393635744,
             'neighbors' => 64, 'effective_neighbors' => 60.39435353,
             'sources' => ['effective_weights' => ['algorithmic' => 1, 'human' => 0]]],
         // A recorded payload may have an old explanation: the Web UI must use current semantics.
@@ -63,7 +63,7 @@ function degradedSignalDisplayFixture(User $user, int $ageMinutes = 15): MarketS
         'snapshot_key' => hash('sha256', $model.$decision), 'period' => '15m',
         'model_id' => $model, 'decision_at_ms' => $decision,
         'recorded_at_ms' => now()->getTimestampMs(), 'is_change' => true,
-        'action' => 'hodl', 'reason' => 'degraded_action_only', 'payload' => $signal]);
+        'action' => $action, 'reason' => 'degraded_action_only', 'payload' => $signal]);
 
     return $subscription;
 }
@@ -91,6 +91,20 @@ it('shows a fresh Action-only HOLD with its actual neighbours, even when the ove
         ->assertDontSee('The model is currently unavailable. No directional signal is being issued.');
 });
 
+it('shows a supported Action-only BUY in the intelligence page and dashboard', function () {
+    $this->travelTo('2026-10-09 13:00:00 UTC');
+    config(['intelligence.max_signal_age_periods' => 2, 'intelligence.max_signal_age_seconds' => 86400]);
+    $user = User::factory()->create();
+    $subscription = degradedSignalDisplayFixture($user, action: 'buy');
+
+    $this->actingAs($user)->get(route('markets.intelligence', $subscription->getKey()))
+        ->assertOk()->assertSee('BUY (Action-only)')->assertSee('Action-only fallback result');
+    $card = app(DashboardData::class)->markets($user)['cards']->first();
+    expect($card['signal_fresh'])->toBeTrue()
+        ->and($card['label'])->toBe('BUY (Action-only)');
+    $this->get('/dashboard')->assertOk()->assertSee('BUY (Action-only)');
+});
+
 it('does not reuse an expired Action-only recorded observation as a current signal', function () {
     $this->travelTo('2026-10-09 13:00:00 UTC');
     config(['intelligence.max_signal_age_periods' => 2, 'intelligence.max_signal_age_seconds' => 86400]);
@@ -110,8 +124,8 @@ it('keeps abstentions distinct from supported degraded decisions', function () {
     expect(SignalJournal::label('hodl', 'supported'))->toBe('HOLD')
         ->and(SignalJournal::label('hodl', 'degraded_action_only'))->toBe('HOLD (Action-only)')
         ->and(SignalJournal::label('sell', 'degraded_action_only'))->toBe('SELL (Action-only)')
-        ->and(SignalJournal::hasDecision('buy', 'degraded_action_only'))->toBeFalse()
-        ->and(SignalJournal::label('buy', 'degraded_action_only'))->toBe('Waiting for evidence')
+        ->and(SignalJournal::hasDecision('buy', 'degraded_action_only'))->toBeTrue()
+        ->and(SignalJournal::label('buy', 'degraded_action_only'))->toBe('BUY (Action-only)')
         ->and(SignalJournal::label('hodl', 'knn_abstention'))->toBe('Waiting for evidence')
         ->and(SignalJournal::explain('degraded_action_only'))->toContain('Outcome KNN cannot confirm');
 });

@@ -276,7 +276,7 @@ final class IntelligenceReadiness
             'missing_features', 'stale_features', 'missing_selected_features', 'source_feature_mismatch' => 'Check collection and rebuild the selected M2 features. Then rebuild the model if needed.',
             'no_post_training_candle' => 'Wait for the next genuinely closed candle and its feature build.',
             'awaiting_recording' => 'A validated model is available. Wait for the next signal recording and intelligence queue run; an older observation is not a current signal.',
-            'degraded_action_only' => 'Only Action KNN has sufficient inference evidence. Outcome KNN cannot confirm this candle; BUY is blocked and the next model build should revisit Outcome validation.',
+            'degraded_action_only' => 'Only Action KNN has sufficient inference evidence. Its supported BUY/HOLD/SELL suggestion is retained without Outcome confirmation; review Outcome validation separately.',
             'degraded_outcome_only', 'knn_abstention' => 'No supported Action KNN decision is available. Inspect the individual Outcome and Action evidence below.',
             'no_similar_history', 'insufficient_effective_neighbors', 'tied_votes', 'weak_consensus',
             'tied_model_scores', 'weak_model_consensus' => 'The model is available but this market state lacks sufficient evidence. More time does not guarantee a directional signal.',

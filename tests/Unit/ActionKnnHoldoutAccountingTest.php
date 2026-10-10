@@ -87,7 +87,7 @@ it('maps Server abstentions to Client HOLD while retaining the reason', function
         ->and(SignalSemantics::clientAction('buy', 'weak_consensus'))->toBe('hold')
         ->and(SignalSemantics::clientAction('sell', 'no_similar_history'))->toBe('hold')
         ->and(SignalSemantics::clientAction('sell', 'degraded_action_only'))->toBe('sell')
-        ->and(SignalSemantics::clientAction('buy', 'degraded_action_only'))->toBe('hold')
+        ->and(SignalSemantics::clientAction('buy', 'degraded_action_only'))->toBe('buy')
         ->and(SignalSemantics::evidenceStatus('weak_consensus'))->toBe('abstaining')
         ->and(SignalSemantics::evidenceStatus('supported'))->toBe('supported');
 });
