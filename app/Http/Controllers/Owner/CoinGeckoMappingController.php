@@ -125,9 +125,23 @@ final class CoinGeckoMappingController extends Controller
             return $targets?->update($values) ?? 0;
         });
 
-        return back()->with('status', $updated > 0
-            ? 'CoinGecko coin mapping updated for '.($updated + 1).' markets.'
-            : 'CoinGecko coin mapping updated.');
+        $requestedBulk = $request->boolean('apply_same_base');
+        $total = $updated + 1;
+        $message = $requestedBulk
+            ? ($updated > 0
+                ? 'Updated '.$total.' markets ('.$updated.' additional markets).'
+                : 'Saved this market. No additional unresolved markets needed updating.')
+            : 'Saved this market. Other markets were not changed.';
+
+        return back()->with('coingecko_mapping_feedback', [
+            'coin' => $coin['name'],
+            'ticker' => strtoupper((string) ($coin['symbol'] ?? $mapping->base_symbol)),
+            'coin_id' => $coin['id'],
+            'total' => $total,
+            'additional' => $updated,
+            'bulk_requested' => $requestedBulk,
+            'message' => $message,
+        ]);
     }
 
     public function destroy(CoinGeckoMarketMapping $mapping): RedirectResponse

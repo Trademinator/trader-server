@@ -45,7 +45,10 @@ it('can explicitly reuse XRP identity for unresolved supported quotes without ch
 
     $this->actingAs($owner)->put(route('owner.coingecko-mappings.update', $source),
         ['coin_id' => 'ripple', 'apply_same_base' => '1'])
-        ->assertRedirect()->assertSessionHas('status', 'CoinGecko coin mapping updated for 3 markets.');
+        ->assertRedirect()
+        ->assertSessionHas('coingecko_mapping_feedback.total', 3)
+        ->assertSessionHas('coingecko_mapping_feedback.additional', 2)
+        ->assertSessionHas('coingecko_mapping_feedback.coin_id', 'ripple');
 
     foreach ([$source, $cad, $mxn] as $mapping) {
         expect($mapping->fresh()->coin_id)->toBe('ripple')
@@ -115,4 +118,28 @@ it('treats historical trends and category as optional while requiring fresh core
         ->and($context['features']['context.category_momentum'])->toBeNull();
     $snapshot['payload']['coin']['market_cap'] = null;
     expect((new ContextFeatures)->calculate($snapshot, 2.0, $at, 7200000)['context_ready'])->toBeFalse();
+});
+
+it('shows an explicit single-market save when no unresolved XRP markets remain', function () {
+    $owner = User::factory()->create();
+    config(['operations.owner_uuid' => $owner->getKey()]);
+    $mapping = coinGeckoBulkFixture('bitso', 'XRP/USD', 'ambiguous');
+    Http::preventStrayRequests();
+    Http::fake([
+        '*/coins/list' => Http::response([['id' => 'ripple', 'symbol' => 'xrp', 'name' => 'XRP']]),
+        '*/simple/supported_vs_currencies' => Http::response(['usd']),
+        '*/coins/ripple*' => Http::response(['categories' => []]),
+    ]);
+
+    $this->actingAs($owner)
+        ->put(route('owner.coingecko-mappings.update', $mapping),
+            ['coin_id' => 'ripple', 'apply_same_base' => '1'])
+        ->assertRedirect()
+        ->assertSessionHas('coingecko_mapping_feedback.total', 1)
+        ->assertSessionHas('coingecko_mapping_feedback.additional', 0)
+        ->assertSessionHas('coingecko_mapping_feedback.bulk_requested', true);
+    $this->get(route('owner.coingecko-mappings.index'))
+        ->assertOk()
+        ->assertSee('No additional unresolved markets needed updating.')
+        ->assertSee('Mapping saved: XRP');
 });

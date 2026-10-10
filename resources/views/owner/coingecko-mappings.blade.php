@@ -1,4 +1,17 @@
 <x-owner.layout title="CoinGecko mappings">
+    @if (session('coingecko_mapping_feedback'))
+        @php
+            $feedback = session('coingecko_mapping_feedback');
+        @endphp
+        <section class="owner-panel" role="status" aria-live="polite" data-coingecko-mapping-feedback>
+            <div class="owner-notice">
+                <strong>Mapping saved: {{ $feedback['ticker'] }} → {{ $feedback['coin'] }} ({{ $feedback['coin_id'] }})</strong>
+                <p>{{ $feedback['message'] }}</p>
+                <p class="text-sm">Total saved: {{ $feedback['total'] }} {{ $feedback['total'] === 1 ? 'market' : 'markets' }} · Additional markets updated: {{ $feedback['additional'] }}.</p>
+                <p class="text-sm">The checkbox is a one-time action and resets after each submission.</p>
+            </div>
+        </section>
+    @endif
     <section class="owner-panel">
         <div class="overflow-x-auto bg-white dark:bg-gray-800 rounded-lg shadow p-4">
             <p class="mb-4 text-sm text-gray-600 dark:text-gray-300">Only mappings requiring human intervention are shown. The exchange's <strong>base symbol</strong> is the coin we could not identify automatically; the quote is the currency after the slash. Manually resolved rows stay here so you can correct mistakes. Unsupported quote currencies cannot be fixed by choosing another coin.</p>
