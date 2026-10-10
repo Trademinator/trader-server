@@ -106,6 +106,7 @@
                  data-update-url="{{ route('human-training.candles.update', $state['manifest']['dataset_id']) }}"
                  data-delete-url="{{ route('human-training.candles.destroy', $state['manifest']['dataset_id']) }}"
                  data-auto-url="{{ route('human-training.candles.auto-label', $state['manifest']['dataset_id']) }}"
+                 data-auto-status-url="{{ route('human-training.candles.auto-label.status', $state['manifest']['dataset_id']) }}"
                  data-submit-url="{{ route('human-training.candles.submit', $state['manifest']['dataset_id']) }}"
                  data-submit-batch-size="{{ min(\App\Domain\Intelligence\CandleTraining::SUBMIT_BATCH_SIZE, \App\Domain\Intelligence\CandleTraining::submissionLimit()) }}"
                  data-csrf="{{ csrf_token() }}"
@@ -132,7 +133,7 @@
                         </div>
                         <strong class="candle-training-source-total" data-automatic-stat-total>{{ $state['automatic_label_stats']['available'] ? number_format($state['automatic_label_stats']['total']) : '—' }}</strong>
                     </div>
-                    <p class="guide-help candle-training-source-note">Latest published market analysis, shared with the CLI. Reload after a CLI run or completed background build.</p>
+                    <p class="guide-help candle-training-source-note">Latest published market analysis, shared with the CLI. Auto-labelling updates these totals without rebuilding the KNN.</p>
                     <div class="candle-training-stats" aria-label="Automatic Training BUY HOLD SELL counts">
                         @foreach(['buy' => 'BUY', 'hold' => 'HOLD', 'sell' => 'SELL'] as $action => $title)
                             @php
@@ -147,10 +148,10 @@
                         @endforeach
                     </div>
                     @if($state['automatic_label_stats']['available'])
-                        <p class="guide-help">Analysis as of <x-display-time :value="$state['automatic_label_stats']['as_of_ms']" unit="milliseconds" /> · Source: {{ $state['automatic_label_stats']['source'] === 'cli' ? 'CLI' : 'intelligence dataset build' }}.</p>
+                        <p class="guide-help" data-automatic-analysis-time>Analysis as of <x-display-time :value="$state['automatic_label_stats']['as_of_ms']" unit="milliseconds" /> · Source: {{ $state['automatic_label_stats']['source'] === 'cli' ? 'CLI' : 'intelligence dataset build' }}.</p>
                         <p class="guide-help">Chart markers remain tied to the selected frozen dataset and may differ from these current market-wide totals.</p>
                     @else
-                        <p class="guide-help">No shared analysis published yet. Run <code>php artisan trademinator:auto-label</code> or trigger auto-labelling, then reload this page.</p>
+                        <p class="guide-help" data-automatic-analysis-time>No shared analysis published yet. Run <code>php artisan trademinator:auto-label</code> or trigger auto-labelling.</p>
                     @endif
                 </section>
                 <section class="candle-training-source candle-training-source--human" aria-labelledby="human-training-heading">
@@ -238,7 +239,8 @@
                     <button type="button" class="review-control" data-submit-labels hidden>Submit</button>
                     <button type="button" class="review-control candle-menu-delete" data-delete-all-training>Delete my human labels</button>
                 </div>
-                <p class="guide-help">Queues a fresh intelligence build with system auto-labelling instead of waiting for Monday. Results belong to a new immutable dataset; select that dataset when the build finishes. No labels are attributed to Human Training or its milestones.</p>
+                <p class="guide-help">Queues a lightweight, market-wide Action auto-label analysis. Updates published counts and Outcome horizon diagnostics without rebuilding KNN models or changing frozen chart markers. Human Training is untouched.</p>
+                <p class="guide-help" data-auto-job-status role="status" aria-live="polite">Auto-labelling status: checking…</p>
                 <p class="guide-help" data-pending-status>No pending changes. Manual labels, deletions and auto-label suggestions stay only in this browser until Submit.</p>
                 <p class="guide-help" data-history-status role="status"></p>
                 <button type="button" class="review-control" data-history-retry hidden>Retry loading candles</button>

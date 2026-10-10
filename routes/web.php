@@ -88,6 +88,7 @@ Route::prefix('human-training')->name('human-training.')->middleware(['auth', 'v
     Route::post('candles', [CandleTrainingController::class, 'store'])->middleware('throttle:30,1,human-training-candles-start')->name('candles.start');
     Route::get('candles/{dataset}/history', [CandleTrainingController::class, 'history'])->whereUuid('dataset')->middleware('throttle:120,1,human-training-candles-history')->name('candles.history');
     Route::get('candles/{dataset}', [CandleTrainingController::class, 'show'])->whereUuid('dataset')->middleware('throttle:60,1,human-training-candles-show')->name('candles.show');
+    Route::get('candles/{dataset}/auto-label/status', [CandleTrainingController::class, 'autoLabelStatus'])->whereUuid('dataset')->middleware('throttle:60,1,human-training-candles-auto-label-status')->name('candles.auto-label.status');
     Route::post('candles/{dataset}/auto-label', [CandleTrainingController::class, 'autoLabel'])->whereUuid('dataset')->middleware('throttle:120,1,human-training-candles-auto-label')->name('candles.auto-label');
     Route::post('candles/{dataset}/submit', [CandleTrainingController::class, 'submitLabels'])->whereUuid('dataset')->middleware('throttle:120,1,human-training-candles-submit')->name('candles.submit');
     Route::put('candles/{dataset}', [CandleTrainingController::class, 'update'])->whereUuid('dataset')->middleware('throttle:60,1,human-training-candles-update')->name('candles.update');

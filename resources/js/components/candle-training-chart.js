@@ -121,6 +121,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
     const legend = root.querySelector('[data-legend]');
     const fit = root.querySelector('[data-fit]');
     const autoLabel = root.querySelector('[data-auto-label]');
+    const autoJobStatus = root.querySelector('[data-auto-job-status]');
     const overlays = [...root.querySelectorAll('[data-overlay-mode]')];
     let overlayMode = 'human';
     const deleteAllTraining = root.querySelector('[data-delete-all-training]');
@@ -510,6 +511,47 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             : `${action.toUpperCase()} staged in this browser. Press Submit to store the reviewed result.`;
         closeMenu();
     };
+    let autoStatusTimer;
+    const refreshAutoStatus = async () => {
+        if (disposed || !root.dataset.autoStatusUrl) return;
+        try {
+            const response = await fetch(root.dataset.autoStatusUrl, {
+                credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' },
+            });
+            if (!response.ok) throw new Error('Could not read auto-labelling status.');
+            const result = await response.json();
+            const state = result.status ?? 'idle';
+            const busy = state === 'queued' || state === 'running';
+            if (autoLabel) autoLabel.disabled = busy || autoLabelling;
+            if (autoJobStatus) autoJobStatus.textContent = 'Auto-labelling: ' + state
+                + (result.error ? ' — ' + result.error : '')
+                + (result.analyzed_at ? ' · Last completed: ' + result.analyzed_at : '');
+            if (result.counts && result.total !== null) {
+                const total = root.querySelector('[data-automatic-stat-total]');
+                if (total) total.textContent = Number(result.total).toLocaleString('en-CA');
+                for (const action of ['buy', 'hold', 'sell']) {
+                    const count = Number(result.counts[action] ?? 0);
+                    const label = root.querySelector('[data-automatic-stat-count="' + action + '"]');
+                    if (label) label.textContent = count.toLocaleString('en-CA');
+                    const bar = label?.closest('.candle-training-stat')?.querySelector('progress');
+                    if (bar) {
+                        bar.value = Math.min(count, 750);
+                        bar.dataset.milestone = count < 100 ? 'red' : count < 300 ? 'orange' : count < 750 ? 'green' : 'blue';
+                        bar.setAttribute('aria-label', 'Automatic ' + action.toUpperCase() + ' labels: ' + count);
+                    }
+                }
+                const time = root.querySelector('[data-automatic-analysis-time]');
+                if (time && result.as_of_ms) {
+                    time.textContent = 'Analysis as of ' + new Date(result.as_of_ms).toLocaleString()
+                        + ' · Source: ' + (result.source === 'cli' ? 'CLI' : 'intelligence dataset build') + '.';
+                }
+            }
+            clearTimeout(autoStatusTimer);
+            if (busy) autoStatusTimer = setTimeout(refreshAutoStatus, 5000);
+        } catch (error) {
+            if (autoJobStatus) autoJobStatus.textContent = error.message;
+        }
+    };
     const requestAutoLabels = async () => {
         if (autoLabelling || submittingLabels || disposed) return;
         autoLabelling = true;
@@ -523,8 +565,9 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
             const result = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(result.message || 'Failed to queue auto-labelling.');
             status.textContent = result.message ?? 'System auto-labelling queued.';
+            await refreshAutoStatus();
         } catch (error) { status.textContent = error.message; }
-        finally { autoLabelling = false; autoLabel.disabled = false; }
+        finally { autoLabelling = false; await refreshAutoStatus(); }
     };
     const stageDeleteAll = () => {
         if (submittingLabels || autoLabelling || deleteAllPending) return;
@@ -699,6 +742,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         document.addEventListener('keydown', onKeyDown);
         menu?.querySelectorAll('[data-menu-action]').forEach(button => button.addEventListener('click', () => requestLabel(button.dataset.menuAction)));
         autoLabel?.addEventListener('click', requestAutoLabels);
+        void refreshAutoStatus();
         deleteAllTraining?.addEventListener('click', stageDeleteAll);
         submitLabels?.addEventListener('click', submitStagedLabels);
         window.addEventListener('beforeunload', onBeforeUnload);
@@ -710,6 +754,7 @@ export async function mountCandleTrainingChart(root, loadLibrary = () => import(
         window.addEventListener('pagehide', event => {
             if (event.persisted) return;
             disposed = true;
+            clearTimeout(autoStatusTimer);
             clearTimeout(historyTimer);
             historyRequest?.abort();
             jumpRequest?.abort();

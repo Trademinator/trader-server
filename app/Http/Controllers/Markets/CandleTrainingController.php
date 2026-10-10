@@ -10,7 +10,8 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Gate;
+use App\Domain\Research\DatasetStore;
 use App\Jobs\AnalyzeMarketAutoLabels;
 use Illuminate\Validation\Rule;
 
@@ -67,17 +68,19 @@ class CandleTrainingController extends Controller
 
     public function autoLabel(Request $request, string $dataset, CandleTraining $training): JsonResponse
     {
-        $state = $training->review($request->user(), $dataset);
+        Gate::forUser($request->user())->authorize('train-intelligence');
+        $manifest = app(DatasetStore::class)->manifest($dataset);
         if (! config('intelligence.enabled') || in_array(config('queue.default'), ['sync', 'null'], true)) {
             return response()->json(['message' => 'Intelligence queue is not enabled.'], 422);
         }
-        $manifest = $state['manifest'];
         $key = 'trademinator:action-auto-label:'.hash('sha256', implode('|', [
             $manifest['exchange'], $manifest['symbol'], $manifest['period']
         ]));
         if (! Cache::add($key.':lock', true, now()->addHour())) {
             return response()->json(['message' => 'Auto-labelling is already queued or running.'], 409);
         }
+        Cache::put($key.':status', 'queued', now()->addDay());
+        Cache::forget($key.':error');
         $job = new AnalyzeMarketAutoLabels(
             $manifest['exchange'], $manifest['symbol'], $manifest['period'], $key
         );
@@ -86,10 +89,36 @@ class CandleTrainingController extends Controller
             dispatch($job);
         } catch (\Throwable $error) {
             Cache::forget($key.':lock');
+            Cache::put($key.':status', 'failed', now()->addDay());
+            Cache::put($key.':error', 'Could not dispatch auto-labelling.', now()->addDay());
             throw $error;
         }
         return response()->json(['status' => 'queued',
             'message' => 'System auto-labelling queued. Human labels will not be changed.'], 202);
+    }
+
+    public function autoLabelStatus(Request $request, string $dataset): JsonResponse
+    {
+        Gate::forUser($request->user())->authorize('train-intelligence');
+        $manifest = app(DatasetStore::class)->manifest($dataset);
+        $key = 'trademinator:action-auto-label:'.hash('sha256', implode('|', [
+            $manifest['exchange'], $manifest['symbol'], $manifest['period']
+        ]));
+        $report = app(\App\Domain\Intelligence\ActionLabelReportStore::class)->latest(
+            $manifest['exchange'], $manifest['symbol'], $manifest['period']
+        );
+        $counts = $report['analysis']['action_counts'] ?? null;
+        return response()->json([
+            'status' => Cache::get($key.':status', 'idle'),
+            'locked' => (bool) Cache::get($key.':lock', false),
+            'error' => Cache::get($key.':error'),
+            'analyzed_at' => Cache::get($key.':summary')['analyzed_at'] ?? null,
+            'as_of_ms' => $report['as_of_ms'] ?? null,
+            'computed_at' => $report['computed_at'] ?? null,
+            'source' => $report['source'] ?? null,
+            'counts' => $counts,
+            'total' => is_array($counts) ? array_sum($counts) : null,
+        ])->header('Cache-Control', 'no-store, private');
     }
 
     public function submitLabels(Request $request, string $dataset, CandleTraining $training): JsonResponse

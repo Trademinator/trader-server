@@ -119,19 +119,19 @@ final class HumanGuidance
         }
 
         [, $rawRows] = $this->datasets->open($manifest['dataset_id']);
-        $byTime = [];
-        foreach ($rawRows as $row) {
-            $byTime[$row['decision_at_ms']] = $row;
-        }
-        if ($byTime === []) {
+        // The disk index is already checksum-verified. Do not decode and retain
+        // every historical row: Human Outcome reviews are sparse.
+        if (count($rawRows) === 0) {
             return [];
         }
+        $firstDecision = $rawRows->at(0)['decision_at_ms'];
+        $lastDecision = $rawRows->at(count($rawRows) - 1)['decision_at_ms'];
 
         $cutoff = CarbonImmutable::createFromTimestampMs($annotationCutoff)->format('Y-m-d H:i:s.v');
         $snapshots = HumanTrainingSnapshot::query()
             ->where('market_key', ModelStore::marketKey($manifest['exchange'], $manifest['symbol'], $manifest['period']))
             ->where('version', HumanTraining::VERSION)
-            ->whereBetween('decision_at_ms', [array_key_first($byTime), array_key_last($byTime)])
+            ->whereBetween('decision_at_ms', [$firstDecision, $lastDecision])
             ->whereHas('reviews', fn ($query) => $query->whereIn('trainer_id', $trainers))
             ->with(['reviews' => fn ($query) => $query->whereIn('trainer_id', $trainers)
                 ->whereIn('label', HumanTraining::acceptedLabels())->whereNotNull('submitted_at')
@@ -142,6 +142,11 @@ final class HumanGuidance
         foreach ($snapshots->chunk(25) as $batch) {
             if (microtime(true) > $deadline) {
                 throw new RuntimeException('Human Outcome Training time budget exceeded.');
+            }
+            $byTime = [];
+            foreach ($batch as $snapshot) {
+                $row = $rawRows->findDecision((int) $snapshot->decision_at_ms);
+                if ($row !== null) $byTime[(int) $snapshot->decision_at_ms] = $row;
             }
             $compatible = $this->snapshots->compatibleSnapshotIds($manifest, $batch, $byTime);
             foreach ($batch as $snapshot) {
