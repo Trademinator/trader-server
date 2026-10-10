@@ -47,7 +47,7 @@ CoinGecko context is subscription-driven:
 4. Automatic resolution accepts only one exact symbol match. Multiple exact matches are marked `ambiguous`; zero matches are marked `unmapped`. Trademinator does not guess a coin ID.
 5. Resolved mappings store the exact quote currency derived from the exchange's `BASE/QUOTE` spot symbol. BTC/USDT therefore remains USDT and is never silently substituted with USD.
 
-The resolver also attempts to map the coin's first CoinGecko category to a category ID for sector/category momentum. Category metadata is optional; failure to resolve a category does not block an otherwise unambiguous coin mapping. Derivative symbols such as `BTC/USD:USD` are marked `unsupported` for automatic mapping until a settlement/conversion design is added.
+The resolver also attempts to map the coin's first CoinGecko category to a category ID for sector/category momentum. Category metadata is optional; failure to resolve a category does not block an otherwise unambiguous coin mapping. Derivative symbols such as `BTC/USD:USD` are marked `unsupported` for automatic mapping until a settlement/conversion design is added. On the owner mappings page, a manual identity can optionally be applied to other unresolved markets with the same base ticker, after the exact ticker and each quote currency are verified. Existing resolved identities and unsupported quotes are never overwritten.
 
 ```bash
 php artisan migrate --force
@@ -73,7 +73,7 @@ Each feature payload contains:
 - `history_start_ms`: beginning of the uninterrupted candle segment used to seed calculations.
 - `indicators`: named raw technical indicator values, with `null` during warm-up. Trait-backed decimal results are stored as decimal strings so BCMath precision is not lost before normalization.
 - `features`: ordered named normalized features; `keys` and `vector` provide a matching KNN schema.
-- `missing`: names of null features; `technical_ready`: core technical warm-up completed; `context_ready`: every context field present; `ready`: no feature is missing.
+- `missing`: names of null features; `technical_ready`: core technical warm-up completed; `context_ready`: essential fresh CoinGecko fields are present (`global_regime`, `btc_dominance`, `activity`, `market_cap_share`, `volume_share`); `ready`: no feature is missing. Optional context values may be null even when `context_ready` is true.
 - `context_snapshot_id`: exact observed snapshot, or null.
 
 Every continuous feature lies in `[0, 1]`; direction fields use `-1`, `0`, `1`. Never feed nulls directly to KNN or silently convert them to zero. M3 should explicitly select a feature schema and filter/impute under training-only rules. A technical-only schema is valid when CoinGecko is disabled. Keep schema/version and history origin with each dataset. Missing category, long return history, or context will keep the full vector's `ready` false intentionally. Maximum supply is not used: uncapped assets can have all nine context features ready, and no circulating/total-supply replacement is introduced.

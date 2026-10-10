@@ -76,13 +76,18 @@ it('requires fresh complete context for the exact market while remaining indepen
     'future features' => [['feature' => ['available_at_ms' => 9999999999999]], false, 'coingecko_features_unavailable'],
     'stale latest candle' => [['feature' => ['available_at_ms' => 0]], false, 'coingecko_features_stale'],
     'missing context field despite ready flag' => [['payload' => ['features' => ['context.activity' => null]]], false, 'coingecko_context_incomplete'],
+    'optional history and category fields can remain absent' => [['mapping' => ['category' => null],
+        'payload' => ['features' => [
+            'context.btc_dominance_change' => null, 'context.activity_deviation' => null,
+            'context.category_momentum' => null, 'context.price_deviation' => null,
+        ]]], true, 'ready'],
     'out of range context field' => [['payload' => ['features' => ['context.activity' => 2]]], false, 'coingecko_context_invalid'],
     'missing source snapshot' => [['payload' => ['context_snapshot_id' => null]], false, 'coingecko_snapshot_unavailable'],
     'source belongs to another coin' => [['snapshot' => ['coin_id' => 'ethereum']], false, 'coingecko_snapshot_unavailable'],
     'source observed after the candle' => [['snapshot' => ['observed_at_ms' => 9999999999999]], false, 'coingecko_context_stale'],
     'source exceeds maximum age' => [['snapshot' => ['observed_at_ms' => 0]], false, 'coingecko_context_stale'],
     'upstream data expired' => [['source' => ['expires_at_ms' => 1]], false, 'coingecko_context_stale'],
-    'category data expired' => [['source' => ['category_expires_at_ms' => ['currency' => 1]]], false, 'coingecko_context_stale'],
+    'category data expired but core data fresh' => [['source' => ['category_expires_at_ms' => ['currency' => 1]]], true, 'ready'],
 ]);
 
 it('checks a batch with three queries and uses the latest candle even when an older one is complete', function () {

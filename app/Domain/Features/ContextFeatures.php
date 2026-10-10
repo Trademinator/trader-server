@@ -9,6 +9,12 @@ final class ContextFeatures
         'context.price_deviation', 'context.market_cap_share',
         'context.volume_share'];
 
+    // A fresh observation is usable before the 24-hour trends have warmed up,
+    // even when category metadata or price alignment is unavailable. Optional
+    // fields remain null and are never imputed for the separate CoinGecko model.
+    public const READY_KEYS = ['context.global_regime', 'context.btc_dominance',
+        'context.activity', 'context.market_cap_share', 'context.volume_share'];
+
     public function calculate(?array $snapshot, float $close, int $asOfMs, int $maxAgeMs, ?string $category = null): array
     {
         $features = array_fill_keys(self::KEYS, null);
@@ -40,7 +46,9 @@ final class ContextFeatures
         }
         unset($value);
 
+        $required = array_intersect_key($features, array_fill_keys(self::READY_KEYS, true));
+
         return ['features' => $features, 'snapshot_id' => $snapshot['snapshot_id'],
-            'context_ready' => ! in_array(null, $features, true)];
+            'context_ready' => ! in_array(null, $required, true)];
     }
 }

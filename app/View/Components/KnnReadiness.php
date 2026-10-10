@@ -56,7 +56,7 @@ class KnnReadiness extends Component
             'coingecko_quote_mismatch' => 'CoinGecko mapping must match the market quote currency',
             'coingecko_features_unavailable' => 'Waiting for current candle context features',
             'coingecko_features_stale' => 'Latest candle context features are stale',
-            'coingecko_context_incomplete' => 'Some required CoinGecko context fields are missing',
+            'coingecko_context_incomplete' => 'Some essential CoinGecko context fields are missing',
             'coingecko_context_invalid' => 'CoinGecko context needs rebuilding',
             'coingecko_snapshot_unavailable' => 'The matching CoinGecko source snapshot is unavailable',
             'coingecko_context_stale' => 'CoinGecko source data has expired',

@@ -140,7 +140,7 @@
                     <div class="dashboard-stat">
                         <h3>3. Validation</h3>
                         <x-knn-readiness :report="$details['report']" :coingecko="$details['coingecko']" />
-                        <p class="guide-help">Green: Outcome KNN. Blue: Action KNN. Yellow: fresh, complete CoinGecko context. Each KNN check requires its own current, validated model with a positive scoring weight. Readiness does not guarantee a signal for every candle.</p>
+                        <p class="guide-help">Green: Outcome KNN. Blue: Action KNN. Yellow: fresh CoinGecko core context (optional 24-hour trends and category data may still be warming up). Each KNN check requires its own current, validated model with a positive scoring weight. Readiness does not guarantee a signal for every candle.</p>
                     </div>
                 </div>
                 @if ($progress['eta'])<p><strong>Earliest data estimate: <x-display-time :value="$progress['eta']" /></strong></p>@endif

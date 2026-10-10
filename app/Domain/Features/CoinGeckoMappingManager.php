@@ -145,7 +145,8 @@ final class CoinGeckoMappingManager
         }
     }
 
-    private function resolvePrimaryCategory(string $coinId): ?string
+    /** Resolve optional sector metadata for automatic and owner-chosen coins. */
+    public function resolvePrimaryCategory(string $coinId): ?string
     {
         try {
             $coin = $this->client->get('/coins/'.rawurlencode($coinId), [

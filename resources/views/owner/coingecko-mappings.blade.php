@@ -27,6 +27,10 @@
                                     <input id="coin-{{ $mapping->getKey() }}" name="coin_id" value="{{ $mapping->coin_id }}" list="options-{{ $mapping->getKey() }}" required placeholder="Search coin name, ticker or API ID" autocomplete="off" class="w-64 rounded dark:bg-gray-700" data-coingecko-search data-options="options-{{ $mapping->getKey() }}" aria-label="CoinGecko API ID for {{ $symbol }} on {{ $mapping->market?->exchange?->class }}" />
                                     <datalist id="options-{{ $mapping->getKey() }}"></datalist>
                                     @if($mapping->manually_mapped)<div class="text-xs text-gray-500 mt-1">Current: {{ $mapping->coin_name }} · {{ $mapping->coin_id }}</div>@endif
+                                    <label class="flex items-start gap-2 text-xs mt-2 max-w-sm">
+                                        <input type="checkbox" name="apply_same_base" value="1" class="mt-0.5">
+                                        <span>Also map unresolved {{ strtoupper((string) $symbol) }} spot markets across exchanges, using only supported quote currencies. Existing resolved mappings will not be changed.</span>
+                                    </label>
                                 </form>
                             @else
                                 <span class="text-gray-500">No coin override for unsupported quotes</span>

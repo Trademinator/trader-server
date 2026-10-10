@@ -113,7 +113,7 @@ final class CoinGeckoReadiness
             return 'coingecko_context_invalid';
         }
         try {
-            if (FeatureSchema::vector($payload, ContextFeatures::KEYS) === null) {
+            if (FeatureSchema::vector($payload, ContextFeatures::READY_KEYS) === null) {
                 return 'coingecko_context_incomplete';
             }
         } catch (InvalidArgumentException) {
@@ -128,10 +128,11 @@ final class CoinGeckoReadiness
         } catch (JsonException) {
             return 'coingecko_context_invalid';
         }
+        // Category momentum is optional; its absent/expired metadata cannot
+        // invalidate otherwise fresh CoinGecko observations.
         if ($snapshot->observed_at_ms > $feature->available_at_ms
             || $snapshot->observed_at_ms < $now - max(0, (int) config('features.coingecko.max_age_seconds')) * 1000
-            || ($source['expires_at_ms'] ?? 0) < $now
-            || ($source['category_expires_at_ms'][$mapping->category ?? ''] ?? 0) < $now) {
+            || ($source['expires_at_ms'] ?? 0) < $now) {
             return 'coingecko_context_stale';
         }
 
